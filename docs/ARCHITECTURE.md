@@ -15,7 +15,7 @@ The live adapter sends the current conversation to a configurable Responses API.
 The backend stores preferences; the OS schedules local notifications. No server push claim is made. On mobile a permission request precedes scheduling; editing replaces scheduled IDs after preferences save, and deleting cancels them. Logout cancels this device's reminders. Signing in restores enabled preferences when OS permission is already granted. Scheduled IDs are tracked per account on the device, rather than using another phone’s IDs. Web only stores preferences. Device-specific schedules must be verified on the final build.
 
 ## Screens and state
-The root shell keeps a navigation stack and four primary tabs. Activity details hide or retain navigation as appropriate. The API is the source of persistent account data; forms keep local drafts until save. Theme selection is device-local. Interruption pauses the breathing timer. Unknown future settings are not rendered as nonfunctional controls.
+The root shell keeps a navigation stack and five primary tabs (Today, Solace, Explore, Journey, Profile). Activity details hide or retain navigation as appropriate. The API is the source of persistent account data; forms keep local drafts until save. Theme selection is device-local. Interruption pauses the breathing timer. Unknown future settings are not rendered as nonfunctional controls.
 
 ## Threat and reliability boundaries
 No provider secrets in bundles; bounded inputs; rate-limited auth; scrypt passwords; hashed opaque sessions; sensitive records are not logged. Backups and disk encryption are operator responsibilities. There is no email recovery service configured. A production deployment needs TLS, a restricted CORS list, a trusted proxy setup, and real live-provider/device acceptance testing.
@@ -32,3 +32,20 @@ src/insights.ts computes seven local-calendar-day facts from account records. It
 ## Rendering improvements and limits
 
 History caches its search index by conversation-record identity, filters cached lowercase text, and mounts 30 rows initially with explicit show-more. It does not yet fetch paginated API pages. Chat scrolls automatically only near the bottom or after an explicit send; a Latest messages control handles off-bottom arrivals/layout changes. Breathing uses refs for precise foreground time and integer display seconds to avoid unnecessary component renders. Artwork is bundled, decorative and uses target-size native resize hints. These choices are source-reviewed; no physical-device FPS, memory or network benchmark has been claimed.
+
+## Protected writing and daily pause
+
+The daily-pause selector is pure local logic over actual account records. Current-day mood is explicit input; historical approved preferences/helpful feedback require personalization. It does not call AI or inspect chat text.
+
+Native check-in/journal drafts and at most 10 unsynced submitted entries use a bounded per-account SecureStore vault. A serialized two-slot chunked manifest commits writing only after all target chunks are stored. Queue IDs are generated before POST; a retry conflict is acknowledged only after an authenticated read matches all submitted fields. Chat and complete account snapshots are excluded. Web supplies no vault persistence and keeps this writing in memory only. Logout/account deletion clear protected writing; session expiry keeps it private for same-account reauthentication. See VERIFICATION for executed mock tests and remaining native checks.
+
+Profile photos are normalized client-side and again in server/src/avatar.ts, stored on the account row and exposed only through authenticated account responses/export. Sharp decoding validates real JPEG input and strips metadata. A per-account revision and bearer revalidation prevent stale asynchronous image work from restoring superseded or deleted photos.
+
+
+## Portable local startup and API configuration
+
+Root and server are separate lockfile installs. `npm run setup` installs both using the selected supported runtime and builds the server; `doctor` checks dependencies and platform binaries without printing environment contents. Development launches the API through a resolved tsx loader, waits for readiness from its own child and verifies its health response before launching Expo. A competing port cannot satisfy that readiness check. Private server configuration is excluded from the Metro child environment.
+
+The API anchors private dotenv and database paths to server/. It reserves its listener before opening SQL.js, serves HTTP 503 while initializing, and announces readiness only after the app is attached. Production starts compiled dist/index.js. SQL.js remains a single-instance persistence adapter; the busy-port protection is not a multi-replica design.
+
+`src/api-config.ts` validates explicit public URLs and development platform defaults. Invalid release configuration produces a configuration error before any fetch and is not queued as a transient offline write. Release clients require HTTPS and reject local loopback/emulator addresses. Actual deployment, iOS networking and native credential persistence remain separate verification gates.

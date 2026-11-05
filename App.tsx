@@ -1,14 +1,14 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
+  Keyboard,
   Image,
   Platform,
-  Pressable,
   Text,
   View,
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useFonts } from "expo-font";
@@ -17,16 +17,18 @@ import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { CormorantGaramond_600SemiBold } from "@expo-google-fonts/cormorant-garamond/600SemiBold";
 import { ThemeProvider, useTheme } from "./src/theme";
 import { AppProvider, useApp } from "./src/store";
-import { AppText, Button, Icon, Petal } from "./src/ui";
+import { AppText, Button, NavigationInset, Petal } from "./src/ui";
 import {
   AuthScreen,
   ChatScreen,
   HistoryScreen,
   JourneyScreen,
   TodayScreen,
+  ExploreScreen,
 } from "./src/screens/Core";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
+import { TabBar } from "./src/Navigation";
 import {
   subscribeNotificationNavigation,
   restoreDeviceReminders,
@@ -62,99 +64,31 @@ const wellnessScreens = new Set([
   "grounding",
   "toolkit",
 ]);
-const tabs = [
-  { name: "today", title: "Today", icon: "home-outline", activeIcon: "home" },
-  { name: "chat", title: "Solace", icon: "leaf-outline", activeIcon: "leaf" },
-  {
-    name: "journey",
-    title: "Journey",
-    icon: "analytics-outline",
-    activeIcon: "analytics",
-  },
-  {
-    name: "profile",
-    title: "Profile",
-    icon: "person-outline",
-    activeIcon: "person",
-  },
-];
-function TabBar() {
-  const app = useApp();
-  const { colors } = useTheme();
-  const active = app.activeTab;
-  return (
-    <SafeAreaView
-      edges={["bottom"]}
-      style={{
-        backgroundColor: colors.surface,
-        borderTopColor: colors.border,
-        borderTopWidth: 1,
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-around",
-          paddingTop: 10,
-          paddingBottom: Platform.OS === "web" ? 10 : 4,
-        }}
-      >
-        {tabs.map((tab) => {
-          const selected = tab.name === active;
-          return (
-            <Pressable
-              key={tab.name}
-              onPress={() => app.setTab(tab.name)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected }}
-              aria-selected={selected}
-              accessibilityLabel={tab.title}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                justifyContent: "center",
-                minWidth: 64,
-                minHeight: 48,
-                paddingHorizontal: 8,
-                opacity: pressed ? 0.65 : 1,
-              })}
-            >
-              <Icon
-                name={selected ? tab.activeIcon : tab.icon}
-                size={22}
-                color={selected ? colors.text : colors.muted}
-              />
-              <AppText
-                variant="caption"
-                color={selected ? colors.text : colors.muted}
-                style={{
-                  fontSize: 11,
-                  marginTop: 4,
-                  fontFamily: selected
-                    ? "Inter_600SemiBold"
-                    : "Inter_400Regular",
-                }}
-              >
-                {tab.title}
-              </AppText>
-              <View
-                style={{
-                  height: 2,
-                  width: 28,
-                  backgroundColor: selected ? colors.primary : "transparent",
-                  marginTop: 5,
-                  borderRadius: 2,
-                }}
-              />
-            </Pressable>
-          );
-        })}
-      </View>
-    </SafeAreaView>
-  );
-}
 function Shell() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const [navigationHeight, setNavigationHeight] = useState(88);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const show = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setKeyboardOpen(true),
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKeyboardOpen(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  const showNavigation =
+    !!app.user &&
+    !app.sessionExpired &&
+    !keyboardOpen &&
+    !["breathing", "moment", "grounding"].includes(app.route);
   useEffect(() => {
     if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
@@ -217,6 +151,7 @@ function Shell() {
     content = <ChatScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey") content = <JourneyScreen />;
+  else if (app.route === "explore") content = <ExploreScreen />;
   else if (profileScreens.has(app.route))
     content = <ProfileScreen name={app.route} />;
   else if (wellnessScreens.has(app.route))
@@ -273,14 +208,12 @@ function Shell() {
             />
           </View>
         ) : (
-          <>
+          <NavigationInset.Provider
+            value={showNavigation ? navigationHeight : 0}
+          >
             {content}
-            {!!app.user &&
-              !app.sessionExpired &&
-              app.route !== "breathing" &&
-              app.route !== "moment" &&
-              app.route !== "grounding" && <TabBar />}
-          </>
+            {showNavigation && <TabBar onHeight={setNavigationHeight} />}
+          </NavigationInset.Provider>
         )}
       </View>
     </View>

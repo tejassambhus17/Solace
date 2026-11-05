@@ -27,6 +27,7 @@ import {
   type Collection,
 } from "./validation.js";
 import { getReply, provider, type AIConfig, type Message } from "./ai.js";
+import { AvatarError, prepareAvatar } from "./avatar.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
@@ -79,6 +80,11 @@ export function createApp(config: AppConfig) {
         callback(null, !origin || allowed.includes(origin));
       },
     }),
+  );
+  // Only the profile-photo endpoint needs room for a bounded base64 image.
+  const profileJSON = express.json({ limit: "512kb" });
+  app.use("/api/auth/me", (req, res, next) =>
+    req.method === "PATCH" ? profileJSON(req, res, next) : next(),
   );
   app.use(express.json({ limit: "200kb" }));
   app.use("/api", (_req, res, next) => {
@@ -262,29 +268,70 @@ export function createApp(config: AppConfig) {
   app.get("/api/auth/me", (req: AuthRequest, res) =>
     res.json({ user: publicUser(user(req)) }),
   );
-  app.patch("/api/auth/me", (req: AuthRequest, res) => {
-    const input = z
-      .object({
-        name: z.string().trim().min(1).max(80).optional(),
-        personalization: z.boolean().optional(),
-      })
-      .strict()
-      .parse(req.body);
-    store.transaction(() =>
-      store.run("UPDATE users SET name=?,personalization=? WHERE id=?", [
-        input.name ?? user(req).name,
-        input.personalization === undefined
-          ? user(req).personalization
-          : Number(input.personalization),
-        user(req).id,
-      ]),
-    );
-    res.json({
-      user: publicUser(
-        store.one<UserRow>("SELECT * FROM users WHERE id=?", [user(req).id])!,
-      ),
-    });
-  });
+  const avatarChanges = new Map<string, symbol>();
+  app.patch(
+    "/api/auth/me",
+    asyncRoute(async (req, res) => {
+      const input = z
+        .object({
+          name: z.string().trim().min(1).max(80).optional(),
+          personalization: z.boolean().optional(),
+          avatar: z.string().nullable().optional(),
+        })
+        .strict()
+        .parse(req.body);
+      const owner = user(req).id;
+      const change = input.avatar === undefined ? undefined : Symbol();
+      if (change) avatarChanges.set(owner, change);
+      try {
+        const avatar =
+          typeof input.avatar === "string"
+            ? await prepareAvatar(input.avatar)
+            : input.avatar;
+        // Image decoding is asynchronous. Revoked/expired sessions and removed
+        // accounts cannot commit a late upload, even if the initial auth passed.
+        const current = store.one<UserRow>(
+          "SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE u.id=? AND t.hash=? AND t.expires_at>?",
+          [owner, tokenHash(req.token!), Date.now()],
+        );
+        if (!current)
+          return apiError(
+            res,
+            401,
+            "Your session has expired. Please log in again.",
+            "UNAUTHORIZED",
+          );
+        if (change && avatarChanges.get(owner) !== change)
+          return apiError(
+            res,
+            409,
+            "Your profile photo changed while this upload was processing. Please choose the photo again.",
+            "AVATAR_CHANGED",
+          );
+        store.transaction(() =>
+          store.run(
+            "UPDATE users SET name=?,personalization=?,avatar=? WHERE id=?",
+            [
+              input.name ?? current.name,
+              input.personalization === undefined
+                ? current.personalization
+                : Number(input.personalization),
+              avatar === undefined ? current.avatar : avatar,
+              owner,
+            ],
+          ),
+        );
+        return res.json({
+          user: publicUser(
+            store.one<UserRow>("SELECT * FROM users WHERE id=?", [owner])!,
+          ),
+        });
+      } finally {
+        if (change && avatarChanges.get(owner) === change)
+          avatarChanges.delete(owner);
+      }
+    }),
+  );
   app.post("/api/auth/logout", (req: AuthRequest, res) => {
     store.transaction(() =>
       store.run("DELETE FROM tokens WHERE hash=?", [tokenHash(req.token!)]),
@@ -550,6 +597,15 @@ export function createApp(config: AppConfig) {
             message: i.message,
           })),
         });
+      if (error instanceof AvatarError)
+        return apiError(
+          res,
+          error.code === "AVATAR_TOO_LARGE" ? 413 : 400,
+          error.code === "AVATAR_TOO_LARGE"
+            ? "Choose a profile photo smaller than 256 KB."
+            : "This photo could not be read. Please choose a JPEG photo and try again.",
+          error.code,
+        );
       const message = error instanceof Error ? error.message : "";
       if (message === "AI_NOT_CONFIGURED")
         return apiError(

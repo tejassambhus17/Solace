@@ -8,13 +8,38 @@
     "scheme": "solace",
     "android": {
       "package": "com.solacewellness.app",
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": ["android.permission.POST_NOTIFICATIONS"]
     },
     "web": {
       "bundler": "metro",
       "favicon": "./assets/icon.png"
     },
-    "plugins": ["expo-notifications", "expo-secure-store", "expo-font"],
+    "plugins": [
+      "expo-notifications",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a profile photo for your Solace account.",
+          "cameraPermission": false,
+          "microphonePermission": false,
+          "colors": {
+            "cropToolbarColor": "#FBF0E8",
+            "cropToolbarIconColor": "#183A2B",
+            "cropBackgroundColor": "#FBF0E8"
+          },
+          "dark": {
+            "colors": {
+              "cropToolbarColor": "#111112",
+              "cropToolbarIconColor": "#F5F0E8",
+              "cropBackgroundColor": "#000000"
+            }
+          }
+        }
+      ]
+    ],
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": false,

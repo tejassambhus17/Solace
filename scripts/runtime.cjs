@@ -1,101 +1,109 @@
-// Prefer the supported system Node; Codex Desktop on Windows also bundles a current runtime.
-const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
-const root = path.resolve(__dirname, "..");
-const [major, minor] = process.versions.node.split(".").map(Number);
-let runtime = process.env.SOLACE_NODE || process.execPath;
-try {
-  const config = JSON.parse(
-    fs.readFileSync(path.join(root, ".solace-runtime.json"), "utf8"),
-  );
-  if (
-    !process.env.SOLACE_NODE &&
-    (major < 22 || (major === 22 && minor < 13)) &&
-    fs.existsSync(config.node)
-  )
-    runtime = config.node;
-} catch {}
-if (
-  !process.env.SOLACE_NODE &&
-  (major < 22 || (major === 22 && minor < 13)) &&
-  process.platform === "win32"
-) {
-  try {
-    const base = path.join(
-      process.env.ProgramFiles || "C:/Program Files",
-      "WindowsApps",
-    );
-    const candidates = fs
-      .readdirSync(base)
-      .filter((v) => v.startsWith("OpenAI.CodexPrimaryRuntime."))
-      .sort()
-      .reverse();
-    for (const folder of candidates) {
-      const candidate = path.join(
-        base,
-        folder,
-        "dependencies",
-        "node",
-        "bin",
-        "node.exe",
+const { spawnSync, spawn } = require("node:child_process");
+const {
+  ROOT,
+  selectRuntime,
+  runtimeEnvironment,
+  packageBin,
+  sourceServerArgs,
+  dependencyIssues,
+  installGuidance,
+  findNpmCli,
+} = require("./tooling.cjs");
+
+function runSupervisedCommand(runtime, job, options = {}) {
+  const signals = options.signals || process;
+  const child = (options.spawn || spawn)(runtime, job.args, {
+    cwd: job.cwd || ROOT,
+    stdio: "inherit",
+    env: runtimeEnvironment(runtime),
+    windowsHide: true,
+  });
+  return new Promise((resolve, reject) => {
+    const interrupt = () => child.kill("SIGINT");
+    const terminate = () => child.kill("SIGTERM");
+    const cleanup = () => {
+      signals.removeListener("SIGINT", interrupt);
+      signals.removeListener("SIGTERM", terminate);
+    };
+    signals.on("SIGINT", interrupt);
+    signals.on("SIGTERM", terminate);
+    child.once("error", (error) => {
+      cleanup();
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      cleanup();
+      resolve(
+        code ?? (signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 1),
       );
-      if (fs.existsSync(candidate)) {
-        runtime = candidate;
-        break;
-      }
-    }
-  } catch {}
+    });
+  });
 }
-const version = spawnSync(runtime, ["--version"], { encoding: "utf8" });
-if (version.error || !/^v(2[2-9]|[3-9]\d)\./.test(version.stdout || "")) {
-  console.error(
-    "Install Node 22.13+ / Node 24 LTS, or set SOLACE_NODE to its executable path.",
-  );
-  process.exit(1);
+
+async function main() {
+  const runtime = selectRuntime();
+  const [command, ...rest] = process.argv.slice(2);
+  const file = (name) => path.join(ROOT, "scripts", name);
+  const commands = {
+    setup: { args: [file("setup.cjs"), ...rest] },
+    doctor: { args: [file("doctor.cjs"), ...rest] },
+    tooling: { args: ["--test", file("test-tooling.cjs"), ...rest] },
+    dev: { args: [file("dev.mjs"), ...rest] },
+    insights: { args: ["--test", file("test-insights.mjs"), ...rest] },
+    routine: { args: ["--test", file("test-routine.mjs"), ...rest] },
+    offline: { args: ["--test", file("test-offline.cjs"), ...rest] },
+    wellness: { args: ["--test", file("test-wellness.mjs"), ...rest] },
+    reminders: { args: ["--test", file("test-reminders.cjs"), ...rest] },
+    "session-state": {
+      args: ["--test", file("test-session-state.cjs"), ...rest],
+    },
+    "api-config": { args: ["--test", file("test-api-config.cjs"), ...rest] },
+  };
+  if (command === "npm")
+    commands.npm = { args: [findNpmCli(runtime), ...rest] };
+  if (command === "expo" || command === "tsc") {
+    const target =
+      command === "expo"
+        ? packageBin(ROOT, "expo", "expo")
+        : packageBin(ROOT, "typescript", "tsc");
+    if (!target)
+      throw new Error(
+        installGuidance([`Root ${command} development tool is missing.`]),
+      );
+    commands[command] = { args: [target, ...rest] };
+  }
+  if (command === "server") {
+    const issues = dependencyIssues(ROOT, "server");
+    if (issues.length) throw new Error(installGuidance(issues));
+    commands.server = {
+      args: [...sourceServerArgs(ROOT), ...rest],
+      cwd: path.join(ROOT, "server"),
+    };
+  }
+  const job = commands[command];
+  if (!job) throw new Error("Unknown Solace runtime command.");
+  // A targeted termination of this wrapper must reach the dev supervisor,
+  // whose owned process groups contain the API and Metro workers.
+  if (command === "dev") return runSupervisedCommand(runtime, job);
+  const result = spawnSync(runtime, job.args, {
+    cwd: job.cwd || ROOT,
+    stdio: "inherit",
+    env: runtimeEnvironment(runtime),
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
 }
-const [command, ...rest] = process.argv.slice(2);
-const commands = {
-  expo: { args: [path.join(root, "node_modules/expo/bin/cli"), ...rest] },
-  tsc: { args: [path.join(root, "node_modules/typescript/bin/tsc"), ...rest] },
-  dev: { args: [path.join(root, "scripts/dev.mjs"), ...rest] },
-  server: {
-    args: [
-      path.join(root, "server/node_modules/tsx/dist/cli.mjs"),
-      "src/index.ts",
-      ...rest,
-    ],
-    cwd: path.join(root, "server"),
-  },
-  insights: {
-    args: ["--test", path.join(root, "scripts/test-insights.mjs"), ...rest],
-  },
-  wellness: {
-    args: ["--test", path.join(root, "scripts/test-wellness.mjs"), ...rest],
-  },
-  reminders: {
-    args: ["--test", path.join(root, "scripts/test-reminders.cjs"), ...rest],
-  },
-  "session-state": {
-    args: [
-      "--test",
-      path.join(root, "scripts/test-session-state.cjs"),
-      ...rest,
-    ],
-  },
-};
-const job = commands[command];
-if (!job) {
-  console.error("Unknown Solace runtime command.");
-  process.exit(1);
-}
-const result = spawnSync(runtime, job.args, {
-  cwd: job.cwd || root,
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    PATH: path.dirname(runtime) + path.delimiter + process.env.PATH,
-  },
-});
-if (result.error) console.error(result.error.message);
-process.exit(result.status ?? 1);
+module.exports = { main, runSupervisedCommand };
+if (require.main === module)
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      console.error(
+        error instanceof Error ? error.message : "Solace could not start.",
+      );
+      process.exitCode = 1;
+    });

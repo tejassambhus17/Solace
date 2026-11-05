@@ -1,40 +1,76 @@
 # Solace design system
 
-## Approved visual authority
-`design/references/00-home-tabs-light.png` and `00-home-tabs-dark.png` establish the visual direction. Other sheets specify supporting flows. Device bezels in those images are presentation chrome; do not reproduce them inside the native app.
+## Current visual authority
 
-## Visual language
-Warm ivory and blush surfaces, forest-green text, sage accents, and subtle apricot/lavender light. The latest user direction overrides the original forest-green dark mockup: dark mode uses a true black canvas, neutral charcoal surfaces, warm ivory text and champagne controls. Avoid green-tinted dark surfaces. Use theme tokens, never invert screenshots.
+The botanical references in `design/references/00-home-tabs-light.png` and `00-home-tabs-dark.png` establish the identity: editorial serif headings, readable sans serif text, sculpted petals and leaves, warm light, and generous spacing. Device bezels are presentation chrome, not app UI.
 
-Editorial serif headings paired with readable sans serif body text. The selected Cormorant Garamond heading font approximates the approved references; Inter is the UI body face. Keep body text at least 14–16 points and important controls at least 44 points high.
+The latest user direction refines that identity rather than replacing it. Preserve the loved light theme. Dark mode uses a black canvas, neutral graphite surfaces and champagne actions; the forest-green dark reference and the intervening large purple panels are historical directions, not current color authority. Preserve all original reference images and source artwork.
 
-Use real raster petal and botanical illustrations. Decorative images do not receive accessibility focus or block controls. Use a single consistent outlined icon family for navigation and actions.
+## Theme tokens
 
-## Screen composition
-Four bottom destinations: Today, Solace, Journey, Profile. Detail screens have a clear back action. Onboarding and immersive activities can suppress tab navigation. On wide web previews, keep a centered readable mobile column.
+Use semantic tokens from `src/theme.tsx` rather than screenshot inversion or per-screen color substitutions.
 
-Use generous spacing, rounded tactile surfaces, restrained elevation, and concise copy. Keep text away from botanical silhouettes. Use clear labels in addition to color for moods and selected states.
+| Role | Light | Dark |
+|---|---|---|
+| Canvas | `#FBF0E8` | `#000000` |
+| Surface | `#FFF8F2` | `#141416` |
+| Raised surface | `#EEE8D6` | `#202022` |
+| Main text | `#183A2B` | `#F4EEE6` |
+| Secondary text | `#626B5D` | `#B6B0AA` |
+| Primary action | `#2D5038` | `#E7C7A8` |
+| On-primary text | `#FFF9EC` | `#2B211A` |
+| Border | `#E6DACE` | `#2C2B2F` |
+| Hero base | `#F2E5D3` | `#181719` |
 
-## Motion and accessibility
-Breathing motion communicates a named phase and countdown in text. Respect reduced motion preferences. Loading, errors, completion, and selection have textual feedback. Keep screen reader labels on icon buttons and state on toggles.
+Lilac, peach and sage remain small accents and semantic activity tones. Dark pairs are `#211E27`/`#D7C8E6`, `#28201D`/`#E8C5AD`, and `#1D2521`/`#C0D3C6`. Avoid broad green tint and large saturated purple blocks. Color lives primarily in the botanical artwork, selected mood, icon details and the primary action.
 
-## Artwork provenance
-`assets/petal.png` and `assets/botanical.png` were created with the built-in image-generation tool for this app from the approved concept direction. They are separate production assets, not screenshots of the UI.
+The light secondary-text adjustment to `#626B5D` preserves the visual identity while reaching a measured 4.54:1 against the raised surface. Token measurements do not certify every image/text combination; record actual browser and native checks separately in `docs/VERIFICATION.md`.
 
-## Refinement implementation
+## Typography and composition
 
-Light surfaces now use blush ivory `#FBF0E8`, warm white `#FFF8F2`, and forest text `#183A2B`; dark uses `#000000`, `#111112` and `#1D1D1F`, with `#303033` borders and `#EBDFCB` primary actions. Keep fine warm borders, generous section spacing, restrained pill actions and editorial headings. Mood stones use softly lit organic oval geometry, paired with explicit mood labels. The approved rounded botanical cards remain the visual authority.
+Cormorant Garamond headings and Inter body/UI text retain the editorial identity. Reserve the largest headings for arrival and the featured practice. Supporting labels remain compact and readable. Use body text around 14–16 points and touch controls at least 44 points high, with native Android targets sized appropriately.
 
-`assets/moment-light.png` and `assets/moment-dark.png` are separately generated production artwork for the featured activity, with text rendered in code. Their provenance and prompts are in `assets/ARTWORK.md`. Preserve the existing reference archive and source assets.
+Keep five main destinations in order: **Today, Solace, Explore, Journey, Profile**. The user explicitly approved Explore to reduce clutter. Detail screens retain clear back actions and their originating context. Auth and immersive activities may suppress tabs. Wide web previews remain a centered mobile column.
 
-## Black-mode correction
+## Today and the daily pause
 
-The user's explicit November 5 correction takes precedence over the forest-dark reference. Large dark surfaces must be neutral RGB values, with no green cast. Keep color in mood indicators and the original petal artwork; supporting leaves become quiet champagne silhouettes. The featured dark activity is composed in code from the original transparent petal on charcoal, rather than the earlier green-backed moment-dark.png. Preserve that earlier artwork as source history.
+Today is a welcoming daily arrival, not a feature catalogue:
 
-Use local search and inline rename in conversation history. Show a real latest-conversation resume entry on Today when an account has one. Unsubmitted writing is an account-scoped in-memory draft, not a saved or device-persistent record; make that distinction explicit. Expired sessions hide authenticated screens and resume the same account's draft/route after sign-in.
+1. Compact brand/date and personal greeting.
+2. One cohesive mood tray with five named moods and an explicit saved-mood state.
+3. An illustrated **Your daily pause** hero with one primary action and a quiet factual three-step path.
+4. Conversation continuation and a short daily affirmation footer.
 
-## Native dark artwork and daily routine
+The hero changes its title and action for check-in, curated practice, reflection and completed states. Always use `pickDailyRoutine`'s actual next route/parameters. Completing the pause keeps the recorded progress and offers an optional three-minute breathing moment; it must not manufacture completion, assign another goal, or imply clinical benefit.
 
-The next pass adds production dark-petal.png, dark-stillness.png and dark-night.png through built-in ImageGen. Their smoky lavender/champagne material sits on neutral black/charcoal; broad green tint remains excluded. Artwork is decorative, with text and controls rendered separately and accessible names supplied on controls. Light mode keeps the original petal, and supporting botanical images stay faint and offset from text. See assets/DARK_ARTWORK.md for prompts and provenance.
+During the practice stage, **Why this pause?** expands the curated reason. Historical preferences/helpful feedback require personalization consent; directly supplied current-day mood can guide a local curated option. Keep these facts understandable without placing a paragraph of explanation in the default hero.
 
-Today uses a primary breathing moment, a real recent-conversation shortcut, a saved-toolkit entry and a quiet grounding feature. Supporting navigation is a divided list rather than repeated same-weight cards. Journey puts its factual weekly reflection before participation XP. My Toolkit has explicit saved/empty/removing states and remains account-scoped. Grounding is optional and immersive; step numbers describe the actual sequence, and users can skip any sense.
+The three-step path is supported by actual saved account/device records. Its accessible progress value reports the real count out of three. The daily affirmation is stable for the device day and opens the existing affirmation screen/save flow; do not claim it is dynamically generated AI or automatically saved.
+
+## Explore and supporting screens
+
+Explore uses an illustrated breathing feature followed by quiet grounding/writing/tool rows. Guides, reflective check-ins, toolkit, plan, challenges and affirmations remain available. Avoid repeated same-weight colored cards competing with the featured practice.
+
+Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Profile owns private photos, account settings and data controls. Welcome, login, signup and Today have no upper-right profile shortcut.
+
+## Artwork and implementation
+
+`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with generated `assets/daily-pause-dark-v2.png`. A shared readability scrim uses React Native 0.88's supported `backgroundImage` property, with no new gradient dependency. Text, progress and controls are rendered separately in code. Keep the left reading zone clear and crop decorative petals/leaves around it. The same component supports Today and Explore.
+
+Artwork and decorative icons are hidden from assistive technology and cannot intercept controls. Keep explicit accessible names, expanded/selected states, and progress values on meaningful UI. Bundling and browser rendering do not establish native scrim projection, VoiceOver/TalkBack behavior or device contrast.
+
+Original petal, botanical, stillness and night assets remain available. Preserve the original green-backed `moment-dark.png` as history, not as current dark hero artwork. Provenance is in `assets/ARTWORK.md`, `assets/DARK_ARTWORK.md` and `assets/DAILY_PAUSE_ARTWORK.md`.
+
+## Navigation, motion and native boundaries
+
+The floating navigation rail shares its measured height with screen/composer clearance and respects safe-area insets. Native keyboards hide it. Supported iOS uses actual Expo GlassView only after both capability checks and with Reduce Transparency off; older supported iOS uses native blur, and the accessibility fallback is opaque. Android uses an opaque tonal capsule, selected icon indicator and native ripple. The web shows fallback layout, not proof of system glass.
+
+This remains a custom tab/stack implementation, not UIKit native tab navigation. Native iOS edge-swipe back is not implemented; Android predictive-Back integration and installed-device keyboard/gesture behavior remain follow-up work. Keep these limits distinct from the working detail Back buttons/hardware-Back handling.
+
+Breathing motion communicates a named phase/countdown and honors reduced motion. Do not add continuous decorative motion merely to create interest. Loading, errors, completion, optional consent and unsynced writing need explicit text states. Preserve recoverable user text and never imply an external operation succeeded before confirmation.
+
+## Writing, privacy and release evidence
+
+Native check-in/journal drafts and bounded unsynced writing use account-scoped SecureStore; chat/feedback drafts remain in memory. Draft writes debounce and can lose recent uncommitted edits under abrupt termination. Web writing is memory-only. See the README and verification record for retry/cleanup/cold-launch limits; do not describe all drafts as durable or synced.
+
+Private profile photos have real choose/save/remove/cancel/error states and remain owner-scoped. Reminder delivery requires device verification. Real provider configuration, a public HTTPS API, a rebuilt installable APK tested on physical hardware, verified reminders and the final demo remain submission gates. UI refinement does not establish production release readiness.

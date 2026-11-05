@@ -25,11 +25,18 @@ export class Store {
       target && existsSync(target) ? readFileSync(target) : undefined,
     );
     db.run("PRAGMA foreign_keys = ON");
-    db.run(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, created_at TEXT NOT NULL, personalization INTEGER NOT NULL DEFAULT 0);
+    db.run(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, created_at TEXT NOT NULL, personalization INTEGER NOT NULL DEFAULT 0, avatar TEXT);
       CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS records (id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, collection TEXT NOT NULL, json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(user_id, collection, id));
       CREATE INDEX IF NOT EXISTS records_owner ON records(user_id, collection, created_at);`);
     const store = new Store(db, SQL, target);
+    // Existing installations keep their accounts and records when upgrading.
+    if (
+      !store
+        .all<{ name: string }>("PRAGMA table_info(users)")
+        .some((column) => column.name === "avatar")
+    )
+      store.run("ALTER TABLE users ADD COLUMN avatar TEXT");
     store.persist();
     return store;
   }

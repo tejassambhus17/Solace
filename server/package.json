@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/api.test.ts"
+    "pretest": "tsc -p tsconfig.json",
+    "test": "tsx --test tests/*.test.ts",
+    "pretest:process": "tsc -p tsconfig.json",
+    "test:process": "tsx --test tests/startup.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,8 +19,12 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.1",
     "helmet": "^8.1.0",
+    "sharp": "^0.35.5",
     "sql.js": "^1.13.0",
     "zod": "^4.6.7"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

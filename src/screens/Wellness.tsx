@@ -107,7 +107,15 @@ function Mark({
 }) {
   const { colors } = useTheme();
   return (
-    <Ionicons name={name as any} size={size} color={color || colors.text} />
+    <Ionicons
+      name={name as any}
+      size={size}
+      color={color || colors.text}
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden
+    />
   );
 }
 function Header({
@@ -174,7 +182,7 @@ function Field({
   label?: string;
   editable?: boolean;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
@@ -194,7 +202,8 @@ function Field({
         styles.field,
         {
           color: colors.text,
-          backgroundColor: colors.surface,
+          backgroundColor:
+            resolved === "dark" ? colors.surface2 : colors.surface,
           borderColor: focused ? colors.primary : colors.border,
           minHeight,
         },
@@ -244,17 +253,32 @@ function Action({
   description,
   icon = "leaf-outline",
   onPress,
+  tone = "sage",
 }: {
   title: string;
   description: string;
   icon?: string;
   onPress: () => void;
+  tone?: "lavender" | "peach" | "sage";
 }) {
   const { colors } = useTheme();
   return (
-    <Card onPress={onPress} style={styles.action}>
-      <View style={[styles.iconBox, { backgroundColor: colors.surface2 }]}>
-        <Mark name={icon} />
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.action,
+        {
+          borderBottomWidth: 0.75,
+          borderBottomColor: colors.border,
+          opacity: pressed ? 0.65 : 1,
+        },
+      ]}
+    >
+      <View
+        style={[styles.iconBox, { backgroundColor: colors[`${tone}Surface`] }]}
+      >
+        <Mark name={icon} color={colors[`${tone}Text`]} size={22} />
       </View>
       <View style={{ flex: 1 }}>
         <Heading small style={{ fontSize: 23, lineHeight: 25 }}>
@@ -265,7 +289,7 @@ function Action({
         </Copy>
       </View>
       <Mark name="chevron-forward" size={20} />
-    </Card>
+    </Pressable>
   );
 }
 function PageIntro({
@@ -275,6 +299,7 @@ function PageIntro({
   title: string;
   children?: React.ReactNode;
 }) {
+  const { resolved } = useTheme();
   return (
     <View style={{ marginBottom: 28 }}>
       <BotanicalBackdrop
@@ -283,7 +308,7 @@ function PageIntro({
           height: 190,
           right: -105,
           top: -92,
-          opacity: 0.23,
+          opacity: resolved === "dark" ? 0.1 : 0.23,
         }}
       />
       <Heading style={{ maxWidth: "92%" }}>{title}</Heading>
@@ -488,6 +513,7 @@ function Toolkit() {
         title="Five-senses grounding"
         description="A gentle practice to notice your surroundings."
         icon="hand-left-outline"
+        tone="peach"
         onPress={() => app.navigate("grounding")}
       />
       <Action
@@ -500,6 +526,7 @@ function Toolkit() {
         title="A moment to reflect"
         description="Notice what is on your mind."
         icon="create-outline"
+        tone="lavender"
         onPress={() => app.navigate("reflection")}
       />
       <Button
@@ -723,13 +750,13 @@ function Grounding({ params }: { params: AnyRecord }) {
                 fontFamily: F.heading,
                 fontSize: 88,
                 lineHeight: 92,
-                color: colors.primary,
+                color: colors.peachText,
               }}
             >
               {step.count}
             </Text>
             <View style={{ flex: 1 }}>
-              <Mark name={step.icon} size={25} color={colors.primary} />
+              <Mark name={step.icon} size={25} color={colors.peachText} />
               <Heading style={{ fontSize: 35, lineHeight: 37, marginTop: 9 }}>
                 {step.title}
               </Heading>
@@ -771,7 +798,7 @@ function Grounding({ params }: { params: AnyRecord }) {
 
 function Checkin() {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const draftKey = "checkin:new";
   const draft = app.editorDrafts[draftKey];
   const [mood, setMood] = useState(
@@ -791,6 +818,7 @@ function Checkin() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const saveLock = useRef(false);
   function writeDraft(nextMood = mood, nextTags = tags, nextNote = note) {
     if (saveLock.current) return;
@@ -830,13 +858,14 @@ function Checkin() {
     setSaving(true);
     setError("");
     try {
-      await app.save("checkins", {
+      const result = await app.save("checkins", {
         mood,
         tags,
         note: note.trim(),
         day: localDay(),
         createdAt: stamp(),
       });
+      setSavedId(String(result.id));
       app.setEditorDraft(draftKey, null, submittedDraft);
       setSaved(true);
     } catch (e) {
@@ -850,26 +879,38 @@ function Checkin() {
     return (
       <Screen>
         <Header />
-        <PageIntro title="Your check-in is saved">
-          Thank you for making a little space for yourself. What would feel
-          helpful now?
-        </PageIntro>
-        <Action
-          title="Talk with Solace"
-          description="Make room for what is on your mind."
-          icon="chatbubble-outline"
-          onPress={() =>
-            app.navigate("chat", {
-              context: `I am feeling ${mood.toLowerCase()} today.${note ? ` ${note}` : ""}`,
-            })
+        <PageIntro
+          title={
+            app.pendingWrites.some((entry) => entry.id === savedId)
+              ? app.draftProtection === "device"
+                ? "Kept on this device"
+                : "Kept in this tab"
+              : "Your check-in is saved"
           }
+        >
+          {app.pendingWrites.some((entry) => entry.id === savedId)
+            ? app.draftProtection === "device"
+              ? "Your check-in is saved securely on this device and waiting to sync to your account."
+              : "Your check-in is waiting to sync. Keep this browser tab open; closing it will remove this unsynced writing."
+            : "Thank you for making a little space for yourself. Your next small step is ready on Today."}
+        </PageIntro>
+        <Artwork
+          kind="petal"
+          size={170}
+          style={{ alignSelf: "center", marginBottom: 26 }}
         />
-        <Action
-          title="Take a reset moment"
-          description="One minute, at a comfortable pace."
-          onPress={() => app.navigate("breathing")}
+        <Button
+          title="See my next step"
+          onPress={() => app.navigate("today")}
         />
-        <Button title="Back to Today" onPress={() => app.navigate("today")} />
+        {app.pendingWrites.some((entry) => entry.id === savedId) && (
+          <Button
+            title="Manage unsynced writing"
+            variant="ghost"
+            onPress={() => app.navigate("account")}
+            style={{ marginTop: 12 }}
+          />
+        )}
       </Screen>
     );
   return (
@@ -878,8 +919,18 @@ function Checkin() {
       <PageIntro title={"How are you\nfeeling?"}>
         Take a quick moment to check in with yourself today.
       </PageIntro>
-      <Card style={{ padding: 16 }}>
-        <Heading small>Your mood today</Heading>
+      <Card
+        style={{
+          padding: 16,
+          backgroundColor:
+            resolved === "dark" ? colors.surface : colors.peachSurface,
+          borderColor:
+            resolved === "dark" ? colors.border : colors.peachSurface,
+        }}
+      >
+        <Heading small style={{ color: colors.peachText }}>
+          Your mood today
+        </Heading>
         <View accessibilityRole="radiogroup" style={styles.moodRow}>
           {choices.map((label) => (
             <Pressable
@@ -897,13 +948,35 @@ function Checkin() {
                 styles.moodChoice,
                 {
                   backgroundColor:
-                    mood === label ? colors.surface2 : colors.surface,
-                  borderColor: mood === label ? colors.primary : colors.border,
+                    mood === label
+                      ? resolved === "dark"
+                        ? colors.peachSurface
+                        : colors.primary
+                      : colors.surface,
+                  borderColor:
+                    mood === label
+                      ? resolved === "dark"
+                        ? colors.peachText
+                        : colors.primary
+                      : colors.border,
                 },
               ]}
             >
               <MoodStone mood={label} size={31} />
-              <Copy style={{ fontSize: 12, lineHeight: 17 }}>{label}</Copy>
+              <Copy
+                style={{
+                  fontSize: 12,
+                  lineHeight: 17,
+                  color:
+                    mood === label
+                      ? resolved === "dark"
+                        ? colors.peachText
+                        : colors.primaryText
+                      : colors.text,
+                }}
+              >
+                {label}
+              </Copy>
             </Pressable>
           ))}
         </View>
@@ -962,6 +1035,12 @@ function Checkin() {
         placeholder="What is on your mind today?"
         minHeight={88}
       />
+      <Copy muted style={{ fontSize: 12, lineHeight: 19, marginBottom: 14 }}>
+        {app.draftProtection === "device"
+          ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
+          : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
+      </Copy>
+      <ErrorNote error={app.offlineError || ""} />
       <ErrorNote error={error} />
       <Button
         title={saving ? "Saving…" : "Save check-in"}
@@ -974,29 +1053,49 @@ function Checkin() {
 
 function Assessments() {
   const app = useApp();
+  const { colors, resolved } = useTheme();
   return (
     <Screen>
       <Header />
       <PageIntro title="Check-ins">
         Gentle, supportive reflections to help you notice feelings and patterns.
       </PageIntro>
-      {ASSESSMENTS.map((item) => {
+      {ASSESSMENTS.map((item, index) => {
+        const tone = (["peach", "lavender", "sage"] as const)[index % 3];
         const previous = [...(app.data.assessments || [])]
           .filter((v: AnyRecord) => v.assessmentType === item.id)
           .sort((a: AnyRecord, b: AnyRecord) =>
             String(b.createdAt).localeCompare(String(a.createdAt)),
           )[0];
         return (
-          <Card key={item.id} style={{ padding: 18, marginBottom: 12 }}>
+          <Card
+            key={item.id}
+            style={{
+              padding: 18,
+              marginBottom: 12,
+              backgroundColor:
+                resolved === "dark" ? colors.surface : colors[`${tone}Surface`],
+              borderColor:
+                resolved === "dark" ? colors.border : colors[`${tone}Surface`],
+            }}
+          >
             <View style={styles.cardTop}>
-              <Mark name={item.icon} />
+              <Mark name={item.icon} color={colors[`${tone}Text`]} />
               <View style={{ flex: 1 }}>
-                <Heading small>{item.title}</Heading>
-                <Copy style={{ fontSize: 13, lineHeight: 19, marginTop: 5 }}>
+                <Heading small style={{ color: colors[`${tone}Text`] }}>
+                  {item.title}
+                </Heading>
+                <Copy
+                  style={{
+                    fontSize: 13,
+                    lineHeight: 19,
+                    marginTop: 5,
+                    color: colors[`${tone}Text`],
+                  }}
+                >
                   {item.description}
                 </Copy>
               </View>
-              <Petal size={48} />
             </View>
             <View style={styles.cardFooter}>
               <Button
@@ -1004,7 +1103,14 @@ function Assessments() {
                 icon="arrow-forward"
                 onPress={() => app.navigate("assessment", { id: item.id })}
               />
-              <Copy muted style={{ fontSize: 13, lineHeight: 19, flex: 1 }}>
+              <Copy
+                style={{
+                  fontSize: 13,
+                  lineHeight: 19,
+                  flex: 1,
+                  color: colors[`${tone}Text`],
+                }}
+              >
                 {previous
                   ? `Last reflection: ${new Date(previous.createdAt).toLocaleDateString()}`
                   : "Your first reflection"}
@@ -1732,6 +1838,7 @@ function Feedback({ params }: { params: AnyRecord }) {
 
 function Reflection() {
   const app = useApp();
+  const { colors, resolved } = useTheme();
   const draftKey = "reflection:new";
   const draft = app.editorDrafts[draftKey];
   const [text, setText] = useState(draft?.text || "");
@@ -1741,6 +1848,7 @@ function Reflection() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const saveLock = useRef(false);
   function writeDraft(nextText = text, nextNeed = need) {
     if (saveLock.current) return;
@@ -1760,7 +1868,7 @@ function Reflection() {
     setSaving(true);
     setError("");
     try {
-      await app.save("reflections", {
+      const result = await app.save("reflections", {
         text: text.trim(),
         need: need.trim(),
         ...(app.params?.conversationId
@@ -1768,6 +1876,7 @@ function Reflection() {
           : {}),
         createdAt: stamp(),
       });
+      setSavedId(String(result.id));
       app.setEditorDraft(draftKey, null, submittedDraft);
       setSaved(true);
     } catch (e) {
@@ -1782,8 +1891,21 @@ function Reflection() {
       <Screen>
         <Header />
         <PageIntro title="A little space, for you">
-          Your reflection is saved privately in your Journey.
+          {app.pendingWrites.some((entry) => entry.id === savedId)
+            ? app.draftProtection === "device"
+              ? "Your reflection is saved securely on this device. It is waiting to sync to your account."
+              : "Your reflection is kept in this browser tab and waiting to sync. Keep the tab open; closing it will remove this unsynced writing."
+            : "Your reflection is saved privately in your Journey."}
         </PageIntro>
+        <Artwork
+          kind="stillness"
+          style={{
+            width: "100%",
+            height: 170,
+            borderRadius: 22,
+            marginBottom: 24,
+          }}
+        />
         {app.params?.conversationId && (
           <View style={{ marginBottom: 12 }}>
             <Button
@@ -1804,6 +1926,14 @@ function Reflection() {
           style={{ marginTop: 12 }}
           onPress={() => app.navigate("today")}
         />
+        {app.pendingWrites.some((entry) => entry.id === savedId) && (
+          <Button
+            title="Manage unsynced writing"
+            variant="ghost"
+            onPress={() => app.navigate("account")}
+            style={{ marginTop: 12 }}
+          />
+        )}
       </Screen>
     );
   return (
@@ -1819,8 +1949,18 @@ function Reflection() {
         targetId="reflection"
         title="A moment to reflect"
       />
-      <Card style={{ padding: 16 }}>
-        <Heading small>What has been on your mind?</Heading>
+      <Card
+        style={{
+          padding: 16,
+          backgroundColor:
+            resolved === "dark" ? colors.surface : colors.lavenderSurface,
+          borderColor:
+            resolved === "dark" ? colors.border : colors.lavenderSurface,
+        }}
+      >
+        <Heading small style={{ color: colors.lavenderText }}>
+          What has been on your mind?
+        </Heading>
         <Field
           value={text}
           onChangeText={(value) => writeDraft(value, need)}
@@ -1844,9 +1984,11 @@ function Reflection() {
         />
       )}
       <Copy muted style={{ fontSize: 12, marginTop: 14, marginBottom: 14 }}>
-        Your draft is kept while you move around the app. Save it to keep it in
-        your Journey.
+        {app.draftProtection === "device"
+          ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
+          : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
       </Copy>
+      <ErrorNote error={app.offlineError || ""} />
       <ErrorNote error={error} />
       <Button
         title={saving ? "Saving…" : "Save reflection"}
@@ -1923,12 +2065,12 @@ function Reflections() {
                 month: "long",
                 day: "numeric",
               })}
-              description={String(
+              description={`${record.localOnly ? "Waiting to sync · " : ""}${String(
                 record.text ||
                   record.content ||
                   record.note ||
                   "A saved reflection",
-              ).slice(0, 130)}
+              ).slice(0, 130)}`}
               icon="create-outline"
               onPress={() =>
                 app.navigate("reflection-detail", { id: record.id })
@@ -1979,6 +2121,13 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
             })
           : "This reflection is no longer available."}
       </PageIntro>
+      {!!record?.localOnly && (
+        <Hint>
+          {app.draftProtection === "device"
+            ? "Saved on this device. Waiting to sync to your account."
+            : "Kept in this browser tab only. Keep it open until this entry syncs."}
+        </Hint>
+      )}
       {record && (
         <>
           <Card style={{ padding: 20 }}>
@@ -2005,7 +2154,9 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
             <Card style={{ padding: 18, marginTop: 14 }}>
               <Heading small>Delete this reflection?</Heading>
               <Copy style={{ marginTop: 8, marginBottom: 16 }}>
-                This permanently removes this reflection from your account.
+                {record.localOnly
+                  ? "This permanently removes this unsynced reflection from this device."
+                  : "This permanently removes this reflection from your account."}
               </Copy>
               <Button
                 title={deleting ? "Deleting…" : "Delete reflection"}
@@ -2163,12 +2314,14 @@ function Resources() {
         title="Your saved toolkit"
         description={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
         icon="bookmark-outline"
+        tone="lavender"
         onPress={() => app.navigate("toolkit")}
       />
       <Action
         title="Five-senses grounding"
         description="Notice this moment through your senses."
         icon="hand-left-outline"
+        tone="peach"
         onPress={() => app.navigate("grounding")}
       />
       {RESOURCE_GUIDES.map((guide) => (
@@ -2177,6 +2330,13 @@ function Resources() {
           title={guide.title}
           description={guide.subtitle}
           icon={guide.icon}
+          tone={
+            guide.id === "sleep" || guide.id === "self-esteem"
+              ? "lavender"
+              : guide.id === "anxiety" || guide.id === "low-mood"
+                ? "peach"
+                : "sage"
+          }
           onPress={() => app.navigate("resource", { id: guide.id })}
         />
       ))}
@@ -2184,6 +2344,7 @@ function Resources() {
         title="Need more support?"
         description="Find human support and trusted resources."
         icon="help-buoy-outline"
+        tone="peach"
         onPress={() => app.navigate("support")}
       />
     </Screen>
@@ -2192,7 +2353,7 @@ function Resources() {
 
 function Resource({ params }: { params: AnyRecord }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const guide =
     RESOURCE_GUIDES.find((v) => v.id === params.id) || RESOURCE_GUIDES[0];
   const previous = [...(app.data.sessions || [])]
@@ -2265,10 +2426,20 @@ function Resource({ params }: { params: AnyRecord }) {
           onPress={() => app.navigate("grounding", { source: guide.id })}
         />
       )}
-      <Card style={{ padding: 16, marginBottom: 16 }}>
+      <Card
+        style={{
+          padding: 16,
+          marginBottom: 16,
+          backgroundColor:
+            resolved === "dark" ? colors.surface : colors.sageSurface,
+          borderColor: resolved === "dark" ? colors.border : colors.sageSurface,
+        }}
+      >
         <View style={styles.between}>
-          <Copy style={{ fontFamily: F.strong }}>Your progress</Copy>
-          <Copy style={{ fontSize: 12 }}>
+          <Copy style={{ fontFamily: F.strong, color: colors.sageText }}>
+            Your progress
+          </Copy>
+          <Copy style={{ fontSize: 12, color: colors.sageText }}>
             {checked.length} of {guide.steps.length} practices
           </Copy>
         </View>
@@ -2280,7 +2451,7 @@ function Resource({ params }: { params: AnyRecord }) {
               width: `${(checked.length / guide.steps.length) * 100}%`,
               height: 9,
               borderRadius: 8,
-              backgroundColor: colors.primary,
+              backgroundColor: colors.sageText,
             }}
           />
         </View>
@@ -2545,7 +2716,7 @@ function Plan() {
 
 function Affirmation() {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const text = todayAffirmation();
   const day = localDay();
   const favourite = (app.data.plans || []).find(
@@ -2606,10 +2777,20 @@ function Affirmation() {
           padding: 24,
           marginBottom: 20,
           minHeight: 230,
-          backgroundColor: colors.surface2,
+          backgroundColor:
+            resolved === "dark" ? colors.surface : colors.lavenderSurface,
+          borderColor:
+            resolved === "dark" ? colors.border : colors.lavenderSurface,
         }}
       >
-        <Text style={[styles.affirmation, { color: colors.text }]}>{text}</Text>
+        <Text
+          style={[
+            styles.affirmation,
+            { color: resolved === "dark" ? colors.text : colors.lavenderText },
+          ]}
+        >
+          {text}
+        </Text>
         <View style={{ marginTop: 25 }}>
           <Button
             title={
@@ -2808,8 +2989,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 13,
-    padding: 18,
-    marginBottom: 12,
+    paddingVertical: 18,
+    minHeight: 86,
+    marginBottom: 3,
   },
   iconBox: {
     height: 46,

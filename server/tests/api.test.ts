@@ -1,13 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
+import sharp from "sharp";
+import initSqlJs from "sql.js";
 import { Store } from "../src/database.js";
 import { createApp } from "../src/app.js";
 import { getReply, type AIConfig } from "../src/ai.js";
 import { parseTrustProxyHops } from "../src/config.js";
+import { hashPassword } from "../src/auth.js";
+import { AVATAR_MAX_BYTES, AVATAR_PIXELS } from "../src/avatar.js";
 const ai: AIConfig = {
   mode: "offline",
   model: "test",
@@ -86,6 +91,7 @@ test("registration hashes passwords, validates input, logs in and revokes sessio
     const account = await create("alex@example.com");
     assert.ok(account.token);
     assert.equal(account.user.personalization, false);
+    assert.equal(account.user.avatar, null);
     assert.equal(account.user.password, undefined);
     assert.notEqual(
       store.one<{ password: string }>("SELECT password FROM users")!.password,
@@ -1115,5 +1121,439 @@ test("toolkit favorites and grounding sessions persist, export and cascade with 
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const photoURI = (bytes: Buffer) =>
+  `data:image/jpeg;base64,${bytes.toString("base64")}`;
+const examplePhoto = () =>
+  sharp({
+    create: { width: 640, height: 480, channels: 3, background: "#cba99a" },
+  })
+    .withMetadata({ orientation: 6 })
+    .jpeg()
+    .toBuffer();
+
+test("profile photos are decoded, oriented, normalized and stripped of metadata for their owner only", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const a = await create("photo-a@example.com");
+    const b = await create("photo-b@example.com");
+    const authA = { Authorization: `Bearer ${a.token}` };
+    const authB = { Authorization: `Bearer ${b.token}` };
+    const source = await examplePhoto();
+    const sourceMetadata = await sharp(source).metadata();
+    assert.ok(sourceMetadata.exif);
+    assert.ok(sourceMetadata.icc);
+    assert.equal(sourceMetadata.orientation, 6);
+    const saved = (
+      await request(app)
+        .patch("/api/auth/me")
+        .set(authA)
+        .send({
+          avatar: photoURI(source),
+          name: "Photo owner",
+          personalization: true,
+        })
+        .expect(200)
+    ).body.user;
+    assert.equal(saved.id, a.user.id);
+    assert.equal(saved.name, "Photo owner");
+    assert.equal(saved.personalization, true);
+    assert.notEqual(saved.avatar, photoURI(source));
+    const normalized = Buffer.from(saved.avatar.split(",")[1], "base64");
+    const metadata = await sharp(normalized).metadata();
+    assert.equal(metadata.format, "jpeg");
+    assert.equal(metadata.width, AVATAR_PIXELS);
+    assert.equal(metadata.height, AVATAR_PIXELS);
+    assert.equal(metadata.exif, undefined);
+    assert.equal(metadata.icc, undefined);
+    assert.equal(metadata.xmp, undefined);
+    assert.equal(metadata.orientation, undefined);
+    assert.ok(normalized.length <= AVATAR_MAX_BYTES);
+    assert.equal(
+      (await request(app).get("/api/state").set(authA).expect(200)).body.user
+        .avatar,
+      saved.avatar,
+    );
+    assert.equal(
+      (await request(app).get("/api/auth/me").set(authB).expect(200)).body.user
+        .avatar,
+      null,
+    );
+    assert.equal(
+      (await request(app).get("/api/export").set(authB).expect(200)).body.user
+        .avatar,
+      null,
+    );
+    await request(app)
+      .patch("/api/auth/me")
+      .set(authB)
+      .send({ avatar: saved.avatar, userId: a.user.id })
+      .expect(400);
+    await request(app)
+      .patch("/api/auth/me")
+      .send({ avatar: saved.avatar })
+      .expect(401);
+    assert.equal(
+      (await request(app).get("/api/auth/me").set(authA).expect(200)).body.user
+        .avatar,
+      saved.avatar,
+    );
+    const removed = (
+      await request(app)
+        .patch("/api/auth/me")
+        .set(authA)
+        .send({ avatar: null })
+        .expect(200)
+    ).body.user;
+    assert.equal(removed.avatar, null);
+    assert.equal(removed.name, "Photo owner");
+    assert.equal(removed.personalization, true);
+    assert.equal(
+      store.one<{ avatar: string | null }>(
+        "SELECT avatar FROM users WHERE id=?",
+        [a.user.id],
+      )!.avatar,
+      null,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("profile photo validation rejects malformed, oversized and excessive-dimension input without replacing a saved photo", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("photo-invalid@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const source = await examplePhoto();
+    const original = (
+      await request(app)
+        .patch("/api/auth/me")
+        .set(auth)
+        .send({ avatar: photoURI(source) })
+        .expect(200)
+    ).body.user.avatar;
+    const png = await sharp({
+      create: { width: 8, height: 8, channels: 3, background: "#ffffff" },
+    })
+      .png()
+      .toBuffer();
+    const wide = await sharp({
+      create: { width: 4097, height: 1, channels: 3, background: "#ffffff" },
+    })
+      .jpeg()
+      .toBuffer();
+    const pixels = await sharp({
+      create: { width: 2100, height: 2100, channels: 3, background: "#ffffff" },
+    })
+      .jpeg()
+      .toBuffer();
+    for (const avatar of [
+      "",
+      "https://example.com/profile.jpg",
+      "file:///private/photo.jpg",
+      "data:image/jpeg;base64,!!!!",
+      "data:image/jpeg;base64,AB==",
+      photoURI(Buffer.from("not an image")),
+      photoURI(png),
+      photoURI(wide),
+      photoURI(pixels),
+      photoURI(source.subarray(0, Math.floor(source.length / 2))),
+      "data:image/png;base64," + png.toString("base64"),
+    ]) {
+      const failed = await request(app)
+        .patch("/api/auth/me")
+        .set(auth)
+        .send({ avatar, name: "Must not change" })
+        .expect(400);
+      assert.equal(failed.body.code, "INVALID_AVATAR");
+    }
+    const tooLarge = await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ avatar: photoURI(Buffer.alloc(AVATAR_MAX_BYTES + 1)) })
+      .expect(413);
+    assert.equal(tooLarge.body.code, "AVATAR_TOO_LARGE");
+    const largeJSON = await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ avatar: "x".repeat(513 * 1024) })
+      .expect(413);
+    assert.equal(largeJSON.body.code, "REQUEST_TOO_LARGE");
+    for (const avatar of [true, {}, 1])
+      await request(app)
+        .patch("/api/auth/me")
+        .set(auth)
+        .send({ avatar })
+        .expect(400);
+    const current = (
+      await request(app).get("/api/auth/me").set(auth).expect(200)
+    ).body.user;
+    assert.equal(current.avatar, original);
+    assert.equal(current.name, "Alex");
+    // The larger JSON allowance applies only to profile updates, not chat.
+    await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "x".repeat(201 * 1024) })
+      .expect(413);
+    const detailed = await sharp(randomBytes(512 * 512 * 3), {
+      raw: { width: 512, height: 512, channels: 3 },
+    })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    assert.ok(detailed.length < AVATAR_MAX_BYTES);
+    assert.ok(photoURI(detailed).length > 200 * 1024);
+    await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ avatar: photoURI(detailed) })
+      .expect(200);
+  } finally {
+    store.close();
+  }
+});
+
+test("legacy accounts migrate safely and profile photos persist, export and disappear with account deletion", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "solace-avatar-migration-"));
+  const file = join(directory, "app.sqlite");
+  try {
+    const SQL = await initSqlJs();
+    const legacy = new SQL.Database();
+    legacy.run(
+      "CREATE TABLE users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password TEXT NOT NULL,created_at TEXT NOT NULL,personalization INTEGER NOT NULL DEFAULT 0)",
+    );
+    legacy.run(
+      "INSERT INTO users(id,email,name,password,created_at,personalization) VALUES(?,?,?,?,?,?)",
+      [
+        "legacy-owner",
+        "legacy-photo@example.com",
+        "Legacy name",
+        await hashPassword("correct horse battery"),
+        "2026-01-01T12:00:00Z",
+        1,
+      ],
+    );
+    writeFileSync(file, legacy.export());
+    legacy.close();
+    const first = await fixture(file);
+    let auth: { Authorization: string };
+    let avatar: string;
+    try {
+      const login = (
+        await request(first.app)
+          .post("/api/auth/login")
+          .send({
+            email: "legacy-photo@example.com",
+            password: "correct horse battery",
+          })
+          .expect(200)
+      ).body;
+      auth = { Authorization: `Bearer ${login.token}` };
+      assert.equal(login.user.avatar, null);
+      assert.equal(login.user.name, "Legacy name");
+      assert.equal(login.user.personalization, true);
+      avatar = (
+        await request(first.app)
+          .patch("/api/auth/me")
+          .set(auth)
+          .send({ avatar: photoURI(await examplePhoto()) })
+          .expect(200)
+      ).body.user.avatar;
+    } finally {
+      first.store.close();
+    }
+    const second = await fixture(file);
+    try {
+      assert.equal(
+        second.store
+          .all<{ name: string }>("PRAGMA table_info(users)")
+          .filter((column) => column.name === "avatar").length,
+        1,
+      );
+      assert.equal(
+        (await request(second.app).get("/api/state").set(auth!).expect(200))
+          .body.user.avatar,
+        avatar!,
+      );
+      const exported = (
+        await request(second.app).get("/api/export").set(auth!).expect(200)
+      ).body;
+      assert.equal(exported.user.avatar, avatar!);
+      assert.equal(exported.user.id, "legacy-owner");
+      assert.equal(exported.user.password, undefined);
+      await request(second.app).delete("/api/account").set(auth!).expect(204);
+      assert.equal(
+        second.store.one("SELECT avatar FROM users WHERE id=?", [
+          "legacy-owner",
+        ]),
+        undefined,
+      );
+      assert.equal(
+        second.store.all("SELECT * FROM tokens WHERE user_id=?", [
+          "legacy-owner",
+        ]).length,
+        0,
+      );
+      await request(second.app).get("/api/state").set(auth!).expect(401);
+    } finally {
+      second.store.close();
+    }
+    const third = await Store.open(file);
+    try {
+      assert.equal(
+        third.one("SELECT avatar FROM users WHERE id=?", ["legacy-owner"]),
+        undefined,
+      );
+    } finally {
+      third.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+// Hold the real decoder at its asynchronous output boundary, then let it finish.
+// This exercises actual JPEG processing and API persistence rather than replacing
+// normalization with a fake success adapter.
+function holdPhotoDecode() {
+  const prototype = Object.getPrototypeOf(sharp());
+  const original = prototype.toBuffer;
+  let release!: () => void;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  prototype.toBuffer = async function (...args: unknown[]) {
+    started();
+    await wait;
+    return original.apply(this, args);
+  };
+  return {
+    ready,
+    release,
+    restore: () => {
+      prototype.toBuffer = original;
+    },
+  };
+}
+
+test("late photo uploads cannot commit after logout, session expiry or account deletion", async () => {
+  const source = photoURI(await examplePhoto());
+  for (const action of ["logout", "expire", "delete"] as const) {
+    const { app, store, create } = await fixture();
+    const account = await create(`photo-race-${action}@example.com`);
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const decoder = holdPhotoDecode();
+    try {
+      const pending = request(app)
+        .patch("/api/auth/me")
+        .set(auth)
+        .send({ avatar: source, name: "Late name" })
+        .then((response) => response);
+      await decoder.ready;
+      if (action === "logout")
+        await request(app).post("/api/auth/logout").set(auth).expect(204);
+      if (action === "expire")
+        store.transaction(() =>
+          store.run("UPDATE tokens SET expires_at=0 WHERE user_id=?", [
+            account.user.id,
+          ]),
+        );
+      if (action === "delete")
+        await request(app).delete("/api/account").set(auth).expect(204);
+      decoder.release();
+      const late = await pending;
+      assert.equal(late.status, 401);
+      assert.equal(late.body.code, "UNAUTHORIZED");
+      const row = store.one<{ avatar: string | null; name: string }>(
+        "SELECT avatar,name FROM users WHERE id=?",
+        [account.user.id],
+      );
+      if (action === "delete") assert.equal(row, undefined);
+      else {
+        assert.equal(row!.avatar, null);
+        assert.equal(row!.name, "Alex");
+      }
+    } finally {
+      decoder.release();
+      decoder.restore();
+      store.close();
+    }
+  }
+});
+
+test("photo removal supersedes a pending upload and concurrent account edits are preserved", async () => {
+  const source = photoURI(await examplePhoto());
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("photo-change-race@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    for (const remove of [true, false]) {
+      const decoder = holdPhotoDecode();
+      try {
+        const pending = request(app)
+          .patch("/api/auth/me")
+          .set(auth)
+          .send({ avatar: source })
+          .then((response) => response);
+        await decoder.ready;
+        await request(app)
+          .patch("/api/auth/me")
+          .set(auth)
+          .send({
+            name: "Edited while uploading",
+            personalization: true,
+            ...(remove ? { avatar: null } : {}),
+          })
+          .expect(200);
+        decoder.release();
+        const late = await pending;
+        assert.equal(late.status, remove ? 409 : 200);
+        if (remove) assert.equal(late.body.code, "AVATAR_CHANGED");
+        const current = (
+          await request(app).get("/api/auth/me").set(auth).expect(200)
+        ).body.user;
+        assert.equal(current.name, "Edited while uploading");
+        assert.equal(current.personalization, true);
+        assert.equal(current.avatar === null, remove);
+      } finally {
+        decoder.release();
+        decoder.restore();
+      }
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test("failed photo persistence reports an error and keeps the previous profile intact", async () => {
+  const { app, store, create } = await fixture();
+  const originalPersist = store.persist.bind(store);
+  try {
+    const account = await create("photo-persist-failure@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    store.persist = () => {
+      throw new Error("DISK_WRITE_FAILED");
+    };
+    await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ avatar: photoURI(await examplePhoto()), name: "Unsaved name" })
+      .expect(500);
+    store.persist = originalPersist;
+    const current = (
+      await request(app).get("/api/auth/me").set(auth).expect(200)
+    ).body.user;
+    assert.equal(current.avatar, null);
+    assert.equal(current.name, "Alex");
+  } finally {
+    store.persist = originalPersist;
+    store.close();
   }
 });

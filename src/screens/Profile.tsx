@@ -6,9 +6,11 @@ import {
   Platform,
   Linking,
   Share,
+  Image,
 } from "react-native";
 import { useTheme } from "../theme";
 import { useApp } from "../store";
+import { chooseProfilePhoto } from "../photos";
 import {
   Screen,
   AppText,
@@ -45,27 +47,38 @@ function MenuRow({
   subtitle,
   icon,
   onPress,
+  tone = "lavender",
 }: {
   title: string;
   subtitle?: string;
   icon: string;
   onPress: () => void;
+  tone?: "lavender" | "peach" | "sage";
 }) {
   const { colors } = useTheme();
   return (
-    <Card onPress={onPress} style={{ marginBottom: 12, padding: 18 }}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => ({
+        paddingVertical: 18,
+        borderBottomWidth: 0.75,
+        borderBottomColor: colors.border,
+        opacity: pressed ? 0.65 : 1,
+      })}
+    >
       <Row>
         <View
           style={{
             width: 46,
             height: 46,
             borderRadius: 23,
-            backgroundColor: colors.surface2,
+            backgroundColor: colors[`${tone}Surface`],
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          <Icon name={icon} size={23} />
+          <Icon name={icon} size={22} color={colors[`${tone}Text`]} />
         </View>
         <View style={{ flex: 1 }}>
           <AppText variant="heading" style={{ fontSize: 25, lineHeight: 28 }}>
@@ -83,7 +96,7 @@ function MenuRow({
         </View>
         <Icon name="chevron-forward" size={18} color={colors.muted} />
       </Row>
-    </Card>
+    </Pressable>
   );
 }
 function Notice({ text, error = false }: { text: string; error?: boolean }) {
@@ -101,7 +114,7 @@ function Notice({ text, error = false }: { text: string; error?: boolean }) {
 
 export default function ProfileScreen({ name }: { name: string }) {
   const app = useApp();
-  const { colors, mode, setMode } = useTheme();
+  const { colors, mode, setMode, resolved } = useTheme();
   const [message, setMessageState] = useState("");
   const [error, setErrorState] = useState("");
   const currentRoute = useRef(name);
@@ -120,6 +133,11 @@ export default function ProfileScreen({ name }: { name: string }) {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [accountName, setAccountName] = useState(app.user?.name || "");
   const [deleteAccount, setDeleteAccount] = useState(false);
+  const [photoAction, setPhotoAction] = useState("");
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const [discardWriteId, setDiscardWriteId] = useState<string | null>(null);
+  const accountIdentity = useRef(app.user?.id);
+  accountIdentity.current = app.user?.id;
   const [reminderType, setReminderType] = useState("checkin");
   const [reminderTitle, setReminderTitle] = useState("");
   const [time, setTime] = useState("20:00");
@@ -132,6 +150,8 @@ export default function ProfileScreen({ name }: { name: string }) {
     setError("");
     setDeleteId(null);
     setDeleteAccount(false);
+    setLogoutConfirm(false);
+    setDiscardWriteId(null);
   }, [name]);
   async function perform(work: () => Promise<void>) {
     if (operationLock.current) return;
@@ -149,6 +169,26 @@ export default function ProfileScreen({ name }: { name: string }) {
       operationLock.current = false;
       setPending(false);
     }
+  }
+  async function changePhoto() {
+    const owner = app.user?.id;
+    await perform(async () => {
+      setPhotoAction("choosing");
+      try {
+        const avatar = await chooseProfilePhoto();
+        if (!avatar) return;
+        if (
+          currentRoute.current !== "account" ||
+          accountIdentity.current !== owner
+        )
+          return;
+        setPhotoAction("saving");
+        await app.updateUser({ avatar });
+        setMessage("Profile photo updated.");
+      } finally {
+        setPhotoAction("");
+      }
+    });
   }
   const status = (
     <>
@@ -171,7 +211,13 @@ export default function ProfileScreen({ name }: { name: string }) {
     return (
       <Screen>
         <View>
-          <BotanicalBackdrop style={{ right: -90, top: -60, opacity: 0.23 }} />
+          <BotanicalBackdrop
+            style={{
+              right: -90,
+              top: -60,
+              opacity: resolved === "dark" ? 0.1 : 0.23,
+            }}
+          />
           <Row style={{ marginBottom: 30 }}>
             <BrandMark />
           </Row>
@@ -179,19 +225,31 @@ export default function ProfileScreen({ name }: { name: string }) {
             <View
               style={{
                 width: 96,
-                height: 112,
+                height: 96,
                 borderRadius: 48,
                 overflow: "hidden",
-                backgroundColor: colors.surface2,
+                backgroundColor:
+                  resolved === "dark"
+                    ? colors.surface2
+                    : colors.lavenderSurface,
                 borderWidth: 1,
                 borderColor: colors.border,
               }}
             >
-              <Artwork
-                kind="petal"
-                size={130}
-                style={{ position: "absolute", left: -17, top: -4 }}
-              />
+              {app.user?.avatar ? (
+                <Image
+                  accessibilityLabel="Your profile photo"
+                  source={{ uri: app.user.avatar }}
+                  resizeMode="cover"
+                  style={{ width: 96, height: 96 }}
+                />
+              ) : (
+                <Artwork
+                  kind="petal"
+                  size={130}
+                  style={{ position: "absolute", left: -17, top: -14 }}
+                />
+              )}
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="display">
@@ -201,8 +259,7 @@ export default function ProfileScreen({ name }: { name: string }) {
                 color={colors.muted}
                 style={{ marginTop: 7, fontSize: 14, lineHeight: 22 }}
               >
-                A space for your preferences, reminders, and your Solace
-                experience.
+                Your preferences. Your pace.
               </AppText>
             </View>
           </Row>
@@ -214,21 +271,17 @@ export default function ProfileScreen({ name }: { name: string }) {
           onPress={() => app.navigate("account")}
         />
         <MenuRow
-          title="Your toolkit"
-          subtitle={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
-          icon="bookmark-outline"
-          onPress={() => app.navigate("toolkit")}
-        />
-        <MenuRow
           title="Gentle reminders"
           subtitle="A nudge, on your terms"
           icon="notifications-outline"
+          tone="peach"
           onPress={() => app.navigate("reminders")}
         />
         <MenuRow
           title="What Solace remembers"
           subtitle="Inspect and manage approved preferences"
           icon="leaf-outline"
+          tone="sage"
           onPress={() => app.navigate("memory")}
         />
         <MenuRow
@@ -241,6 +294,7 @@ export default function ProfileScreen({ name }: { name: string }) {
           title="Find human support"
           subtitle="Directories and local support resources"
           icon="heart-outline"
+          tone="peach"
           onPress={() => app.navigate("support")}
         />
         <View
@@ -780,11 +834,86 @@ export default function ProfileScreen({ name }: { name: string }) {
           "Your information",
           "Manage your account and the data you have saved.",
         )}
+        <Row style={{ alignItems: "flex-start", gap: 18, marginBottom: 22 }}>
+          <View
+            style={{
+              width: 88,
+              height: 88,
+              borderRadius: 44,
+              overflow: "hidden",
+              backgroundColor:
+                resolved === "dark" ? colors.surface2 : colors.lavenderSurface,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {app.user?.avatar ? (
+              <Image
+                accessibilityLabel="Your current profile photo"
+                source={{ uri: app.user.avatar }}
+                resizeMode="cover"
+                style={{ width: 88, height: 88 }}
+              />
+            ) : (
+              <Icon
+                name="person-outline"
+                size={32}
+                color={colors.lavenderText}
+              />
+            )}
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="heading">Profile photo</AppText>
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={{ marginTop: 5 }}
+            >
+              Optional. Choose a photo to make this space yours.
+            </AppText>
+          </View>
+        </Row>
+        <Button
+          title={
+            photoAction === "saving"
+              ? "Saving photo…"
+              : app.user?.avatar
+                ? "Change photo"
+                : "Add profile photo"
+          }
+          variant="secondary"
+          icon="image-outline"
+          disabled={pending}
+          loading={photoAction === "choosing" || photoAction === "saving"}
+          onPress={changePhoto}
+        />
+        {!!app.user?.avatar && (
+          <Button
+            title="Remove photo"
+            variant="ghost"
+            disabled={pending}
+            loading={photoAction === "removing"}
+            onPress={() =>
+              perform(async () => {
+                setPhotoAction("removing");
+                try {
+                  await app.updateUser({ avatar: null });
+                  setMessage("Profile photo removed.");
+                } finally {
+                  setPhotoAction("");
+                }
+              })
+            }
+          />
+        )}
+        {status}
+        <View style={{ height: 22 }} />
         <AppText variant="label">Name</AppText>
         <Input
           accessibilityLabel="Your name"
           value={accountName}
           onChangeText={setAccountName}
+          editable={!pending}
           maxLength={80}
           style={{ marginTop: 8, marginBottom: 12 }}
         />
@@ -793,8 +922,7 @@ export default function ProfileScreen({ name }: { name: string }) {
         </AppText>
         <Button
           title="Save name"
-          disabled={!accountName.trim()}
-          loading={pending}
+          disabled={pending || !accountName.trim()}
           onPress={() =>
             perform(async () => {
               await app.updateUser({ name: accountName.trim() });
@@ -802,6 +930,105 @@ export default function ProfileScreen({ name }: { name: string }) {
             })
           }
         />
+        {!!app.pendingWrites.length && (
+          <Card
+            style={{
+              marginTop: 28,
+              backgroundColor: colors.peachSurface,
+              borderColor: colors.peachSurface,
+            }}
+          >
+            <Row style={{ marginBottom: 10 }}>
+              <Icon name="cloud-upload-outline" color={colors.peachText} />
+              <AppText variant="heading" color={colors.peachText}>
+                Writing to sync
+              </AppText>
+            </Row>
+            <AppText
+              color={colors.peachText}
+              style={{ fontSize: 14, lineHeight: 22 }}
+            >
+              {app.draftProtection === "device"
+                ? "Your writing is saved securely on this device. It will sync to your account when the connection returns."
+                : "Your writing is kept for this browser session only. Keep this tab open and retry before leaving."}
+            </AppText>
+            <AppText
+              color={colors.peachText}
+              variant="caption"
+              style={{ marginTop: 10 }}
+            >
+              Sync before exporting to include these entries in your account
+              export.
+            </AppText>
+            {!!app.offlineError && <Notice text={app.offlineError} error />}
+            <Button
+              title={app.syncingWrites ? "Syncing writing…" : "Retry sync"}
+              disabled={pending || app.syncingWrites}
+              onPress={() =>
+                perform(async () => {
+                  await app.flushPendingWrites();
+                })
+              }
+              style={{ marginTop: 16 }}
+            />
+            {app.pendingWrites.map((entry) => (
+              <View
+                key={entry.id}
+                style={{
+                  marginTop: 16,
+                  borderTopWidth: 0.75,
+                  borderTopColor: colors.peachText,
+                  paddingTop: 10,
+                }}
+              >
+                <AppText color={colors.peachText} variant="label">
+                  {entry.collection === "checkins" ? "Check-in" : "Reflection"}{" "}
+                  ·{" "}
+                  {new Date(entry.createdAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </AppText>
+                {discardWriteId === entry.id ? (
+                  <>
+                    <AppText
+                      color={colors.peachText}
+                      variant="caption"
+                      style={{ marginTop: 8 }}
+                    >
+                      Delete this unsynced entry from this device? This cannot
+                      be undone.
+                    </AppText>
+                    <Button
+                      title="Keep entry"
+                      variant="ghost"
+                      disabled={pending || app.syncingWrites}
+                      onPress={() => setDiscardWriteId(null)}
+                    />
+                    <Button
+                      title="Delete unsynced entry"
+                      variant="secondary"
+                      disabled={pending || app.syncingWrites}
+                      onPress={() =>
+                        perform(async () => {
+                          await app.discardPendingWrite(entry.id);
+                          setDiscardWriteId(null);
+                        })
+                      }
+                    />
+                  </>
+                ) : (
+                  <Button
+                    title="Delete unsynced entry…"
+                    variant="ghost"
+                    disabled={pending || app.syncingWrites}
+                    onPress={() => setDiscardWriteId(entry.id)}
+                  />
+                )}
+              </View>
+            ))}
+          </Card>
+        )}
         <View style={{ height: 20 }} />
         <Button
           title="Export my data"
@@ -828,36 +1055,72 @@ export default function ProfileScreen({ name }: { name: string }) {
         <Button
           title="Log out"
           variant="ghost"
-          disabled={pending}
+          disabled={
+            pending ||
+            app.syncingWrites ||
+            (logoutConfirm && !!app.pendingWrites.length)
+          }
           onPress={() =>
-            perform(async () => {
-              await cancelAllReminders();
-              await app.signOut();
-            })
+            app.pendingWrites.length && !logoutConfirm
+              ? setLogoutConfirm(true)
+              : perform(async () => {
+                  await cancelAllReminders();
+                  await app.signOut();
+                })
           }
         />
+        {logoutConfirm && !!app.pendingWrites.length && (
+          <Card style={{ marginTop: 12 }}>
+            <AppText>
+              Logging out removes unsynced writing and drafts from this device.
+              Sync your writing first, or choose to log out and discard it.
+            </AppText>
+            <Button
+              title="Stay signed in"
+              variant="secondary"
+              disabled={pending}
+              onPress={() => setLogoutConfirm(false)}
+              style={{ marginTop: 12 }}
+            />
+            <Button
+              title="Discard unsynced writing and log out"
+              variant="ghost"
+              disabled={pending || app.syncingWrites}
+              onPress={() =>
+                perform(async () => {
+                  await cancelAllReminders();
+                  await app.signOut();
+                })
+              }
+            />
+          </Card>
+        )}
         <View style={{ marginTop: 35 }}>
           <AppText variant="heading" color={colors.danger}>
             Delete account
           </AppText>
           <AppText style={{ marginVertical: 12 }}>
-            Permanently delete your account, conversations, preferences and
-            activity records.
+            Permanently delete your account, conversations, preferences,
+            activity records, and writing on this device.
           </AppText>
           {!deleteAccount ? (
             <Button
               title="Delete my account…"
               variant="secondary"
+              disabled={pending}
               onPress={() => setDeleteAccount(true)}
             />
           ) : (
             <Card>
               <AppText>
-                This cannot be undone. Delete all your Solace data?
+                This cannot be undone. Drafts and unsynced entries are removed
+                from this device first, even if online deletion needs a retry.
+                Delete all your Solace data?
               </AppText>
               <Button
                 title="Keep my account"
                 variant="ghost"
+                disabled={pending}
                 onPress={() => setDeleteAccount(false)}
               />
               <Button
@@ -873,7 +1136,6 @@ export default function ProfileScreen({ name }: { name: string }) {
             </Card>
           )}
         </View>
-        {status}
       </Screen>
     );
 

@@ -13,15 +13,19 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function harness() {
+function harness(options = {}) {
   const slots = [];
   const effects = [];
-  const storage = new Map();
+  const appStateListeners = new Set();
+  const storage = options.storage || new Map();
   let cursor = 0;
   let heldWrite = null;
   let current;
   const h = {
     storage,
+    appState(state) {
+      for (const listener of appStateListeners) listener(state);
+    },
     onRequest: async (route) => {
       throw Error(`Unexpected request: ${route}`);
     },
@@ -54,9 +58,12 @@ function harness() {
     useEffect(effect, deps) {
       const index = cursor++;
       const old = slots[index];
-      if (!old || deps.some((value, i) => value !== old[i]))
-        effects.push(effect);
-      slots[index] = deps;
+      if (!old || deps.some((value, i) => value !== old.deps[i])) {
+        effects.push(() => {
+          old?.cleanup?.();
+          slots[index] = { deps, cleanup: effect() };
+        });
+      }
     },
   };
   const storageMock = {
@@ -74,43 +81,85 @@ function harness() {
       storage.delete(key);
     },
   };
-  const source = fs.readFileSync(
-    path.join(__dirname, "../src/store.tsx"),
-    "utf8",
+  const compile = (file) =>
+    ts.transpileModule(fs.readFileSync(path.join(__dirname, file), "utf8"), {
+      fileName: file,
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        esModuleInterop: true,
+        target: ts.ScriptTarget.ES2020,
+        jsx: ts.JsxEmit.React,
+      },
+    }).outputText;
+  const compiled = compile("../src/store.tsx");
+  const offline = { exports: {} };
+  new Function("module", "exports", compile("../src/offline.ts"))(
+    offline,
+    offline.exports,
   );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      esModuleInterop: true,
-      target: ts.ScriptTarget.ES2020,
-      jsx: ts.JsxEmit.React,
-    },
-  }).outputText;
+  const apiConfig = { exports: {} };
+  new Function("module", "exports", compile("../src/api-config.ts"))(
+    apiConfig,
+    apiConfig.exports,
+  );
   const module = { exports: {} };
   const requireMock = (name) => {
     if (name === "react") return react;
-    if (name === "react-native") return { Platform: { OS: "web" } };
+    if (name === "react-native")
+      return {
+        Platform: { OS: options.platform || "web" },
+        AppState: {
+          addEventListener: (_type, callback) => {
+            appStateListeners.add(callback);
+            return { remove: () => appStateListeners.delete(callback) };
+          },
+        },
+      };
     if (name === "@react-native-async-storage/async-storage")
       return storageMock;
-    if (name === "expo-secure-store") return {};
+    if (name === "expo-secure-store")
+      return {
+        getItemAsync: storageMock.getItem,
+        setItemAsync: async (key, value) => {
+          if (h.failSecureSet?.(key))
+            throw Error("Protected device storage unavailable");
+          await storageMock.setItem(key, value);
+        },
+        deleteItemAsync: async (key) => {
+          if (h.failSecureRemove?.(key))
+            throw Error("Protected device storage unavailable");
+          await storageMock.removeItem(key);
+        },
+        WHEN_UNLOCKED_THIS_DEVICE_ONLY: "unlocked-this-device",
+      };
+    if (name === "./offline") return offline.exports;
+    if (name === "./api-config") return apiConfig.exports;
     throw Error(`Unexpected dependency: ${name}`);
   };
   vm.runInNewContext(compiled, {
     module,
     exports: module.exports,
     require: requireMock,
-    process: { env: {} },
+    process: { env: { EXPO_PUBLIC_API_URL: options.apiUrl } },
+    __DEV__: options.development ?? true,
     AbortController,
     setTimeout,
     clearTimeout,
-    fetch: async (url, options) =>
-      h.onRequest(new URL(url).pathname.replace(/^\/api/, ""), options),
+    setInterval,
+    clearInterval,
+    fetch: async (url, options) => {
+      h.lastRequestUrl = String(url);
+      return h.onRequest(new URL(url).pathname.replace(/^\/api/, ""), options);
+    },
   });
   h.render = () => {
     cursor = 0;
     current = module.exports.AppProvider({ children: null }).props.value;
     for (const effect of effects.splice(0)) effect();
     return current;
+  };
+  h.close = () => {
+    for (const slot of slots) slot?.cleanup?.();
   };
   h.render();
   return h;
@@ -357,6 +406,9 @@ test("details keep their originating tab and main destinations start a stack wit
   assert.equal(app.route, "chat");
   assert.equal(app.activeTab, "chat");
   assert.equal(app.params.id, "legacy-chat");
+  app.setTab("explore");
+  h.render().navigate("grounding");
+  assert.equal(h.render().activeTab, "explore");
 });
 
 test("retrying an idempotent toolkit add cannot duplicate a favorite in account state", async () => {
@@ -384,4 +436,380 @@ test("retrying an idempotent toolkit add cannot duplicate a favorite in account 
   h.onRequest = accountTransport("account-b", "token-b");
   await h.render().signIn("different@solace.test", "test-only-password");
   assert.equal(h.render().data.favorites.length, 0);
+});
+
+test("network-failed writing is marked device-only, survives refresh, and reconciles on retry", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => {
+    throw Error("Simulated connection failure");
+  };
+  const saved = await h.render().save("checkins", {
+    mood: "Okay",
+    note: "Private thought",
+    day: "2026-11-05",
+  });
+  assert.equal(saved.localOnly, true);
+  assert.equal(h.render().pendingWrites.length, 1);
+  assert.equal(h.render().draftProtection, "memory");
+  h.onRequest = async (route, options) => {
+    if (route === "/state")
+      return ok({ user: { id: "account-a" }, data: empty() });
+    if (route === "/records/checkins")
+      return ok({ record: JSON.parse(options.body) });
+    throw Error(`Unexpected request: ${route}`);
+  };
+  await h.render().refresh();
+  assert.equal(h.render().data.checkins[0].localOnly, true);
+  await h.render().flushPendingWrites();
+  assert.equal(h.render().pendingWrites.length, 0);
+  assert.equal(h.render().data.checkins.length, 1);
+  assert.equal(h.render().data.checkins[0].localOnly, undefined);
+  h.close();
+});
+
+test("lost POST responses retry the same identity and only acknowledge matching owned records", async () => {
+  const h = await signedIn();
+  let remote;
+  h.onRequest = async (_route, options) => {
+    remote = JSON.parse(options.body);
+    throw Error("Response lost after server commit");
+  };
+  await h
+    .render()
+    .save("reflections", { text: "A kept thought", need: "Rest" });
+  let mismatch = true;
+  h.onRequest = async (route, options) => {
+    assert.equal(route, "/records/reflections");
+    if (options.method === "POST") {
+      assert.equal(JSON.parse(options.body).id, remote.id);
+      return ok({ error: "Already exists" }, 409);
+    }
+    return ok({
+      records: [
+        { ...remote, text: mismatch ? "Different writing" : remote.text },
+      ],
+    });
+  };
+  await assert.rejects(
+    h.render().flushPendingWrites(),
+    /could not be matched safely/,
+  );
+  assert.equal(h.render().pendingWrites.length, 1);
+  mismatch = false;
+  await h.render().flushPendingWrites();
+  assert.equal(h.render().pendingWrites.length, 0);
+  assert.equal(h.render().data.reflections[0].id, remote.id);
+  h.close();
+});
+
+test("validation errors and non-writing operations never enter the offline queue", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => ok({ error: "Invalid writing" }, 400);
+  await assert.rejects(
+    h.render().save("reflections", { text: "Writing" }),
+    /Invalid writing/,
+  );
+  assert.equal(h.render().pendingWrites.length, 0);
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  await assert.rejects(
+    h.render().save("sessions", { type: "breathing", completed: true }),
+    /Unable to connect/,
+  );
+  assert.equal(h.render().pendingWrites.length, 0);
+  h.close();
+});
+
+test("removing queued writing discards its device record without claiming a server delete", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  const saved = await h
+    .render()
+    .save("reflections", { text: "A device entry" });
+  let requests = 0;
+  h.onRequest = async () => {
+    requests++;
+    throw Error("Must not call API");
+  };
+  await h.render().remove("reflections", saved.id);
+  assert.equal(requests, 0);
+  assert.equal(h.render().pendingWrites.length, 0);
+  assert.equal(h.render().data.reflections.length, 0);
+  h.close();
+});
+
+test("native queued writing and background-protected drafts restore only for their account and erase on logout", async () => {
+  const storage = new Map();
+  const h = harness({ platform: "ios", storage });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.render().setEditorDraft("reflection:new", {
+    text: "A protected draft 🌺",
+    need: "Rest",
+  });
+  h.appState("background");
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  const saved = await h
+    .render()
+    .save("checkins", { mood: "Calm", day: "2026-11-05" });
+  assert.equal(saved.localOnly, true);
+  assert.equal(h.render().draftProtection, "device");
+  h.close();
+
+  const restarted = harness({ platform: "ios", storage });
+  restarted.onRequest = accountTransport("account-a", "token-a");
+  await until(() => !restarted.render().initializing);
+  let app = restarted.render();
+  assert.equal(app.editorDrafts["reflection:new"].text, "A protected draft 🌺");
+  assert.equal(app.pendingWrites.length, 1);
+  assert.equal(app.data.checkins[0].id, saved.id);
+  restarted.onRequest = accountTransport("account-b", "token-b");
+  await app.signIn("different@solace.test", "test-only-password");
+  app = restarted.render();
+  assert.equal(app.pendingWrites.length, 0);
+  assert.equal(Object.keys(app.editorDrafts).length, 0);
+  assert.ok(
+    ![...storage.keys()].some((key) =>
+      key.startsWith("solace.writing.v1.account-a"),
+    ),
+  );
+  await app.signOut();
+  assert.equal(storage.size, 0);
+  restarted.close();
+});
+
+test("a syncing 401 cannot leave syncing UI stuck after same-account reauthentication", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  await h.render().save("reflections", { text: "Waiting entry" });
+  h.onRequest = async () => ok({ error: "Session expired" }, 401);
+  await assert.rejects(h.render().flushPendingWrites(), /Session expired/);
+  let app = h.render();
+  assert.equal(app.syncingWrites, false);
+  assert.equal(app.sessionExpired, true);
+  h.onRequest = accountTransport("account-a", "renewed-token");
+  await app.signIn("synthetic@solace.test", "test-only-password");
+  app = h.render();
+  assert.equal(app.syncingWrites, false);
+  assert.equal(app.pendingWrites.length, 1);
+  h.close();
+});
+
+test("a late old-account sync cannot publish writing into a newly signed-in account", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  await h.render().save("reflections", { text: "Account A only" });
+  const held = deferred();
+  let remote;
+  h.onRequest = async (_route, options) => {
+    remote = JSON.parse(options.body);
+    return held.promise;
+  };
+  const syncing = h.render().flushPendingWrites();
+  const rejected = assert.rejects(syncing, /session changed/);
+  h.onRequest = accountTransport("account-b", "token-b");
+  await h.render().signIn("different@solace.test", "test-only-password");
+  held.resolve(ok({ record: remote }));
+  await rejected;
+  const app = h.render();
+  assert.equal(app.user.id, "account-b");
+  assert.equal(app.pendingWrites.length, 0);
+  assert.equal(app.data.reflections.length, 0);
+  assert.equal(app.syncingWrites, false);
+  h.close();
+});
+
+test("a lost response plus failed device commit retains retry identity across a fresh UI timestamp", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  let remote;
+  h.onRequest = async (_route, options) => {
+    remote = JSON.parse(options.body);
+    throw Error("Response lost after commit");
+  };
+  h.failSecureSet = (key) => key.includes("solace.writing");
+  await assert.rejects(
+    h.render().save("reflections", {
+      text: "Do not duplicate me",
+      need: "Rest",
+      createdAt: "2026-11-05T01:00:00.000Z",
+    }),
+    /storage unavailable/,
+  );
+  assert.equal(h.render().pendingWrites.length, 0);
+  h.failSecureSet = null;
+  h.onRequest = async (_route, options) => {
+    if (options.method === "POST") {
+      const retried = JSON.parse(options.body);
+      assert.equal(retried.id, remote.id);
+      assert.equal(retried.createdAt, remote.createdAt);
+      return ok({ error: "Already exists" }, 409);
+    }
+    return ok({ records: [remote] });
+  };
+  const saved = await h.render().save("reflections", {
+    text: "Do not duplicate me",
+    need: "Rest",
+    createdAt: "2026-11-05T01:01:00.000Z",
+  });
+  assert.equal(saved.id, remote.id);
+  assert.equal(h.render().data.reflections.length, 1);
+  h.close();
+});
+
+test("failed native logout erasure leaves a current retryable account rather than stale callbacks", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.failSecureRemove = (key) => key.includes("solace.writing");
+  await assert.rejects(h.render().signOut(), /storage unavailable/);
+  let app = h.render();
+  assert.equal(app.user.id, "account-a");
+  assert.equal(app.busy, false);
+  assert.match(app.offlineError, /try signing out again/);
+  h.failSecureRemove = null;
+  await app.signOut();
+  assert.equal(h.render().user, null);
+  h.close();
+});
+
+test("account deletion cannot commit online before erasure, and credential cleanup cannot misreport committed deletion", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  let deleted = 0;
+  h.onRequest = async (route) => {
+    if (route === "/account") {
+      deleted++;
+      return new Response(null, { status: 204 });
+    }
+    if (route === "/state")
+      return ok({ error: "Account no longer exists" }, 401);
+    throw Error(`Unexpected request: ${route}`);
+  };
+  h.failSecureRemove = (key) => key.includes("solace.writing");
+  await assert.rejects(h.render().deleteAccount(), /storage unavailable/);
+  assert.equal(deleted, 0);
+  assert.equal(h.render().user.id, "account-a");
+  h.failSecureRemove = (key) => key === "solace.session";
+  await h.render().deleteAccount();
+  let app = h.render();
+  assert.equal(deleted, 1);
+  assert.equal(app.user, null);
+  assert.equal(app.token, null);
+  assert.match(app.sessionError, /online account was deleted/);
+  h.failSecureRemove = null;
+  await app.retrySession();
+  app = h.render();
+  assert.equal(app.sessionError, null);
+  assert.equal(h.storage.size, 0);
+  h.close();
+});
+
+test("a native token removal failure does not leave logout busy or callbacks stale", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.failSecureRemove = (key) => key === "solace.session";
+  await assert.rejects(h.render().signOut(), /storage unavailable/);
+  const app = h.render();
+  assert.equal(app.busy, false);
+  assert.match(app.offlineError, /could not clear its saved sign-in/);
+  h.failSecureRemove = null;
+  await app.signOut();
+  assert.equal(h.render().user, null);
+  assert.equal(h.storage.size, 0);
+  h.close();
+});
+
+test("the iOS development default reaches the host API and keeps the existing auth lifecycle", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  assert.equal(h.lastRequestUrl, "http://127.0.0.1:3001/api/state");
+  assert.equal(h.render().user.id, "account-a");
+  assert.equal(h.storage.get("solace.session"), "token-a");
+  await h.render().signOut();
+  assert.equal(h.render().user, null);
+  assert.equal(h.storage.size, 0);
+  h.close();
+});
+
+test("an unconfigured release shows a recoverable configuration error without sending credentials", async () => {
+  const h = harness({ development: false });
+  await settle();
+  let calls = 0;
+  h.onRequest = async () => {
+    calls++;
+    throw Error("Must not transmit");
+  };
+  await assert.rejects(
+    h.render().signIn("synthetic@solace.test", "test-only-password"),
+    /configured HTTPS API/,
+  );
+  const app = h.render();
+  assert.equal(calls, 0);
+  assert.equal(app.busy, false);
+  assert.equal(app.user, null);
+  assert.match(app.error, /EXPO_PUBLIC_API_URL/);
+  assert.equal(app.pendingWrites.length, 0);
+  h.close();
+});
+
+test("development connection diagnostics expose only the server origin while release errors stay generic", async () => {
+  const h = harness({
+    platform: "ios",
+    apiUrl: "https://api.solace.test/private-routing-prefix",
+  });
+  await settle();
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  await assert.rejects(
+    h.render().signIn("synthetic@solace.test", "test-only-password"),
+    (error) => {
+      assert.match(error.message, /https:\/\/api\.solace\.test/);
+      assert.match(error.message, /same Mac/);
+      assert.match(error.message, /npm run server/);
+      assert.ok(!error.message.includes("private-routing-prefix"));
+      return true;
+    },
+  );
+  h.close();
+
+  const release = harness({
+    development: false,
+    apiUrl: "https://api.solace.test",
+  });
+  await settle();
+  release.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  await assert.rejects(
+    release.render().signIn("synthetic@solace.test", "test-only-password"),
+    (error) => {
+      assert.equal(
+        error.message,
+        "Unable to connect to Solace. Check your connection and try again.",
+      );
+      return true;
+    },
+  );
+  release.close();
 });

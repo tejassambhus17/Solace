@@ -25,3 +25,12 @@ The PDF's unexplained "follow, post, message" line is not enough to define a soc
 
 ## Ownership during initial build
 Foundation agent: Expo config, theme/UI/store and main screens. Backend agent: server. Wellness agent: content and wellness screens. Root: profile/reminders, assets, documentation, integration and verification.
+
+## Latest user-directed navigation and platform pass
+The user explicitly allowed another tab to reduce clutter. Current destinations are Today, Solace, Explore, Journey, Profile; this supersedes the earlier four-tab ordering rule while preserving the original relative order. Today owns the daily pause, Explore owns discovery, Profile owns private photos and settings. Keep the true-black base with restrained lilac/peach/sage accents. Native iOS glass and Android navigation are separate from web-preview visual evidence.
+
+## Illustrated Today refinement
+The user found the simplified home generic and the dark mode visually weak. The latest refinement restores botanical depth to Today using the existing light moment artwork and a matching newly generated charcoal/champagne counterpart. Keep the black page base, neutral graphite layers, warm primary actions, one shared mood tray, an illustrated daily-pause card and quiet factual steps. Light mode's warm/forest identity remains; its secondary text was strengthened slightly for contrast. Keep five tabs and all private save/consent/recovery behavior. See DESIGN.md and assets/DAILY_PAUSE_ARTWORK.md for the current visual authority and provenance.
+
+## Master implementation brief and authentication priority
+The master brief requests Today, Solace, Moments, Journey; the subsequently supplied workspace instructions preserve Today, Solace, Journey, Profile. Resolve the navigation difference before a future navigation change. Do not migrate the current five-tab interface during backend repair. Preserve the current working app while fixing separate root/server installation and simulator API configuration. On 5 November the user explicitly deferred Mac access and selected authentication repair before provider configuration. Actual local process/auth tests, Mac simulator checks and real-provider evaluation must be reported separately. Follow docs/IMPLEMENTATION_PLAN.md; do not introduce Docker or unrelated branch work.

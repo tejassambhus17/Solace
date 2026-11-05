@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { createContext, useContext, useState } from "react";
 import {
   View,
   Text as NativeText,
@@ -14,10 +14,15 @@ import {
   ImageStyle,
   ActivityIndicator,
   ScrollViewProps,
+  StyleSheet,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useTheme } from "./theme";
+
+// Floating navigation shares its measured height with scrolling and fixed composers.
+export const NavigationInset = createContext(0);
+export const useNavigationInset = () => useContext(NavigationInset);
 
 export function AppText({
   children,
@@ -81,10 +86,15 @@ export function Screen({
   contentContainerStyle?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
+  const navigationInset = useNavigationInset();
   const content = (
     <View
       style={[
-        { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 32 },
+        {
+          paddingHorizontal: 24,
+          paddingTop: 18,
+          paddingBottom: 32 + navigationInset,
+        },
         style,
       ]}
     >
@@ -194,6 +204,10 @@ export function Icon({
   const { colors } = useTheme();
   return (
     <Ionicons
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden
       name={name as React.ComponentProps<typeof Ionicons>["name"]}
       size={size}
       color={color || colors.text}
@@ -222,6 +236,7 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={title}
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       aria-disabled={disabled || loading}
       aria-busy={loading}
@@ -348,6 +363,48 @@ export const Artwork = React.memo(function Artwork({
         style,
       ]}
     />
+  );
+});
+
+/** Matched botanical artwork; text is rendered separately over a quiet scrim. */
+export const PauseArtwork = React.memo(function PauseArtwork({
+  style,
+}: {
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { resolved } = useTheme();
+  const dark = resolved === "dark";
+  const source = dark
+    ? require("../assets/daily-pause-dark-v2.png")
+    : require("../assets/moment-light.png");
+  return (
+    <View
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[StyleSheet.absoluteFill, style]}
+    >
+      <Image
+        source={source}
+        defaultSource={source}
+        accessible={false}
+        accessibilityIgnoresInvertColors
+        resizeMode="cover"
+        resizeMethod="resize"
+        fadeDuration={0}
+        style={{ width: "100%", height: "100%" }}
+      />
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundImage: dark
+              ? "linear-gradient(90deg, rgba(20,20,22,0.97) 0%, rgba(20,20,22,0.90) 55%, rgba(20,20,22,0) 100%)"
+              : "linear-gradient(90deg, rgba(243,230,214,0.92) 0%, rgba(243,230,214,0.66) 40%, rgba(243,230,214,0) 85%)",
+          },
+        ]}
+      />
+    </View>
   );
 });
 export function SectionTitle({

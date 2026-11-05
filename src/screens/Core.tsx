@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -27,8 +26,9 @@ import {
   Row,
   Screen,
   SectionTitle,
+  useNavigationInset,
 } from "../ui";
-import { todayAffirmation, recordDay, participationProgress } from "../content";
+import { recordDay, participationProgress } from "../content";
 import { weeklyReview } from "../insights";
 
 const dateLabel = (value: any) => {
@@ -46,16 +46,6 @@ function confirmAction(title: string, message: string, action: () => void) {
       { text: "Cancel", style: "cancel" },
       { text: "Delete", style: "destructive", onPress: action },
     ]);
-}
-function Brand() {
-  return (
-    <View style={{ marginBottom: 28 }}>
-      <BrandMark />
-    </View>
-  );
-}
-function HeroArt() {
-  return <BotanicalBackdrop />;
 }
 function MenuCard({
   title,
@@ -356,352 +346,11 @@ export function AuthScreen() {
   );
 }
 
-export function TodayScreen() {
-  const app = useApp();
-  const { colors, resolved } = useTheme();
-  const moods = ["Okay", "Calm", "Low", "Stressed", "Great"];
-  const first = String(app.user?.name || "there").split(" ")[0];
-  const hour = new Date().getHours();
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const dayKey = recordDay({ createdAt: new Date().toISOString() });
-  const recentConversation = useMemo(
-    () =>
-      [...app.data.conversations].sort((a, b) =>
-        String(b.updatedAt || b.createdAt).localeCompare(
-          String(a.updatedAt || a.createdAt),
-        ),
-      )[0],
-    [app.data.conversations],
-  );
-  const latest = useMemo(
-    () =>
-      [...app.data.checkins]
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-        .find((item) => recordDay(item) === dayKey),
-    [app.data.checkins, dayKey],
-  );
-  return (
-    <Screen>
-      <View>
-        <HeroArt />
-        <Brand />
-        <AppText
-          variant="display"
-          style={{ fontSize: 44, lineHeight: 46, maxWidth: "90%" }}
-        >
-          {greeting},{`\n`}
-          {first}.
-        </AppText>
-        <AppText
-          color={colors.muted}
-          style={{ marginTop: 10, marginBottom: 26, maxWidth: 285 }}
-        >
-          A peaceful space to check in, reset, and feel a little more at ease.
-        </AppText>
-      </View>
-      <Card
-        style={{
-          padding: 16,
-          marginBottom: 14,
-          backgroundColor: resolved === "dark" ? colors.surface : "#FFF5ED",
-        }}
-      >
-        <AppText variant="heading" style={{ fontSize: 26 }}>
-          How are you feeling today?
-        </AppText>
-        <Row style={{ gap: 5, marginTop: 14 }}>
-          {moods.map((m) => (
-            <Pressable
-              key={m}
-              accessibilityRole="button"
-              accessibilityLabel={`Check in: ${m}`}
-              onPress={() => app.navigate("checkin", { mood: m })}
-              style={({ pressed }) => ({
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: 78,
-                flex: 1,
-                backgroundColor:
-                  latest?.mood === m ? colors.surface2 : colors.surface,
-                borderRadius: 17,
-                borderWidth: latest?.mood === m ? 1.25 : 0.5,
-                borderColor:
-                  latest?.mood === m ? colors.primary : colors.border,
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <MoodStone mood={m} size={30} />
-              <AppText variant="caption" style={{ fontSize: 11, marginTop: 5 }}>
-                {m}
-              </AppText>
-            </Pressable>
-          ))}
-        </Row>
-        {!!latest && (
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ marginTop: 10 }}
-          >
-            You checked in today. You can always check in again.
-          </AppText>
-        )}
-      </Card>
-      <Card
-        style={{
-          padding: 22,
-          minHeight: 238,
-          overflow: "hidden",
-          marginBottom: 28,
-          backgroundColor:
-            resolved === "dark" ? colors.surface : colors.surface2,
-          borderColor: resolved === "dark" ? colors.border : "#E3D9BC",
-        }}
-      >
-        {resolved === "dark" ? (
-          <>
-            <BotanicalBackdrop
-              variant="footer"
-              style={{ right: -100, bottom: -105, opacity: 0.12 }}
-            />
-            <View
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                right: -58,
-                top: 30,
-                opacity: 0.92,
-              }}
-            >
-              <Artwork kind="petal" size={220} />
-            </View>
-          </>
-        ) : (
-          <Image
-            source={require("../../assets/moment-light.png")}
-            resizeMode="cover"
-            accessible={false}
-            style={{
-              position: "absolute",
-              width: "100%",
-              height: "100%",
-              top: 0,
-              left: 0,
-            }}
-          />
-        )}
-        <View style={{ maxWidth: "71%", alignItems: "flex-start" }}>
-          <AppText
-            variant="caption"
-            style={{ fontSize: 10, letterSpacing: 1.2 }}
-          >
-            TODAY'S MOMENT
-          </AppText>
-          <AppText
-            variant="title"
-            style={{ fontSize: 35, lineHeight: 34, marginTop: 8 }}
-          >
-            A 3-minute{`\n`}reset
-          </AppText>
-          <AppText
-            style={{
-              marginTop: 8,
-              marginBottom: 16,
-              fontSize: 14,
-              lineHeight: 20,
-              maxWidth: 180,
-            }}
-          >
-            A brief breathing practice to release tension and restore calm.
-          </AppText>
-          <Button
-            title="Start moment"
-            icon="arrow-forward"
-            onPress={() => app.navigate("breathing", { durationSec: 180 })}
-            style={{ minHeight: 44, paddingHorizontal: 20 }}
-          />
-        </View>
-      </Card>
-      {!!recentConversation && (
-        <View style={{ marginBottom: 24 }}>
-          <SectionTitle title="Pick up where you left off" />
-          <Card
-            onPress={() => app.navigate("chat", { id: recentConversation.id })}
-            style={{ padding: 16 }}
-          >
-            <Row>
-              <Icon name="chatbubble-ellipses-outline" size={23} />
-              <View style={{ flex: 1 }}>
-                <AppText variant="label" numberOfLines={1}>
-                  {recentConversation.title || "Your conversation"}
-                </AppText>
-                <AppText
-                  variant="caption"
-                  color={colors.muted}
-                  style={{ marginTop: 3 }}
-                >
-                  Continue with Solace ·{" "}
-                  {dateLabel(
-                    recentConversation.updatedAt ||
-                      recentConversation.createdAt,
-                  )}
-                </AppText>
-              </View>
-              <Icon name="arrow-forward" size={19} />
-            </Row>
-          </Card>
-        </View>
-      )}
-      <Card
-        onPress={() => app.navigate("toolkit")}
-        style={{ padding: 17, marginBottom: 22 }}
-      >
-        <Row>
-          <View
-            style={{
-              height: 42,
-              width: 42,
-              borderRadius: 14,
-              backgroundColor: colors.surface2,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Icon name="bookmark-outline" size={22} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <AppText variant="heading" style={{ fontSize: 25 }}>
-              Your toolkit
-            </AppText>
-            <AppText variant="caption" color={colors.muted}>
-              {app.data.favorites.length
-                ? `${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice" : "practices"}, close at hand.`
-                : "Keep a few helpful practices close."}
-            </AppText>
-          </View>
-          <Icon name="arrow-forward" size={19} />
-        </Row>
-      </Card>
-      <Card
-        style={{
-          padding: 20,
-          overflow: "hidden",
-          marginBottom: 28,
-          minHeight: 190,
-        }}
-      >
-        <Artwork
-          kind="stillness"
-          style={
-            resolved === "dark"
-              ? {
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: "100%",
-                }
-              : {
-                  position: "absolute",
-                  right: -100,
-                  bottom: -20,
-                  width: 230,
-                  height: 230,
-                }
-          }
-        />
-        <View style={{ maxWidth: "62%" }}>
-          <AppText variant="heading" style={{ fontSize: 30, lineHeight: 31 }}>
-            Find your ground
-          </AppText>
-          <AppText
-            color={colors.muted}
-            style={{
-              fontSize: 14,
-              lineHeight: 21,
-              marginTop: 9,
-              marginBottom: 16,
-            }}
-          >
-            A gentle five-senses practice to notice the here and now.
-          </AppText>
-          <Button
-            title="Try grounding"
-            icon="arrow-forward"
-            onPress={() => app.navigate("grounding")}
-            style={{
-              alignSelf: "flex-start",
-              minHeight: 44,
-              paddingHorizontal: 16,
-            }}
-          />
-        </View>
-      </Card>
-      <SectionTitle
-        title="A little support"
-        subtitle="Choose what feels right for you."
-      />
-      <MenuCard
-        title="Talk with Solace"
-        description="A thoughtful space to talk it through."
-        icon="chatbubble-ellipses-outline"
-        onPress={() => app.setTab("chat")}
-      />
-      <MenuCard
-        title="Check-ins"
-        description="Reflect on your mood and wellbeing."
-        icon="clipboard-outline"
-        onPress={() => app.navigate("assessments")}
-      />
-      <MenuCard
-        title="Resources"
-        description="Gentle tools and guided support."
-        icon="book-outline"
-        onPress={() => app.navigate("resources")}
-      />
-      <MenuCard
-        title="Your wellness plan"
-        description="Small steps for the days ahead."
-        icon="calendar-outline"
-        onPress={() => app.navigate("plan")}
-      />
-      <View
-        style={{
-          marginTop: 24,
-          paddingTop: 22,
-          borderTopWidth: 1,
-          borderTopColor: colors.border,
-        }}
-      >
-        <Icon name="flower-outline" color={colors.muted} size={23} />
-        <AppText
-          variant="heading"
-          style={{ marginTop: 12, fontSize: 29, lineHeight: 33 }}
-        >
-          {todayAffirmation()}
-        </AppText>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => app.navigate("affirmation")}
-          style={{
-            minHeight: 48,
-            justifyContent: "center",
-            alignSelf: "flex-start",
-          }}
-        >
-          <Row>
-            <AppText variant="label">More affirmations</AppText>
-            <Icon name="arrow-forward" size={17} />
-          </Row>
-        </Pressable>
-      </View>
-    </Screen>
-  );
-}
+export { TodayScreen, ExploreScreen } from "./Discover";
 
 export function ChatScreen() {
   const app = useApp();
+  const navigationInset = useNavigationInset();
   const { colors } = useTheme();
   const [id, setId] = useState<string | undefined>(app.params?.id);
   const draftKey = id || "new";
@@ -1004,7 +653,7 @@ export function ChatScreen() {
           style={{
             paddingHorizontal: 20,
             paddingTop: 12,
-            paddingBottom: 4,
+            paddingBottom: 4 + navigationInset,
             borderTopWidth: 0.75,
             borderTopColor: colors.border,
             backgroundColor: colors.bg,
@@ -1415,6 +1064,7 @@ export function HistoryScreen() {
 
 export function JourneyScreen() {
   const app = useApp();
+  const [showMilestones, setShowMilestones] = useState(false);
   const { colors } = useTheme();
   const progress = useMemo(() => participationProgress(app.data), [app.data]);
   const week = useMemo(() => weeklyReview(app.data), [app.data]);
@@ -1424,7 +1074,6 @@ export function JourneyScreen() {
   const sessions = [...app.data.sessions].sort((a, b) =>
     String(b.createdAt).localeCompare(String(a.createdAt)),
   );
-  const count = progress.checkinsThisWeek;
   const today = new Date();
   const days = Array.from({ length: 7 }, (_, i) => {
     let day = new Date(today);
@@ -1441,8 +1090,6 @@ export function JourneyScreen() {
   });
   return (
     <Screen>
-      <HeroArt />
-      <Brand />
       <AppText variant="title">Your journey</AppText>
       <AppText
         color={colors.muted}
@@ -1451,25 +1098,6 @@ export function JourneyScreen() {
         A gentle look at your check-ins and the moments you've taken for
         yourself.
       </AppText>
-      <Row style={{ marginBottom: 16 }}>
-        <Card
-          style={{ flex: 1, backgroundColor: colors.surface2, padding: 14 }}
-        >
-          <Icon name="leaf-outline" />
-          <AppText variant="heading" style={{ marginTop: 4 }}>
-            {count} {count === 1 ? "check-in" : "check-ins"}
-          </AppText>
-          <AppText variant="caption">in the last 7 days</AppText>
-        </Card>
-        <Card style={{ flex: 1, padding: 14 }}>
-          <Icon name="flower-outline" />
-          <AppText variant="heading" style={{ marginTop: 4 }}>
-            {progress.completedMoments}{" "}
-            {progress.completedMoments === 1 ? "moment" : "moments"}
-          </AppText>
-          <AppText variant="caption">completed</AppText>
-        </Card>
-      </Row>
       <Card style={{ marginBottom: 22, padding: 16 }}>
         <AppText variant="heading">Your last 7 days</AppText>
         <AppText variant="caption" color={colors.muted}>
@@ -1532,70 +1160,102 @@ export function JourneyScreen() {
           style={{ marginTop: 18 }}
         />
       </View>
-      <SectionTitle title="Small milestones" />
-      <Row style={{ marginBottom: 20, alignItems: "stretch" }}>
-        {[
-          {
-            title: "A small beginning",
-            earned: progress.checkedDays >= 1,
-            detail: "Your first check-in",
-          },
-          {
-            title: "Finding a rhythm",
-            earned: progress.checkedDays >= 3,
-            detail: "Check in on 3 days",
-          },
-        ].map((m) => (
-          <Card key={m.title} style={{ flex: 1, padding: 12 }}>
-            <Icon
-              name={m.earned ? "checkmark-circle-outline" : "flower-outline"}
-            />
-            <AppText variant="label" style={{ marginTop: 6 }}>
-              {m.title}
-            </AppText>
-            <AppText variant="caption">
-              {m.earned ? "Earned · " : "Next step · "}
-              {m.detail}
-            </AppText>
-          </Card>
-        ))}
-      </Row>
-      <Card style={{ marginBottom: 22, backgroundColor: colors.surface2 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showMilestones }}
+        onPress={() => setShowMilestones((value) => !value)}
+        style={{
+          paddingVertical: 16,
+          marginBottom: 20,
+          borderTopWidth: 0.75,
+          borderBottomWidth: 0.75,
+          borderColor: colors.border,
+        }}
+      >
         <Row style={{ justifyContent: "space-between" }}>
           <View>
-            <AppText variant="heading">Activity progress</AppText>
+            <AppText variant="label">Activity milestones</AppText>
             <AppText variant="caption" color={colors.muted}>
-              A record of the time you made for yourself
+              Your participation, at your pace.
             </AppText>
           </View>
-          <Icon name="sparkles-outline" />
-        </Row>
-        <Row style={{ justifyContent: "space-between", marginTop: 14 }}>
-          <AppText variant="label">
-            Level {progress.level} · {progress.xp} XP
-          </AppText>
-          <AppText variant="caption">
-            {progress.streak} day check-in streak
-          </AppText>
-        </Row>
-        <View
-          style={{
-            height: 6,
-            borderRadius: 3,
-            backgroundColor: colors.border,
-            marginTop: 12,
-          }}
-        >
-          <View
-            style={{
-              height: 6,
-              borderRadius: 3,
-              width: `${progress.xpInLevel}%`,
-              backgroundColor: colors.primary,
-            }}
+          <Icon
+            name={showMilestones ? "chevron-up" : "chevron-down"}
+            color={colors.muted}
+            size={19}
           />
-        </View>
-      </Card>
+        </Row>
+      </Pressable>
+      {showMilestones && (
+        <>
+          <SectionTitle title="Small milestones" />
+          <Row style={{ marginBottom: 20, alignItems: "stretch" }}>
+            {[
+              {
+                title: "A small beginning",
+                earned: progress.checkedDays >= 1,
+                detail: "Your first check-in",
+              },
+              {
+                title: "Finding a rhythm",
+                earned: progress.checkedDays >= 3,
+                detail: "Check in on 3 days",
+              },
+            ].map((m) => (
+              <Card key={m.title} style={{ flex: 1, padding: 12 }}>
+                <Icon
+                  name={
+                    m.earned ? "checkmark-circle-outline" : "flower-outline"
+                  }
+                />
+                <AppText variant="label" style={{ marginTop: 6 }}>
+                  {m.title}
+                </AppText>
+                <AppText variant="caption">
+                  {m.earned ? "Earned · " : "Next step · "}
+                  {m.detail}
+                </AppText>
+              </Card>
+            ))}
+          </Row>
+          <Card style={{ marginBottom: 22, backgroundColor: colors.surface2 }}>
+            <Row style={{ justifyContent: "space-between" }}>
+              <View>
+                <AppText variant="heading">Activity progress</AppText>
+                <AppText variant="caption" color={colors.muted}>
+                  A record of the time you made for yourself
+                </AppText>
+              </View>
+              <Icon name="sparkles-outline" />
+            </Row>
+            <Row style={{ justifyContent: "space-between", marginTop: 14 }}>
+              <AppText variant="label">
+                Level {progress.level} · {progress.xp} XP
+              </AppText>
+              <AppText variant="caption">
+                {progress.streak} day check-in streak
+              </AppText>
+            </Row>
+            <View
+              style={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: colors.border,
+                marginTop: 12,
+              }}
+            >
+              <View
+                style={{
+                  height: 6,
+                  borderRadius: 3,
+                  width: `${progress.xpInLevel}%`,
+                  backgroundColor: colors.primary,
+                }}
+              />
+            </View>
+          </Card>
+        </>
+      )}
       <SectionTitle title="Recent moments" />
       {sessions.length ? (
         sessions.slice(0, 4).map((s) => (
@@ -1657,18 +1317,6 @@ export function JourneyScreen() {
         description={`${app.data.assessments.length} completed ${app.data.assessments.length === 1 ? "check-in" : "check-ins"}`}
         icon="clipboard-outline"
         onPress={() => app.navigate("assessments")}
-      />
-      <MenuCard
-        title="Your wellness plan"
-        description="Small steps, at your own pace."
-        icon="calendar-outline"
-        onPress={() => app.navigate("plan")}
-      />
-      <MenuCard
-        title="Daily challenge"
-        description="Try a small, gentle action."
-        icon="sparkles-outline"
-        onPress={() => app.navigate("challenge")}
       />
     </Screen>
   );

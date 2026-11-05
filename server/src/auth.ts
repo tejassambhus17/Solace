@@ -28,6 +28,7 @@ export type UserRow = {
   password: string;
   created_at: string;
   personalization: number;
+  avatar: string | null;
 };
 export const publicUser = (row: UserRow) => ({
   id: row.id,
@@ -35,4 +36,5 @@ export const publicUser = (row: UserRow) => ({
   email: row.email,
   createdAt: row.created_at,
   personalization: !!row.personalization,
+  avatar: row.avatar ?? null,
 });

@@ -48,3 +48,11 @@ The subsequent user-requested pass replaces the dark palette with true black/neu
 - Three new production dark assets, cached history search data, bounded initial row rendering, fewer timer display renders and reader-aware chat scrolling.
 
 These do not replace the existing live-provider/HTTPS/final-APK/device/demo gates. Full state snapshots and a single-replica SQLite adapter remain scaling limits; this pass does not claim native performance benchmarks or full offline persistence.
+
+## Latest simplicity and native-material pass
+
+Implemented the recommended curated daily pause and protected writing, then separated discovery into Explore under the user's explicit new-tab authorization. Today now offers one next step; Journey hides optional milestones until expanded. Added private profile photos with image validation, metadata stripping and account isolation. The black base now has restrained lilac/peach/sage semantic activity surfaces. Navigation uses guarded native Liquid Glass on supported iOS, native blur/opaque accessibility fallbacks and an Android tonal indicator/ripple treatment.
+
+Native draft protection uses debounced SecureStore writes and a bounded retry queue; actual device force-quit/restore and keychain behavior still require verification. Web is intentionally memory-only. A cold offline launch still needs successful API session restoration before the private vault opens; this is protected writing during an authenticated session, not a complete offline account cache. Chat is not offline-queued.
+
+The external release gates above remain. New native libraries require a rebuilt app. Native iOS glass, accessibility, photo permissions/cropping, large text, Android keyboard/gestures, reminders and final performance must be checked on installed hardware.

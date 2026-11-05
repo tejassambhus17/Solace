@@ -4,14 +4,13 @@ Node.js + TypeScript + Express API with a SQLite database through SQL.js. The AP
 
 ## Run
 
-```sh
-cd server
-npm ci
-cp .env.example .env
-npm run dev
-```
+From the repository root, run `npm run setup` and `npm run doctor`, then `npm run server`. Setup installs both lockfiles with development and platform-optional dependencies, builds this API, and creates only missing environment files. Existing files and database records are preserved. See [the Mac simulator repair guide](../docs/LOCAL_DEVELOPMENT.md).
 
-PowerShell: use `Copy-Item .env.example .env`. Defaults: port 3001, one SQLite file at `server/data/solace.sqlite`. Use Node 22.13 or later (Node 24 LTS recommended). `GET /api/health` reports the active companion provider without disclosing credentials.
+For server-only development after that setup, `npm --prefix server run dev` watches TypeScript. For production, run `npm --prefix server run build` before `npm --prefix server start`; the start command runs compiled JavaScript and does not require tsx. Run these with a supported Node runtime; root `npm run server:build` selects the project's configured runtime automatically.
+
+Defaults: port 3001, one SQLite file at `server/data/solace.sqlite`. Private `.env` loading and relative database paths are anchored to server/, regardless of the caller's working directory. PORT, HOST, AI_MODE and proxy-hop settings are validated before database access. The listener is reserved first so a second launch on a busy port cannot rewrite the running API's database. Requests during initialization return HTTP 503; readiness is announced only after database/app initialization. Failed initialization releases the port.
+
+`GET /api/health` reports the active companion provider without disclosing credentials. Authentication needs no AI provider key. A healthy API does not by itself prove the client can reach it or a live AI request succeeds.
 
 ## Live AI and offline companion
 
@@ -29,9 +28,9 @@ Integration follows [OpenAI's text generation documentation](https://developers.
 | POST | `/api/auth/register` | `{name,email,password}` → `{token,user}` |
 | POST | `/api/auth/login` | `{email,password}` → `{token,user}` |
 | GET | `/api/auth/me` | `{user}` |
-| PATCH | `/api/auth/me` | `{name?,personalization?}` → `{user}` |
+| PATCH | `/api/auth/me` | `{name?,personalization?,avatar?}` → `{user}` |
 | POST | `/api/auth/logout` | Revokes current token, 204 |
-| GET | `/api/state` | `{user,data:{checkins,conversations,sessions,reflections,assessments,memories,reminders,plans}}` |
+| GET | `/api/state` | `{user,data:{checkins,conversations,sessions,reflections,assessments,memories,reminders,plans,favorites}}` |
 | GET | `/api/records/:collection` | `{records}` |
 | POST | `/api/records/:collection` | Record body → `{record}`, 201 |
 | PATCH | `/api/records/:collection/:id` | Changes → `{record}` |
@@ -61,3 +60,7 @@ npm run build
 ```
 
 Tests cover auth, account isolation, malformed input, actual mobile payloads, calendar-day validation, rollback after failed disk persistence, consent, chat continuation, source-linked memory deletion, concurrent chat/deletion races, account export/deletion, offline labeling and the live provider adapter using a stub. Live provider access needs a valid configured key and a separate real-provider test. Tests bind loopback HTTP servers; an environment that blocks local sockets must allow loopback for them.
+
+## Private profile photos
+
+PATCH `/api/auth/me` accepts `avatar: "data:image/jpeg;base64,..."` or `null`. JPEG bytes are limited to 256 KiB, decoded at a maximum of 4,194,304 pixels (4096 per side), oriented, cropped to 256×256 and re-encoded without EXIF/GPS metadata. This route alone accepts up to 512 KiB JSON; other JSON limits remain unchanged. Remote URLs and filesystem paths are rejected. The normalized data URI is returned as `user.avatar` in authentication/state/export and stored in the user's existing private database row. `null` removes it. Existing databases gain a nullable column safely. Late photo processing revalidates the bearer session and cannot restore a removed/replaced image or deleted account. Tests use synthetic images and isolated databases.
