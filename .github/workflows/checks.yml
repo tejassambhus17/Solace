@@ -1,0 +1,22 @@
+name: Solace checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix server ci
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm run test:wellness
+      - run: npm run test:reminders
+      - run: npm --prefix server run typecheck
+      - run: npm --prefix server test
+      - run: npm --prefix server run build
+      - run: npm run export:web
+      - run: npm run export:android

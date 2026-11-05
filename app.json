@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Solace",
+    "slug": "solace-wellness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "solace",
+    "android": {
+      "package": "com.solacewellness.app",
+      "permissions": ["android.permission.POST_NOTIFICATIONS"]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": ["expo-notifications", "expo-secure-store", "expo-font"],
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.solacewellness.app"
+    }
+  }
+}

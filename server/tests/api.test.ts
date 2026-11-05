@@ -1,0 +1,818 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import request from "supertest";
+import { Store } from "../src/database.js";
+import { createApp } from "../src/app.js";
+import { getReply, type AIConfig } from "../src/ai.js";
+import { parseTrustProxyHops } from "../src/config.js";
+const ai: AIConfig = {
+  mode: "offline",
+  model: "test",
+  baseUrl: "https://api.openai.com/v1",
+};
+test("proxy hops configuration rejects ambiguous or out-of-range values", () => {
+  assert.equal(parseTrustProxyHops(undefined), 0);
+  for (const value of ["0", "1", "2", "3"]) {
+    assert.equal(parseTrustProxyHops(value), Number(value));
+  }
+  for (const value of [
+    "",
+    "true",
+    "false",
+    "4",
+    "-1",
+    "1.5",
+    "01",
+    " 1",
+    "1 ",
+  ]) {
+    assert.throws(() => parseTrustProxyHops(value), /TRUST_PROXY_HOPS/);
+  }
+});
+test("proxy trust defaults off and uses only the explicit configured hop count", async () => {
+  const { app, store } = await fixture();
+  try {
+    assert.equal(app.get("trust proxy"), false);
+    app.get("/test-client-ip", (req, res) => res.json({ ip: req.ip }));
+    const direct = await request(app)
+      .get("/test-client-ip")
+      .set("X-Forwarded-For", "198.51.100.4, 203.0.113.7")
+      .expect(200);
+    assert.notEqual(direct.body.ip, "198.51.100.4");
+    assert.notEqual(direct.body.ip, "203.0.113.7");
+    const proxied = createApp({
+      store,
+      ai,
+      rateLimits: false,
+      trustProxyHops: 1,
+    });
+    proxied.get("/test-client-ip", (req, res) => res.json({ ip: req.ip }));
+    assert.equal(proxied.get("trust proxy"), 1);
+    const viaProxy = await request(proxied)
+      .get("/test-client-ip")
+      .set("X-Forwarded-For", "198.51.100.4, 203.0.113.7")
+      .expect(200);
+    assert.equal(viaProxy.body.ip, "203.0.113.7");
+    assert.throws(
+      () => createApp({ store, ai, trustProxyHops: 4 }),
+      /TRUST_PROXY_HOPS/,
+    );
+  } finally {
+    store.close();
+  }
+});
+async function fixture(file = ":memory:") {
+  const store = await Store.open(file);
+  const app = createApp({ store, ai, rateLimits: false });
+  const create = async (email: string) =>
+    (
+      await request(app)
+        .post("/api/auth/register")
+        .send({ name: "Alex", email, password: "correct horse battery" })
+        .expect(201)
+    ).body;
+  return { store, app, create };
+}
+test("registration hashes passwords, validates input, logs in and revokes sessions", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    await request(app)
+      .post("/api/auth/register")
+      .send({ name: "", email: "bad", password: "x" })
+      .expect(400);
+    const account = await create("alex@example.com");
+    assert.ok(account.token);
+    assert.equal(account.user.personalization, false);
+    assert.equal(account.user.password, undefined);
+    assert.notEqual(
+      store.one<{ password: string }>("SELECT password FROM users")!.password,
+      "correct horse battery",
+    );
+    await request(app)
+      .post("/api/auth/login")
+      .send({ email: "alex@example.com", password: "wrong password" })
+      .expect(401);
+    await request(app)
+      .post("/api/auth/login")
+      .send({ email: "ALEX@example.com", password: "correct horse battery" })
+      .expect(200);
+    await request(app)
+      .get("/api/auth/me")
+      .set("Authorization", `Bearer ${account.token}`)
+      .expect(200);
+    await request(app)
+      .post("/api/auth/logout")
+      .set("Authorization", `Bearer ${account.token}`)
+      .expect(204);
+    await request(app)
+      .get("/api/state")
+      .set("Authorization", `Bearer ${account.token}`)
+      .expect(401);
+  } finally {
+    store.close();
+  }
+});
+test("records are isolated by account and validation rejects malformed changes", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const a = await create("a@example.com"),
+      b = await create("b@example.com");
+    const authA = { Authorization: `Bearer ${a.token}` },
+      authB = { Authorization: `Bearer ${b.token}` };
+    const saved = (
+      await request(app)
+        .post("/api/records/checkins")
+        .set(authA)
+        .send({ mood: "calm", note: "Private" })
+        .expect(201)
+    ).body.record;
+    assert.equal(
+      (await request(app).get("/api/records/checkins").set(authB).expect(200))
+        .body.records.length,
+      0,
+    );
+    await request(app)
+      .patch(`/api/records/checkins/${saved.id}`)
+      .set(authB)
+      .send({ mood: "low" })
+      .expect(404);
+    await request(app)
+      .delete(`/api/records/checkins/${saved.id}`)
+      .set(authB)
+      .expect(404);
+    await request(app)
+      .post("/api/records/reminders")
+      .set(authA)
+      .send({ hour: 25 })
+      .expect(400);
+    await request(app)
+      .patch(`/api/records/checkins/${saved.id}`)
+      .set(authA)
+      .send({ mood: null })
+      .expect(400);
+    const changed = (
+      await request(app)
+        .patch(`/api/records/checkins/${saved.id}`)
+        .set(authA)
+        .send({ note: "Updated", id: "hijack" })
+        .expect(200)
+    ).body.record;
+    assert.equal(changed.id, saved.id);
+    assert.equal(changed.note, "Updated");
+    await request(app).get("/api/records/not-real").set(authA).expect(400);
+  } finally {
+    store.close();
+  }
+});
+test("chat retains context, labels offline mode and deletes source-linked memories", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("chat@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const first = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "My exams are overwhelming" })
+        .expect(200)
+    ).body;
+    assert.equal(first.provider, "offline");
+    assert.equal(first.conversation.messages.length, 2);
+    assert.equal(first.action.type, "breathing");
+    const id = first.conversation.id;
+    const second = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "Can we talk about it?", conversationId: id })
+        .expect(200)
+    ).body;
+    assert.equal(second.conversation.messages.length, 4);
+    assert.match(second.reply, /exams/);
+    await request(app)
+      .post("/api/records/memories")
+      .set(auth)
+      .send({
+        text: "Prefers short sessions",
+        approved: true,
+        sourceConversationId: id,
+      })
+      .expect(201);
+    await request(app)
+      .delete(`/api/records/conversations/${id}`)
+      .set(auth)
+      .expect(204);
+    assert.equal(
+      (await request(app).get("/api/records/memories").set(auth)).body.records
+        .length,
+      0,
+    );
+    await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "Still here?", conversationId: id })
+      .expect(404);
+  } finally {
+    store.close();
+  }
+});
+test("personalization requires consent; urgent distress receives human support guidance", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("consent@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    await request(app)
+      .post("/api/records/memories")
+      .set(auth)
+      .send({ text: "short grounding sessions" })
+      .expect(201);
+    const before = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "I am stressed" })
+    ).body;
+    assert.doesNotMatch(before.reply, /short grounding sessions/);
+    await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ personalization: true })
+      .expect(200);
+    const after = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "I am stressed" })
+    ).body;
+    assert.match(after.reply, /short grounding sessions/);
+    const support = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "I want to kill myself" })
+    ).body;
+    assert.equal(support.support, true);
+    assert.match(support.reply, /person right now/);
+    assert.equal(support.action, undefined);
+  } finally {
+    store.close();
+  }
+});
+test("database and auth persist across reopen; export and account deletion work", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "solace-db-"));
+  const file = join(directory, "app.sqlite");
+  try {
+    const first = await fixture(file);
+    const account = await first.create("persist@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    await request(first.app)
+      .post("/api/records/reflections")
+      .set(auth)
+      .send({ text: "A quiet moment" })
+      .expect(201);
+    first.store.close();
+    const second = await fixture(file);
+    try {
+      const state = (
+        await request(second.app).get("/api/state").set(auth).expect(200)
+      ).body;
+      assert.equal(state.data.reflections[0].text, "A quiet moment");
+      const exported = (
+        await request(second.app).get("/api/export").set(auth).expect(200)
+      ).body;
+      assert.equal(exported.user.email, "persist@example.com");
+      assert.equal(exported.user.password, undefined);
+      await request(second.app).delete("/api/account").set(auth).expect(204);
+      await request(second.app).get("/api/state").set(auth).expect(401);
+      assert.equal(
+        second.store.one<{ count: number }>(
+          "SELECT COUNT(*) count FROM records",
+        )!.count,
+        0,
+      );
+    } finally {
+      second.store.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test("explicit live mode without provider key does not pretend to be live", async () => {
+  await assert.rejects(
+    getReply(
+      { ...ai, mode: "live" },
+      { text: "Hello", name: "Alex", history: [], memories: [], context: [] },
+    ),
+    /AI_NOT_CONFIGURED/,
+  );
+});
+test("live provider sends bounded context with store:false and extracts output blocks", async () => {
+  const original = globalThis.fetch;
+  let captured: Record<string, any> | undefined;
+  globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+    captured = JSON.parse(String(init.body));
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: "We can take a short breathing pause, if you like.",
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const output = await getReply(
+      { ...ai, apiKey: "test-only", mode: "live" },
+      {
+        name: "Alex",
+        text: "I feel tense",
+        history: [],
+        memories: ["Prefers short sessions"],
+        context: [],
+      },
+    );
+    assert.equal(output.provider, "live");
+    assert.equal(output.action?.type, "breathing");
+    assert.equal(captured?.store, false);
+    assert.equal(captured?.input[0].content, "I feel tense");
+    assert.match(captured?.instructions, /Prefers short sessions/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+test("actual mobile wellness, plan, reminder and memory record shapes survive round trips", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("mobile@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const now = new Date().toISOString();
+    const payloads: Record<string, Record<string, unknown>> = {
+      checkins: {
+        mood: "Stressed",
+        tags: ["Work"],
+        note: "A busy day",
+        day: "2026-11-05",
+        createdAt: now,
+      },
+      assessments: {
+        assessmentType: "anxiety",
+        title: "Anxiety check",
+        answers: [0, 1, 2, 3],
+        score: 6,
+        summary: { score: 6, title: "Pause", text: "A reflection" },
+        createdAt: now,
+      },
+      reflections: {
+        text: "I made a little space",
+        need: "A quiet evening",
+        createdAt: now,
+      },
+      plans: {
+        type: "wellness",
+        title: "Your next 3 days",
+        tasks: [
+          {
+            title: "Take a mindful pause",
+            description: "A brief reset",
+            action: "breathing",
+            completed: false,
+          },
+        ],
+        createdAt: now,
+      },
+      reminders: {
+        type: "custom",
+        title: "Take a pause",
+        hour: 20,
+        minute: 0,
+        days: [0, 1, 2, 3, 4, 5, 6],
+        enabled: true,
+        notificationIds: ["device-id"],
+        permission: "granted",
+      },
+    };
+    for (const [collection, payload] of Object.entries(payloads)) {
+      const record = (
+        await request(app)
+          .post(`/api/records/${collection}`)
+          .set(auth)
+          .send(payload)
+          .expect(201)
+      ).body.record;
+      for (const [field, value] of Object.entries(payload))
+        assert.deepEqual(record[field], value, `${collection}.${field}`);
+    }
+    const session = (
+      await request(app)
+        .post("/api/records/sessions")
+        .set(auth)
+        .send({
+          type: "breathing",
+          title: "A reset moment",
+          durationSec: 60,
+          duration: 60,
+          plannedDurationSec: 60,
+          completed: true,
+          source: "wellness",
+          feedback: "Helped",
+          note: "Useful",
+          createdAt: now,
+        })
+        .expect(201)
+    ).body.record;
+    const memory = (
+      await request(app)
+        .post("/api/records/memories")
+        .set(auth)
+        .send({
+          text: "Finds short breathing moments helpful.",
+          content: "Finds short breathing moments helpful.",
+          sourceType: "session",
+          sourceId: session.id,
+          approved: true,
+          createdAt: now,
+        })
+        .expect(201)
+    ).body.record;
+    assert.equal(memory.sourceId, session.id);
+    await request(app)
+      .patch(`/api/records/memories/${memory.id}`)
+      .set(auth)
+      .send({ text: "Prefers grounding" })
+      .expect(200);
+    await request(app)
+      .delete(`/api/records/sessions/${session.id}`)
+      .set(auth)
+      .expect(204);
+    assert.equal(
+      (await request(app).get("/api/records/memories").set(auth)).body.records
+        .length,
+      0,
+    );
+  } finally {
+    store.close();
+  }
+});
+test("invalid dates, reminder days, task shapes and source IDs are rejected", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const a = await create("validation@example.com"),
+      b = await create("other-source@example.com");
+    const auth = { Authorization: `Bearer ${a.token}` };
+    const other = (
+      await request(app)
+        .post("/api/records/sessions")
+        .set("Authorization", `Bearer ${b.token}`)
+        .send({ type: "breathing", completed: true })
+        .expect(201)
+    ).body.record;
+    await request(app)
+      .post("/api/records/memories")
+      .set(auth)
+      .send({ text: "Preference", sourceType: "session", sourceId: other.id })
+      .expect(404);
+    await request(app)
+      .post("/api/records/checkins")
+      .set(auth)
+      .send({ mood: "Calm", day: "2026-02-30" })
+      .expect(400);
+    await request(app)
+      .post("/api/records/checkins")
+      .set(auth)
+      .send({ mood: "Calm", createdAt: "not-a-date" })
+      .expect(400);
+    await request(app)
+      .post("/api/records/sessions")
+      .set(auth)
+      .send({ durationSec: "forever" })
+      .expect(400);
+    await request(app)
+      .post("/api/records/plans")
+      .set(auth)
+      .send({ tasks: ["not a task"] })
+      .expect(400);
+    await request(app)
+      .post("/api/records/reminders")
+      .set(auth)
+      .send({ days: [7] })
+      .expect(400);
+    await request(app)
+      .post("/api/records/reminders")
+      .set(auth)
+      .send({ notificationIds: new Array(8).fill("x") })
+      .expect(400);
+    await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ personalization: "true" })
+      .expect(400);
+    const changed = (
+      await request(app)
+        .patch("/api/auth/me")
+        .set(auth)
+        .send({ name: "New name", personalization: true })
+        .expect(200)
+    ).body.user;
+    assert.equal(changed.name, "New name");
+    assert.equal(changed.personalization, true);
+  } finally {
+    store.close();
+  }
+});
+test("failed persistence restores in-memory state and SQL rollback keeps foreign keys active", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "solace-atomic-"));
+  const file = join(directory, "app.sqlite");
+  const { store, app, create } = await fixture(file);
+  try {
+    const account = await create("atomic@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const original = store.persist.bind(store);
+    store.persist = () => {
+      throw new Error("DISK_WRITE_FAILED");
+    };
+    await request(app)
+      .post("/api/records/reflections")
+      .set(auth)
+      .send({ text: "Should not be saved" })
+      .expect(500);
+    store.persist = original;
+    assert.equal(
+      (await request(app).get("/api/records/reflections").set(auth)).body
+        .records.length,
+      0,
+    );
+    assert.equal(
+      store.one<{ foreign_keys: number }>("PRAGMA foreign_keys")!.foreign_keys,
+      1,
+    );
+    assert.throws(() =>
+      store.transaction(() => {
+        store.run(
+          "INSERT INTO records(id,user_id,collection,json,created_at) VALUES(?,?,?,?,?)",
+          ["bad", "missing-owner", "sessions", "{}", new Date().toISOString()],
+        );
+      }),
+    );
+    await request(app)
+      .post("/api/records/reflections")
+      .set(auth)
+      .send({ text: "Durable" })
+      .expect(201);
+    const second = await Store.open(file);
+    try {
+      assert.equal(second.all("SELECT id FROM records").length, 1);
+    } finally {
+      second.close();
+    }
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test("large chat requests and overlong conversation history are bounded before provider use", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("bounds@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "x".repeat(4001) })
+      .expect(400);
+    const record = (
+      await request(app)
+        .post("/api/records/conversations")
+        .set(auth)
+        .send({
+          title: "Long",
+          messages: Array.from({ length: 199 }, () => ({
+            role: "user",
+            content: "x",
+          })),
+        })
+        .expect(201)
+    ).body.record;
+    const response = await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "Another message", conversationId: record.id })
+      .expect(400);
+    assert.equal(response.body.code, "CONVERSATION_LIMIT");
+    assert.equal(
+      (await request(app).get("/api/records/conversations").set(auth)).body
+        .records[0].messages.length,
+      199,
+    );
+  } finally {
+    store.close();
+  }
+});
+test("concurrent chat is bounded and a late provider response cannot revive a deleted chat", async () => {
+  const { app, store, create } = await fixture();
+  const originalFetch = globalThis.fetch;
+  let release!: () => void;
+  let started!: () => void;
+  const providerStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const providerRelease = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async () => {
+    started();
+    await providerRelease;
+    return new Response(
+      JSON.stringify({ output_text: "Here is a thoughtful reply." }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+  try {
+    const account = await create("race@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const conversation = (
+      await request(app)
+        .post("/api/records/conversations")
+        .set(auth)
+        .send({ title: "A conversation", messages: [] })
+        .expect(201)
+    ).body.record;
+    const live = createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
+    const pending = request(live)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "A thoughtful question", conversationId: conversation.id })
+      .then((result) => result);
+    await providerStarted;
+    await request(live)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "Concurrent question" })
+      .expect(409);
+    await request(live)
+      .delete(`/api/records/conversations/${conversation.id}`)
+      .set(auth)
+      .expect(204);
+    release();
+    const late = await pending;
+    assert.equal(late.status, 404);
+    assert.equal(
+      (await request(live).get("/api/records/conversations").set(auth)).body
+        .records.length,
+      0,
+    );
+    // The failed request also releases the per-user chat lock.
+    await request(live)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "A new beginning" })
+      .expect(200);
+  } finally {
+    release();
+    globalThis.fetch = originalFetch;
+    store.close();
+  }
+});
+test("development CORS allows explicit loopback aliases and configured origins stay restricted", async () => {
+  const { app, store } = await fixture();
+  try {
+    for (const origin of [
+      "http://localhost:8081",
+      "http://127.0.0.1:8081",
+      "http://127.0.0.1:8082",
+    ]) {
+      const response = await request(app)
+        .get("/api/health")
+        .set("Origin", origin)
+        .expect(200);
+      assert.equal(response.headers["access-control-allow-origin"], origin);
+    }
+    const restricted = createApp({
+      store,
+      ai,
+      rateLimits: false,
+      allowedOrigins: ["https://solace.example"],
+    });
+    const permitted = await request(restricted)
+      .get("/api/health")
+      .set("Origin", "https://solace.example")
+      .expect(200);
+    assert.equal(
+      permitted.headers["access-control-allow-origin"],
+      "https://solace.example",
+    );
+    for (const origin of ["https://foreign.example", "http://127.0.0.1:8081"]) {
+      const denied = await request(restricted)
+        .get("/api/health")
+        .set("Origin", origin)
+        .expect(200);
+      assert.equal(denied.headers["access-control-allow-origin"], undefined);
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test("continued conversations remain recent after refresh and keep assistant metadata on edits", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("recent@example.com");
+    const other = await create("recent-other@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const older = (
+      await request(app)
+        .post("/api/records/conversations")
+        .set(auth)
+        .send({ title: "An earlier conversation", createdAt: "2026-01-01T12:00:00Z", messages: [] })
+        .expect(201)
+    ).body.record;
+    await request(app)
+      .post("/api/records/conversations")
+      .set(auth)
+      .send({ title: "A newer conversation", createdAt: "2026-02-01T12:00:00Z", messages: [] })
+      .expect(201);
+    const continued = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "I am stressed", conversationId: older.id })
+        .expect(200)
+    ).body.conversation;
+    const edited = (
+      await request(app)
+        .patch(`/api/records/conversations/${older.id}`)
+        .set(auth)
+        .send({ title: "Renamed conversation" })
+        .expect(200)
+    ).body.record;
+    assert.deepEqual(edited.messages, continued.messages);
+    assert.equal(edited.messages[1].provider, "offline");
+    assert.equal(edited.messages[1].action.type, "breathing");
+    const refreshed = (await request(app).get("/api/state").set(auth).expect(200)).body;
+    assert.equal(refreshed.data.conversations[0].id, older.id);
+    assert.equal(
+      (await request(app).get("/api/state").set("Authorization", `Bearer ${other.token}`).expect(200)).body.data.conversations.length,
+      0,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("human support flags persist when an urgent conversation is reopened", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const account = await create("support-reopen@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    await request(app).post("/api/chat").set(auth).send({ text: "I want to hurt myself" }).expect(200);
+    const message = (await request(app).get("/api/state").set(auth).expect(200)).body.data.conversations[0].messages[1];
+    assert.equal(message.support, true);
+    assert.equal(message.safety, true);
+    assert.equal(message.provider, "offline");
+    assert.equal(message.action, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("provider transport and malformed responses are recoverable and do not save partial turns", async () => {
+  const { store, create } = await fixture();
+  const originalFetch = globalThis.fetch;
+  try {
+    const account = await create("provider-failure@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const app = createApp({ store, ai: { ...ai, mode: "live", apiKey: "test-only" }, rateLimits: false });
+    for (const failure of ["transport", "json", "shape"]) {
+      globalThis.fetch = (async () => {
+        if (failure === "transport") throw new TypeError("fetch failed");
+        return new Response(failure === "json" ? "not JSON" : JSON.stringify({ output: [{ content: [{ type: "output_text", text: 7 }] }] }), { status: 200 });
+      }) as typeof fetch;
+      const failed = await request(app).post("/api/chat").set(auth).send({ text: "A question worth keeping" }).expect(502);
+      assert.equal(failed.body.code, "AI_UNAVAILABLE");
+      assert.match(failed.body.error, /try again/);
+      assert.equal((await request(app).get("/api/state").set(auth).expect(200)).body.data.conversations.length, 0);
+    }
+    globalThis.fetch = (async () => new Response(JSON.stringify({ output_text: "We can take a pause." }), { status: 200 })) as typeof fetch;
+    // Every failure releases the chat lock, and a retry commits exactly one turn.
+    const retried = await request(app).post("/api/chat").set(auth).send({ text: "A question worth keeping" }).expect(200);
+    assert.equal(retried.body.conversation.messages.length, 2);
+    assert.equal(retried.body.provider, "live");
+  } finally {
+    globalThis.fetch = originalFetch;
+    store.close();
+  }
+});
