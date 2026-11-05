@@ -4,7 +4,7 @@
 
 The botanical references in `design/references/00-home-tabs-light.png` and `00-home-tabs-dark.png` establish the identity: editorial serif headings, readable sans serif text, sculpted petals and leaves, warm light, and generous spacing. Device bezels are presentation chrome, not app UI.
 
-The latest user direction refines that identity rather than replacing it. Preserve the loved light theme. Dark mode uses a black canvas, neutral graphite surfaces and champagne actions; the forest-green dark reference and the intervening large purple panels are historical directions, not current color authority. Preserve all original reference images and source artwork.
+The latest supplied Today, Explore, and Solace frames define their scenic artwork, layout, and controls. Light uses ivory, muted olive, and violet accents. Dark uses black and graphite beneath individually generated night scenes, with champagne actions. Preserve all original reference images and source artwork.
 
 ## Theme tokens
 
@@ -34,11 +34,12 @@ Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled E
 
 ## Today and the daily pause
 
-Today is a welcoming daily arrival, not a feature catalogue:
+Today follows the supplied sunrise layout:
 
-1. Compact brand and personal greeting framed by corner foliage.
-2. One cohesive mood tray with five watercolor petal illustrations and a checked label for the saved mood.
-3. An illustrated **Your daily pause** hero with one primary action and a quiet factual three-step path.
+1. Sunrise scenery, a lotus wordmark, personal greeting, reminders, and a Moments entry.
+2. Real check-in participation, weekly completed Moments, and the latest recorded mood.
+3. Five watercolor mood petals, the check-in entry, and the illustrated **Today's Focus** carousel.
+4. Four Quick Actions and a Journey link with actual daily progress.
 
 The hero changes its title and action for check-in, curated practice, reflection and completed states. Always use `pickDailyRoutine`'s actual next route/parameters. Completing the pause keeps the recorded progress and offers an optional three-minute breathing moment; it must not manufacture completion, assign another goal, or imply clinical benefit.
 
@@ -48,7 +49,7 @@ The three-step path is supported by actual saved account and device records. Its
 
 ## Explore and supporting screens
 
-Explore leads with a labeled Solace Moments link, then an illustrated breathing feature and quiet grounding, writing, and toolkit rows. Guides and reflective check-ins have their own group. Daily tools group the plan, affirmation, and challenge. Avoid repeated same-weight colored cards competing with the featured practice.
+Explore leads with a violet lake scene, search, toolkit, and six category controls. Its five-minute feature and four illustrated shortcuts lead to existing practice flows. The builder shows a plan based on the chosen focus and duration. Guided programs, toolkit, check-ins, and additional wellness tools remain accessible below.
 
 Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Profile owns private photos, account settings and data controls. Welcome, login, signup and Today have no upper-right profile shortcut.
 
@@ -79,7 +80,7 @@ Private profile photos have real choose/save/remove/cancel/error states and rema
 
 Extend the established botanical world with the small petal companion; do not introduce another brand logo beside it in the chat header. Idle, listening, thinking, speaking, celebration and breathing states reflect actual interactions. Respect the OS reduced-motion setting from the first render. The companion does not infer a person's emotions.
 
-Solace chat uses warm rounded bubbles, two contextual quick replies, and a reset card with artwork for each theme. The microphone and paper plane belong to the composer row. Voice Talk opens from the headset and centers the companion, recording control, editable draft, and spoken reply. The reply itself identifies its source. Urgent replies surface the support action alongside the response.
+Solace chat combines a woodland lotus scene with rounded bubbles, timestamps from saved turns, contextual quick replies, and a scenic two-minute Guided Breath card. The scene scrolls with the transcript below a fixed glass header. The composer row holds the action menu, draft, microphone, and paper plane. Voice Talk opens from the headset and centers the companion, recording control, editable draft, and spoken reply. The reply itself identifies its source. Urgent replies surface the support action alongside the response.
 
 Moments uses one feeling field, three quiet environment choices and a validated activity preview with a clear source and optional explanation. The immersive player hides tabs, keeps Begin/Pause and sound controls in a safe-area footer, pauses on app backgrounding and environment changes, and confirms exit after starting. Forest uses the existing botanical image, Ocean uses calm geometric wave layers, and Twilight reuses moonlit art; all three preserve black app chrome in dark mode. Original synthesized ambience is optional and starts off. No therapeutic effect is attributed to art, sound or a completed timer.
 

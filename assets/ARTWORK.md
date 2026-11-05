@@ -1,5 +1,9 @@
 # Artwork provenance
 
+## Scenic Today, Explore, and Solace redesign
+
+ImageGen recreated the supplied sunrise, lotus pond, woodland companion, violet lake, and ringed lake as matched light and dark artwork. It also generated the guided breath sunrise, four square Explore illustrations, and the transparent lotus mark. The `redesign-*.jpg` files were cropped and compressed for the app. The small chat avatar is a crop of the woodland scene. The art contains no app copy or controls. The screens render text, data, and actions separately.
+
 ## Today and Solace reference update
 
 The built-in ImageGen tool recreated the five watercolor petals from the supplied mood strip and the botanical card art from the supplied Today and Solace mockup. The transparent strip was cropped into `mood-okay.png`, `mood-calm.png`, `mood-low.png`, `mood-stressed.png`, and `mood-great.png`. The reference's light pause illustration was recreated as `today-pause-light.jpg`. The reset artwork was packaged as `chat-reset-light.jpg` and `chat-reset-dark.jpg`, with the pale peach and muted charcoal backgrounds leaving room for live type. The app renders its text and controls as React Native elements.

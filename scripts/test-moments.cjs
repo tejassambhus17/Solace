@@ -3,25 +3,28 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
-const compiled = ts.transpileModule(
-  fs.readFileSync(path.join(__dirname, "../src/moments.ts"), "utf8"),
-  {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
+function loadHelper(file) {
+  const compiled = ts.transpileModule(
+    fs.readFileSync(path.join(__dirname, "../src", file), "utf8"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
     },
-  },
-).outputText;
-const moduleValue = { exports: {} };
-new Function("require", "module", "exports", compiled)(
-  () => {
-    throw new Error(
-      "Pure Moment helpers must not load native or server runtime modules.",
-    );
-  },
-  moduleValue,
-  moduleValue.exports,
-);
+  ).outputText;
+  const moduleValue = { exports: {} };
+  new Function("require", "module", "exports", compiled)(
+    () => {
+      throw new Error(
+        "Pure Moment helpers must not load native or server runtime modules.",
+      );
+    },
+    moduleValue,
+    moduleValue.exports,
+  );
+  return moduleValue.exports;
+}
 const {
   emptyClock,
   resumeMoment,
@@ -31,7 +34,9 @@ const {
   breathingPosition,
   isPlayableMoment,
   momentClockText,
-} = moduleValue.exports;
+} = loadHelper("moments.ts");
+const { createExplorePractice, practiceDurations, practiceFocuses } =
+  loadHelper("explore-practices.ts");
 const activity = () => ({
   version: 1,
   id: "qa-moment",
@@ -160,4 +165,22 @@ test("reading timer and phase positions never mutates a generated activity or cl
   assert.deepEqual(clock, { elapsedMs: 5000, runningSince: 1000 });
   assert.equal(momentClockText(61.9), "1:01");
   assert.equal(momentClockText(-1), "0:00");
+});
+
+test("every Explore focus and duration opens a valid timed practice", () => {
+  for (const focus of Object.keys(practiceFocuses)) {
+    for (const minutes of practiceDurations) {
+      const practice = createExplorePractice(focus, minutes);
+      assert.equal(
+        isPlayableMoment(practice),
+        true,
+        `${focus}, ${minutes} min`,
+      );
+      assert.equal(practice.durationSec, minutes * 60);
+      const end = minutes * 60 * 1000;
+      assert.equal(momentPosition(practice, end - 1).complete, false);
+      assert.equal(momentPosition(practice, end).complete, true);
+    }
+  }
+  assert.equal(createExplorePractice("breathe", 5).title, "Calm Your Mind");
 });

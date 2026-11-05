@@ -450,6 +450,19 @@ export function SectionTitle({
   );
 }
 
+export function LotusMark({ size = 28 }: { size?: number }) {
+  return (
+    <Image
+      source={require("../assets/redesign-lotus.png")}
+      accessible={false}
+      accessibilityIgnoresInvertColors
+      resizeMode="contain"
+      fadeDuration={0}
+      style={{ width: size, height: size * 0.72 }}
+    />
+  );
+}
+
 export function BrandMark({ size = 34 }: { size?: number }) {
   return (
     <Row style={{ gap: 7 }}>

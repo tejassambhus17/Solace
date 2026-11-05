@@ -29,8 +29,8 @@ const destinations = [
   {
     name: "journey",
     title: "Journey",
-    icon: "analytics-outline",
-    active: "analytics",
+    icon: "trending-up-outline",
+    active: "trending-up",
   },
   {
     name: "profile",
@@ -45,10 +45,6 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
   const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
-  const selectedSurface =
-    resolved === "dark" ? colors.surface2 : colors.lavenderSurface;
-  const selectedInk =
-    resolved === "dark" ? colors.primary : colors.lavenderText;
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
@@ -80,6 +76,17 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
         const selected = explore
           ? app.inExplore
           : !app.inExplore && app.activeTab === destination.name;
+        const today = destination.name === "today";
+        const selectedSurface = today
+          ? colors.sageSurface
+          : explore || resolved === "light"
+            ? colors.lavenderSurface
+            : colors.surface2;
+        const selectedInk = today
+          ? colors.sageText
+          : explore || resolved === "light"
+            ? colors.lavenderText
+            : colors.primary;
         return (
           <Pressable
             key={destination.name}
@@ -96,12 +103,12 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
             }}
             style={({ pressed }) => ({
               flex: 1,
-              minHeight: 60,
+              minHeight: 52,
               minWidth: android ? 48 : 44,
               borderRadius: 29,
-              paddingVertical: 7,
+              paddingVertical: 5,
               paddingHorizontal: 1,
-              gap: 4,
+              gap: 2,
               alignItems: "center",
               justifyContent: "center",
               backgroundColor:
@@ -129,7 +136,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
             >
               <Icon
                 name={selected ? destination.active : destination.icon}
-                size={23}
+                size={22}
                 color={selected ? selectedInk : colors.muted}
               />
             </View>
@@ -137,7 +144,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
               variant="caption"
               color={selected ? selectedInk : colors.muted}
               style={{
-                fontSize: 10.5,
+                fontSize: 11,
                 lineHeight: 15,
                 fontFamily: selected ? "Inter_600SemiBold" : "Inter_400Regular",
               }}

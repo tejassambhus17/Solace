@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,7 +11,11 @@ import {
   TextInput,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
 import { Companion } from "../Companion";
 import { localDay, recordDay } from "../content";
@@ -21,12 +26,14 @@ import {
   ChatHeaderButton,
   ChatQuickReplies,
   ChatResetCard,
+  ChatScene,
   ChatWelcome,
 } from "./ChatDetails";
 import {
   AppText,
   Artwork,
   BrandMark,
+  LotusMark,
   BotanicalBackdrop,
   IconButton,
   Button,
@@ -381,6 +388,15 @@ export function ChatScreen() {
   const app = useApp();
   const navigationInset = useNavigationInset();
   const { colors, resolved } = useTheme();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [headerHeight, setHeaderHeight] = useState(68);
+  const [showComposerMenu, setShowComposerMenu] = useState(false);
+  const dark = resolved === "dark";
+  const sceneHeight =
+    Math.min(308, Math.round(width * 0.64)) + Math.min(insets.top, 18);
+  const sceneOffset = insets.top + headerHeight;
+  const visibleScene = Math.max(36, sceneHeight - sceneOffset);
   const [id, setId] = useState<string | undefined>(app.params?.id);
   const draftKey = id || "new";
   const [input, setInput] = useState(
@@ -415,6 +431,7 @@ export function ChatScreen() {
         String(app.params?.context || ""),
     );
     setFailure("");
+    setShowComposerMenu(false);
   }, [app.params?.id, app.params?.context || ""]);
   const conversation = app.data.conversations.find((x) => x.id === id);
   const messages = Array.isArray(conversation?.messages)
@@ -451,14 +468,20 @@ export function ChatScreen() {
     [app.data.checkins, today],
   );
   function startReset() {
+    setShowComposerMenu(false);
     app.navigate("breathing", {
-      durationSec: 60,
+      durationSec: 120,
       source: "solace-chat",
       conversationId: id,
     });
   }
   function startReflection() {
+    setShowComposerMenu(false);
     app.navigate("reflection", { source: "solace-chat", conversationId: id });
+  }
+  function openMoments() {
+    setShowComposerMenu(false);
+    app.navigate("moments", momentContext);
   }
   function writeDraft(text: string) {
     inputRef.current = text;
@@ -472,6 +495,7 @@ export function ChatScreen() {
     sending.current = true;
     nearBottom.current = true;
     setShowLatest(false);
+    setShowComposerMenu(false);
     app.setChatDraft(draftKey, submitted);
     setPending(text);
     setFailure("");
@@ -495,17 +519,84 @@ export function ChatScreen() {
       if (mounted.current) setPending("");
     }
   }
+  function chatActions(playback: React.ReactNode) {
+    if (!showComposerMenu) return null;
+    return (
+      <View
+        style={[
+          chatStyles.composerMenu,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <AppText variant="label" style={chatStyles.menuTitle}>
+          Chat actions
+        </AppText>
+        <View style={chatStyles.menuActions}>
+          {[
+            {
+              label: "Guided Breath",
+              icon: "leaf-outline",
+              action: startReset,
+            },
+            {
+              label: "Solace Moments",
+              icon: "sparkles-outline",
+              action: openMoments,
+            },
+            {
+              label: "Write a reflection",
+              icon: "book-outline",
+              action: startReflection,
+            },
+            {
+              label: "Find support",
+              icon: "heart-outline",
+              action: () => app.navigate("support"),
+            },
+          ].map(({ label, icon, action }) => (
+            <Pressable
+              key={label}
+              accessibilityRole="button"
+              onPress={() => {
+                setShowComposerMenu(false);
+                action();
+              }}
+              style={({ pressed }) => [
+                chatStyles.menuAction,
+                { backgroundColor: pressed ? colors.surface2 : colors.bg },
+              ]}
+            >
+              <Icon name={icon} size={17} color={colors.primary} />
+              <AppText variant="caption" style={chatStyles.menuLabel}>
+                {label}
+              </AppText>
+            </Pressable>
+          ))}
+        </View>
+        {!!playback && (
+          <Row style={chatStyles.playbackAction}>
+            <AppText variant="caption" color={colors.muted}>
+              Latest reply
+            </AppText>
+            {playback}
+          </Row>
+        )}
+      </View>
+    );
+  }
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <SafeAreaView
-        edges={["top"]}
-        style={{ flex: 1, backgroundColor: colors.bg }}
-      >
-        <Row style={chatStyles.header}>
-          <Row style={{ gap: 0 }}>
+      <StatusBar style="light" />
+      <ChatScene height={sceneHeight} viewportHeight={sceneOffset} />
+      <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
+        <View
+          style={chatStyles.header}
+          onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
+        >
+          <Row style={chatStyles.headerActions}>
             <ChatHeaderButton
               icon="headset-outline"
               label="Start a voice conversation"
@@ -517,27 +608,44 @@ export function ChatScreen() {
               icon="sparkles-outline"
               label="Create a Solace Moment"
               disabled={activityDisabled}
-              onPress={() => app.navigate("moments", momentContext)}
+              onPress={openMoments}
             />
           </Row>
-          <AppText
-            variant="heading"
-            accessibilityRole="header"
-            style={chatStyles.title}
-          >
-            Solace
-          </AppText>
-          <Row style={{ gap: 0 }}>
+          <View style={chatStyles.headerBrand}>
+            <Row style={chatStyles.brandName}>
+              <LotusMark size={28} />
+              <AppText
+                variant="heading"
+                accessibilityRole="header"
+                color="#FFF7E9"
+                style={chatStyles.title}
+              >
+                Solace
+              </AppText>
+            </Row>
+            <AppText
+              variant="caption"
+              color="#F6EDDE"
+              style={chatStyles.headerCaption}
+            >
+              Here to listen
+            </AppText>
+          </View>
+          <Row style={chatStyles.headerActions}>
             <ChatHeaderButton
               icon="create-outline"
               label="New conversation"
               disabled={activityDisabled}
               onPress={() => {
+                scroll.current?.scrollTo({ y: 0, animated: false });
+                nearBottom.current = true;
+                setShowLatest(false);
                 setId(undefined);
                 app.setParams({ id: undefined, context: "" });
                 inputRef.current = app.chatDrafts.new || "";
                 setInput(inputRef.current);
                 setFailure("");
+                setShowComposerMenu(false);
               }}
             />
             <ChatHeaderButton
@@ -547,7 +655,7 @@ export function ChatScreen() {
               onPress={() => app.navigate("history")}
             />
           </Row>
-        </Row>
+        </View>
         <View style={{ flex: 1 }}>
           <ScrollView
             ref={scroll}
@@ -569,7 +677,20 @@ export function ChatScreen() {
             }}
             contentContainerStyle={chatStyles.conversation}
           >
-            {fresh && <ChatWelcome mood={mood} state={voiceState} />}
+            <View
+              style={{
+                height: visibleScene,
+                marginHorizontal: -20,
+                marginBottom: -23,
+              }}
+            >
+              <ChatScene
+                height={sceneHeight}
+                offset={sceneOffset}
+                viewportHeight={visibleScene}
+              />
+            </View>
+            <ChatWelcome mood={fresh ? mood : undefined} state={voiceState} />
             {messages.map((message: any, index: number) => {
               const source =
                 message.support || message.safety
@@ -584,17 +705,22 @@ export function ChatScreen() {
                   key={message.id || index}
                   user={message.role === "user"}
                   label={source}
+                  createdAt={message.createdAt}
+                  avatar={message.role === "assistant"}
                 >
-                  <AppText selectable>{message.content}</AppText>
+                  {String(message.content ?? "")}
                 </ChatBubble>
               );
             })}
             {!!pending && (
               <>
-                <ChatBubble user>
-                  <AppText>{pending}</AppText>
-                </ChatBubble>
-                <Row>
+                <ChatBubble user>{pending}</ChatBubble>
+                <Row
+                  style={[
+                    chatStyles.thinking,
+                    { backgroundColor: colors.surface },
+                  ]}
+                >
                   <Companion size={33} state="thinking" />
                   <AppText
                     accessibilityLiveRegion="polite"
@@ -615,7 +741,7 @@ export function ChatScreen() {
                 style={{ alignSelf: "flex-start", marginBottom: 12 }}
               />
             )}
-            {!pending && !showSupport && (offerReset || reflection) && (
+            {!pending && !showSupport && (fresh || reflection) && (
               <ChatQuickReplies
                 reflection={reflection}
                 disabled={activityDisabled}
@@ -666,7 +792,10 @@ export function ChatScreen() {
         <View
           style={[
             chatStyles.composer,
-            { paddingBottom: 10 + navigationInset, backgroundColor: colors.bg },
+            {
+              paddingBottom: 10 + (navigationInset || insets.bottom),
+              backgroundColor: colors.bg,
+            },
           ]}
         >
           {!!failure && (
@@ -696,66 +825,102 @@ export function ChatScreen() {
               setFailure("");
               return true;
             }}
-            renderComposer={(microphone) => (
-              <Row style={chatStyles.composerRow}>
-                <TextInput
-                  ref={composerInput}
-                  accessibilityLabel="Message Solace"
-                  placeholder="Message Solace…"
-                  placeholderTextColor={colors.muted}
-                  selectionColor={colors.accent}
-                  value={input}
-                  onChangeText={writeDraft}
-                  onFocus={() => setInputFocused(true)}
-                  onBlur={() => setInputFocused(false)}
-                  multiline
-                  editable={!pending}
-                  maxLength={4000}
-                  style={[
-                    chatStyles.messageInput,
-                    {
-                      color: colors.text,
-                      backgroundColor: colors.surface,
-                      borderColor: inputFocused
-                        ? colors.primary
-                        : colors.border,
-                    },
-                  ]}
-                />
-                {microphone}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    failure ? "Retry message" : "Send message"
-                  }
-                  accessibilityState={{
-                    disabled: sendDisabled,
-                    busy: !!pending,
-                  }}
-                  aria-disabled={sendDisabled}
-                  aria-busy={!!pending}
-                  onPress={send}
-                  disabled={sendDisabled}
-                  style={({ pressed }) => [
-                    chatStyles.sendButton,
-                    {
-                      backgroundColor:
-                        resolved === "dark"
-                          ? colors.primary
-                          : colors.sageSurface,
-                      opacity: sendDisabled ? 0.55 : pressed ? 0.75 : 1,
-                    },
-                  ]}
-                >
-                  <Icon
-                    name={failure ? "refresh-outline" : "paper-plane-outline"}
-                    color={
-                      resolved === "dark" ? colors.primaryText : colors.primary
+            renderComposer={(microphone, playback) => (
+              <>
+                {chatActions(playback)}
+                <Row style={chatStyles.composerRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      showComposerMenu
+                        ? "Close chat actions"
+                        : "More chat actions"
                     }
-                    size={22}
+                    accessibilityState={{
+                      expanded: showComposerMenu,
+                      disabled: activityDisabled,
+                    }}
+                    disabled={activityDisabled}
+                    onPress={() => {
+                      if (!showComposerMenu) Keyboard.dismiss();
+                      setShowComposerMenu((open) => !open);
+                    }}
+                    style={({ pressed }) => [
+                      chatStyles.sendButton,
+                      {
+                        backgroundColor: dark ? "#25201DF5" : "#FFF8EFF5",
+                        borderColor: dark ? "#655348" : "#FFFFFF",
+                        opacity: activityDisabled ? 0.5 : pressed ? 0.72 : 1,
+                      },
+                    ]}
+                  >
+                    <Icon
+                      name={showComposerMenu ? "close" : "add"}
+                      color={colors.text}
+                      size={24}
+                    />
+                  </Pressable>
+                  <TextInput
+                    ref={composerInput}
+                    accessibilityLabel="Message Solace"
+                    placeholder="Message Solace…"
+                    placeholderTextColor={colors.muted}
+                    selectionColor={colors.accent}
+                    value={input}
+                    onChangeText={writeDraft}
+                    onFocus={() => {
+                      setShowComposerMenu(false);
+                      setInputFocused(true);
+                    }}
+                    onBlur={() => setInputFocused(false)}
+                    multiline
+                    numberOfLines={Platform.OS === "web" ? 1 : undefined}
+                    editable={!pending}
+                    maxLength={4000}
+                    style={[
+                      chatStyles.messageInput,
+                      {
+                        color: colors.text,
+                        backgroundColor: dark ? "#25201DF5" : "#FFF8EFF5",
+                        borderColor: inputFocused
+                          ? colors.primary
+                          : dark
+                            ? "#655348"
+                            : "#FFFFFF",
+                      },
+                    ]}
                   />
-                </Pressable>
-              </Row>
+                  {microphone}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      failure ? "Retry message" : "Send message"
+                    }
+                    accessibilityState={{
+                      disabled: sendDisabled,
+                      busy: !!pending,
+                    }}
+                    aria-disabled={sendDisabled}
+                    aria-busy={!!pending}
+                    onPress={send}
+                    disabled={sendDisabled}
+                    style={({ pressed }) => [
+                      chatStyles.sendButton,
+                      {
+                        backgroundColor: dark ? colors.primary : "#35533F",
+                        borderColor: dark ? "#F4D5B6" : "#A8B998",
+                        opacity: sendDisabled ? 0.55 : pressed ? 0.75 : 1,
+                      },
+                    ]}
+                  >
+                    <Icon
+                      name={failure ? "refresh-outline" : "paper-plane"}
+                      color={colors.primaryText}
+                      size={22}
+                    />
+                  </Pressable>
+                </Row>
+              </>
             )}
           />
         </View>
@@ -765,21 +930,57 @@ export function ChatScreen() {
 }
 
 const chatStyles = StyleSheet.create({
-  header: { paddingHorizontal: 14, paddingTop: 9, paddingBottom: 7, gap: 2 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    gap: 2,
+  },
+  headerActions: { gap: 0 },
+  headerBrand: { flex: 1, minWidth: 0, alignItems: "center" },
+  brandName: { gap: 5, maxWidth: "100%" },
+  headerCaption: { fontSize: 11, lineHeight: 16, textAlign: "center" },
   title: {
-    flex: 1,
-    minWidth: 0,
+    flexShrink: 1,
     textAlign: "center",
-    fontSize: 32,
-    lineHeight: 36,
+    fontSize: 29,
+    lineHeight: 32,
   },
   conversation: {
     paddingHorizontal: 20,
-    paddingTop: 8,
     paddingBottom: 17,
     gap: 12,
   },
+  thinking: { alignSelf: "flex-start", borderRadius: 19, paddingHorizontal: 7 },
   composer: { paddingHorizontal: 16, paddingTop: 7 },
+  composerMenu: {
+    padding: 12,
+    marginBottom: 9,
+    borderRadius: 20,
+    borderWidth: 1,
+    boxShadow: "0 8px 22px #271C131A",
+  },
+  menuTitle: { marginBottom: 8 },
+  menuActions: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  menuAction: {
+    flexGrow: 1,
+    flexBasis: "46%",
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 44,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 6,
+  },
+  menuLabel: { flexShrink: 1 },
+  playbackAction: {
+    justifyContent: "space-between",
+    paddingLeft: 9,
+    marginTop: 4,
+  },
   composerRow: { alignItems: "flex-end", gap: 7 },
   messageInput: {
     flex: 1,
@@ -794,13 +995,16 @@ const chatStyles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     textAlignVertical: "top",
+    boxShadow: "0 5px 14px #271C1314",
   },
   sendButton: {
     width: 46,
     height: 46,
     borderRadius: 23,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: "0 5px 14px #271C1314",
   },
 });
 

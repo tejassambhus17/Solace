@@ -506,6 +506,12 @@ export function MomentPlayerScreen() {
   const app = useApp();
   const activity = app.params?.activity;
   const playable = isPlayableMoment(activity);
+  const guidedSource =
+    app.params.source === "explore"
+      ? "Explore"
+      : app.params.source === "today"
+        ? "Today"
+        : undefined;
   useEffect(() => {
     if (playable) return;
     const subscription = BackHandler.addEventListener(
@@ -532,6 +538,7 @@ export function MomentPlayerScreen() {
       key={activity.id}
       activity={activity}
       provider={app.params.provider === "live" ? "live" : "offline"}
+      guidedSource={guidedSource}
     />
   );
 }
@@ -539,9 +546,11 @@ export function MomentPlayerScreen() {
 function PlayableMoment({
   activity,
   provider,
+  guidedSource,
 }: {
   activity: SolaceMoment;
   provider: "live" | "offline";
+  guidedSource?: "Explore" | "Today";
 }) {
   const app = useApp();
   const { colors } = useTheme();
@@ -662,7 +671,7 @@ function PlayableMoment({
       completed: true,
       feedback: feedback || "skipped",
       note: note.trim(),
-      source: "Solace Moments",
+      source: guidedSource ?? "Solace Moments",
       ...(app.params?.conversationId
         ? { sourceConversationId: app.params.conversationId }
         : {}),
@@ -1020,7 +1029,9 @@ function PlayableMoment({
           >
             {provider === "live"
               ? "AI-created wellness guidance. You remain in control."
-              : "Built-in guided Moment · Live AI is off."}{" "}
+              : guidedSource
+                ? `Guided practice from ${guidedSource}.`
+                : "Built-in guided Moment · Live AI is off."}{" "}
             This is an optional wellness activity, not medical care.
           </AppText>
         )}

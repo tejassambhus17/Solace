@@ -9,7 +9,7 @@ The user directed feature implementation to continue while deferring provider, h
 | Source | Capability | Current implementation | Verification boundary |
 |---|---|---|---|
 | PDF2–3 / core | Splash, onboarding, accounts and sessions | Branded loading/welcome, signup/login/logout, server-validated sessions and recovery | Actual local browser auth/restart verified; native fresh installation and force-quit/relaunch pending |
-| PDF3–4 / workspace | Personal home and four main tabs | Botanical Today/daily pause, Solace, Journey and Profile, with a persistent Explore library shortcut | Browser navigation evidence in VERIFICATION.md. Native materials and gestures remain pending. |
+| PDF3–4 / workspace | Personal home and four main tabs | Scenic Today with actual stats, mood check-in, focus practices, quick actions and Journey, plus a persistent Explore library shortcut | Browser navigation and reference comparison in VERIFICATION.md. Native materials and gestures remain pending. |
 | PDF4–5 / core | Real contextual conversations | Server Responses adapter, bounded current conversation and consented context; explicitly labeled built-in companion | Adapter and failure/isolation tests plus actual built-in browser exchanges; real provider deferred |
 | PDF5–6 / core | Conversation history | Start new, search, rename, continue, delete; recent-conversation entry and unsent-text recovery | Server/provider-state regressions and actual browser continuity; native storage lifecycle pending |
 | Master 1 | Expressive companion | Reusable lightweight petal with idle, listening, thinking, speaking, celebration and breathing states driven by actual events; reduced-motion support | Source, lifecycle tests and browser activity states; native recording/playback animation correspondence pending |
@@ -41,7 +41,7 @@ The user directed feature implementation to continue while deferring provider, h
 | Moments and Journey | Optional environment controls expand on demand. Changed feelings invalidate old previews. Canceling exit keeps a paused Moment paused. Calendar month and selected day stay in sync. | Focused helper tests and browser generation, pause, completion, feedback and calendar checks. |
 | Reminder preferences | Four-digit time input, clear edit/reset, explicit delete confirmation, serialized restore and edit, deduplicated tap routing. | Coordination tests and browser preference saving and editing. Native scheduling, delivery and tap acceptance remain separate. |
 | Preview and motion | Packaged web preview serves real audio MIME and byte ranges. Web motion uses its available driver, and mobile retains native animation. | Local HTTP smoke check, browser playback state and Expo exports. |
-| Explore library | One-tap bottom shortcut, visible Moments and practice groups, direct Daily Challenge screen, and Back to the originating screen. | Browser opened all ten library destinations. Session-state regression covers repeated Explore and Back. |
+| Explore library | Scenic header, category filters, search, saved toolkit, five-minute feature, illustrated shortcuts, timed practice builder, and more wellness tools. | Browser verified search, category, timer entry, and builder. Moment tests validate each focus and duration against the player contract. |
 
 ## Current exclusions and limits
 

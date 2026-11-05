@@ -35,7 +35,7 @@ export function VoiceControlsImpl({
   autoReadKey?: string;
 }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const talk = variant === "talk";
   const [state, setState] = useState<VoiceState>("idle");
   const [speaking, setSpeaking] = useState(false);
@@ -385,12 +385,21 @@ export function VoiceControlsImpl({
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 1,
-        borderColor: talk && !listening ? colors.primary : colors.border,
+        borderColor: talk
+          ? listening
+            ? colors.border
+            : colors.primary
+          : resolved === "dark"
+            ? "#655348"
+            : "#FFFFFF",
         backgroundColor: listening
           ? colors.peachSurface
           : talk
             ? colors.primary
-            : colors.sageSurface,
+            : resolved === "dark"
+              ? "#25201DF5"
+              : "#FFF8EFF5",
+        boxShadow: talk ? undefined : "0 5px 14px #271C1314",
         opacity: microphoneDisabled ? 0.55 : pressed ? 0.72 : 1,
       })}
     >
@@ -523,9 +532,6 @@ export function VoiceControlsImpl({
       {renderComposer ? (
         <>
           {details}
-          {!talk && !!reply && (
-            <Row style={{ justifyContent: "flex-end" }}>{playback}</Row>
-          )}
           {renderComposer(microphone, playback)}
         </>
       ) : (

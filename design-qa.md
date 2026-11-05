@@ -2,6 +2,16 @@
 
 final result: passed
 
+## Scenic redesign references — 6 November 2026
+
+Compared the three latest supplied frames with the 390 × 845 CSS pixel browser preview. The captures show the app viewport and exclude the surrounding browser renderer. The current app uses actual names, stats, mood, and conversation state. The system status bar and device frame belong to the operating system.
+
+- **Typography and layout.** Today preserves the illustrated greeting, stat row, mood strip, feature, and four quick actions. Explore preserves the category rail, feature, four illustrations, builder, and lower tools. Solace uses the forest header, conversational bubbles, two-minute card, and a single composer row. The lower Explore content scrolls above the bottom navigation.
+- **Color and images.** New artwork follows the sunrise, violet lake, woodland lotus, and guided breath reference scenes. The app uses separate night artwork and dark surfaces. The generated images leave space for live text and working controls.
+- **Controls.** Verified the mood route, focus carousel, Explore search and Move filter, custom durations, chat timestamps, and a complete Guided Breath session saved to Journey. The scene now scrolls with the transcript, and reply playback is accessible from the composer menu.
+
+[Today](docs/screenshots/scenic-today-phone.png), [Solace](docs/screenshots/scenic-chat-phone.png), [Explore](docs/screenshots/scenic-explore-phone.png), and [dark comparison](docs/screenshots/scenic-dark-phone.png) show the verified views.
+
 ## Supplied Today and chat references — 6 November 2026
 
 Reviewed the supplied left and right app frames and the separate watercolor mood strip against the app at 390 × 845 CSS pixels. The app captures are cropped only to remove browser renderer padding. The supplied device frame and status area are outside the comparison.

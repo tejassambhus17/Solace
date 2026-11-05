@@ -360,3 +360,14 @@ Compared the two supplied references with the app at 390 × 845 CSS pixels. Chec
 The preview used the built-in companion and browser speech. Live transcription, live agent replies, and installed-device microphone and audio behavior remain pending. The provider key belongs in the private server configuration.
 
 See the [Today capture](screenshots/reference-today-phone.png), [Solace capture](screenshots/reference-chat-phone.png), and [Voice Talk capture](screenshots/reference-voice-phone.png).
+
+## Scenic Today, Solace, and Explore redesign — 6 November 2026
+
+Compared the three supplied designs with the Expo browser preview in light and dark appearance at 390 × 845 CSS pixels. The screenshots use real app data, generated artwork, and rendered controls. The final browser error log was empty.
+
+- Today showed the account's recorded mood and counts. Okay opened the selected mood check-in. Reminders and the alternate daily pause opened their working routes. Start Moment opened the five-minute Calm Reset.
+- Explore filtered to Gentle Movement, which opened a three-minute session. Search found and opened Sleep Wind Down. Calm Your Mind opened at five minutes. Reflect with ten minutes opened the correct guided player. The practice plan preview showed the three selected timed steps, and expanded wellness tools exposed guides, affirmation, and challenge.
+- Solace sent a test message and displayed an actual built-in reply with timestamps. The composer menu exposed reply playback, and Voice Talk showed the unconfigured transcription state. Guided Breath opened with two minutes selected, ran to completion, and saved. Journey displayed the new completed session and updated totals, and Today displayed the updated weekly Moment count.
+- TypeScript, formatting, the web, Android, and iOS exports, and 156 targeted and server integration tests passed. The Moment contract test covers all five authored focus choices with all three durations.
+
+[Today](screenshots/scenic-today-phone.png), [Solace](screenshots/scenic-chat-phone.png), [Explore](screenshots/scenic-explore-phone.png), and [all three dark screens](screenshots/scenic-dark-phone.png) show the browser preview. Installed device rendering, native reminders, and live voice provider behavior remain pending.

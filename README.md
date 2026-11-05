@@ -12,7 +12,7 @@ The user explicitly asked to finish implementation while postponing provider, ho
 
 ## The daily experience
 
-Today pairs a botanical greeting and five watercolor mood petals with one illustrated daily pause. Its three-step progress comes from saved check-ins, completed practices and reflections. The completed state keeps that progress and offers an optional breathing moment. Find conversation history in Solace and the daily affirmation in Explore.
+Today opens with a scenic greeting, actual check-in and Moment counts, and the latest recorded mood. Tap a watercolor petal to open the check-in, or start the five-minute Calm Reset. The focus controls also open the daily pause and a personalized Moment. Quick Actions open breathing, reflection, sleep, and grounding. The Journey ring shows recorded steps for the day.
 
 The loved light theme remains blush-ivory and forest. Dark mode uses a black canvas, neutral graphite, warm ivory text, champagne actions and restrained lilac/peach/sage accents. Welcome, login, signup and Today have no upper-right profile shortcut. Typography and artwork follow [the existing design system](DESIGN.md), including [matched daily-pause artwork](assets/DAILY_PAUSE_ARTWORK.md).
 
@@ -28,7 +28,9 @@ The recognizable petal companion has idle, listening, thinking, speaking, celebr
 
 ## Conversation and voice
 
-Chat opens with a welcome, contextual quick replies, and a one-minute breathing card. The header gives direct access to Moments, new conversation, history, and Voice Talk. Replies identify the live or built-in source in the transcript. Urgent replies provide a human support action. Unsent text stays in account-scoped memory across navigation, including after recoverable errors.
+Chat opens with a woodland lotus scene, contextual quick replies, and a two-minute Guided Breath card. Actual turns show their recorded timestamps and reply source. The header opens Moments, new conversation, history, and Voice Talk. The composer menu offers practices, support, and reply playback. Urgent replies provide a direct human support action. Unsent text stays in account-scoped memory across navigation and recoverable errors.
+
+Explore offers category filters, search, and the saved toolkit. Its featured Moment runs for five minutes. Illustrated shortcuts open breathing, grounding, reflection, and sleep. The practice builder previews the steps for a chosen focus and duration before opening the timer. A completed practice can be saved to Journey.
 
 The microphone beside Send adds a reviewed transcript to the regular chat composer. The headset opens a dedicated Voice Talk screen for recording, reviewing and editing the transcript, explicitly sending a message, and hearing the reply. Both use permission-aware Expo Audio and the authenticated transcription endpoint. Typed text remains available if permission, recording or transcription fails. Explicit retry can reuse bounded audio held in memory. Solace attempts to delete native temporary audio after extraction and processes audio through the configured provider without storing it on the server.
 

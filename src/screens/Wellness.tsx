@@ -2249,7 +2249,9 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                 <Hint>
                   {record.provider === "live"
                     ? "Created with AI for this saved Moment."
-                    : "Built-in Moment · Live AI was off."}
+                    : record.source === "Explore" || record.source === "Today"
+                      ? `Guided practice from ${record.source}.`
+                      : "Built-in Moment · Live AI was off."}
                 </Hint>
                 <Button
                   title="Try this Moment again"
@@ -2258,6 +2260,10 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                     app.navigate("moment-player", {
                       activity: record.activity,
                       provider: record.provider || "offline",
+                      source:
+                        record.source === "Explore" || record.source === "Today"
+                          ? record.source.toLowerCase()
+                          : undefined,
                       explanation: "A Moment you previously saved.",
                       usedMemoryIds: [],
                     })
