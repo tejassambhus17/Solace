@@ -17,9 +17,15 @@ import { useApp } from "./store";
 import { useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
 
-const tabs = [
+const destinations = [
   { name: "today", title: "Today", icon: "home-outline", active: "home" },
   { name: "chat", title: "Solace", icon: "leaf-outline", active: "leaf" },
+  {
+    name: "explore",
+    title: "Explore",
+    icon: "compass-outline",
+    active: "compass",
+  },
   {
     name: "journey",
     title: "Journey",
@@ -69,16 +75,21 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
     isLiquidGlassAvailable();
   const items = (
     <View style={{ flexDirection: "row", padding: 5, alignItems: "stretch" }}>
-      {tabs.map((tab) => {
-        const selected = app.activeTab === tab.name;
+      {destinations.map((destination) => {
+        const explore = destination.name === "explore";
+        const selected = explore
+          ? app.inExplore
+          : !app.inExplore && app.activeTab === destination.name;
         return (
           <Pressable
-            key={tab.name}
-            onPress={() => app.setTab(tab.name)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            aria-selected={selected}
-            accessibilityLabel={tab.title}
+            key={destination.name}
+            onPress={() =>
+              explore ? app.navigate("explore") : app.setTab(destination.name)
+            }
+            accessibilityRole={explore ? "button" : "tab"}
+            accessibilityState={explore ? undefined : { selected }}
+            aria-selected={explore ? undefined : selected}
+            accessibilityLabel={destination.title}
             android_ripple={{
               color: colors.lavenderSurface,
               borderless: false,
@@ -103,7 +114,8 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
               style={
                 android
                   ? {
-                      width: 54,
+                      width: "100%",
+                      maxWidth: 54,
                       height: 30,
                       borderRadius: 16,
                       alignItems: "center",
@@ -116,7 +128,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
               }
             >
               <Icon
-                name={selected ? tab.active : tab.icon}
+                name={selected ? destination.active : destination.icon}
                 size={23}
                 color={selected ? selectedInk : colors.muted}
               />
@@ -130,7 +142,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
                 fontFamily: selected ? "Inter_600SemiBold" : "Inter_400Regular",
               }}
             >
-              {tab.title}
+              {destination.title}
             </AppText>
           </Pressable>
         );

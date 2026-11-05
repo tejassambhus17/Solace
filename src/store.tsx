@@ -120,6 +120,7 @@ export type AppState = {
   error: string | null;
   route: string;
   activeTab: string;
+  inExplore: boolean;
   params: Record<string, any>;
   canGoBack: boolean;
   token: string | null;
@@ -1122,9 +1123,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const navigate = (name: string, params: Record<string, any> = {}) => {
     if (draftGeneration !== generation.current) return;
     const tab = mainTabFor(name);
-    setStack((old) =>
-      tab ? [{ name: tab, params }] : [...old, { name, params }],
-    );
+    setStack((old) => {
+      if (tab) return [{ name: tab, params }];
+      if (name === "explore") {
+        const index = old.findIndex((entry) => entry.name === "explore");
+        if (index !== -1)
+          return index === old.length - 1 ? old : old.slice(0, index + 1);
+      }
+      return [...old, { name, params }];
+    });
   };
   const setParams = (params: Record<string, any>) => {
     if (draftGeneration !== generation.current) return;
@@ -1149,6 +1156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const current = stack[stack.length - 1];
   const activeTab = mainTabFor(stack[0].name) || "today";
+  const inExplore = stack.some((entry) => entry.name === "explore");
   useEffect(() => {
     const version = draftGeneration;
     const account = owner.current;
@@ -1216,6 +1224,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         error,
         route: current.name,
         activeTab,
+        inExplore,
         params: current.params,
         canGoBack: stack.length > 1,
         token,

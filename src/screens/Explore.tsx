@@ -59,16 +59,16 @@ export function ExploreScreen() {
   const app = useApp();
   const { colors } = useTheme();
   return (
-    <Screen title="Practice library" back={app.back}>
-      <AppText
-        variant="display"
-        style={{ marginTop: 8, fontSize: 43, lineHeight: 46 }}
-      >
-        A little more room.
+    <Screen title="Explore" back={app.back}>
+      <AppText color={colors.muted} style={{ marginBottom: 4 }}>
+        Find guided practices, reflections, and wellness tools.
       </AppText>
-      <AppText color={colors.muted} style={{ marginTop: 10, marginBottom: 26 }}>
-        Choose a practice for the moment you’re in.
-      </AppText>
+      <ExploreLink
+        title="Solace Moments"
+        description="Create a guided activity for how you feel."
+        icon="sparkles-outline"
+        route="moments"
+      />
       <View
         style={{
           backgroundColor: colors.heroSurface,
@@ -76,6 +76,7 @@ export function ExploreScreen() {
           borderWidth: 1,
           borderRadius: 26,
           overflow: "hidden",
+          marginTop: 18,
           marginBottom: 12,
         }}
       >
@@ -91,7 +92,7 @@ export function ExploreScreen() {
         <View
           style={{
             padding: 22,
-            minHeight: 255,
+            minHeight: 218,
             alignItems: "flex-start",
             justifyContent: "center",
           }}
@@ -147,7 +148,7 @@ export function ExploreScreen() {
             style={{
               width: 50,
               height: 50,
-              marginHorizontal: 18,
+              marginLeft: 4,
               backgroundColor: colors.sageSurface,
               borderRadius: 25,
               alignItems: "center",
@@ -158,14 +159,14 @@ export function ExploreScreen() {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <AppText variant="heading" style={{ fontSize: 26, lineHeight: 28 }}>
-              Find your ground
+              Five-senses grounding
             </AppText>
             <AppText
               variant="caption"
               color={colors.muted}
               style={{ marginTop: 5 }}
             >
-              Five senses. One present moment.
+              Notice what’s around you, one sense at a time.
             </AppText>
           </View>
           <Icon name="arrow-forward" color={colors.sageText} size={20} />
@@ -187,7 +188,7 @@ export function ExploreScreen() {
             style={{
               width: 50,
               height: 50,
-              marginHorizontal: 18,
+              marginLeft: 4,
               backgroundColor: colors.peachSurface,
               borderRadius: 25,
               alignItems: "center",
@@ -198,7 +199,7 @@ export function ExploreScreen() {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <AppText variant="heading" style={{ fontSize: 26, lineHeight: 28 }}>
-              Write it out
+              Write a reflection
             </AppText>
             <AppText
               variant="caption"
@@ -241,7 +242,7 @@ export function ExploreScreen() {
           <Icon name="chevron-forward" color={colors.muted} size={17} />
         </Row>
       </Pressable>
-      <SectionTitle title="A little guidance" />
+      <SectionTitle title="Guides and check-ins" />
       <ExploreLink
         title="Guides & resources"
         description="Sleep, stress, connection, and more."
@@ -250,10 +251,13 @@ export function ExploreScreen() {
       />
       <ExploreLink
         title="Reflective check-ins"
-        description="Notice patterns at your own pace."
+        description="Try a short mood, worry, or self-compassion check-in."
         icon="clipboard-outline"
         route="assessments"
       />
+      <View style={{ marginTop: 26 }}>
+        <SectionTitle title="Daily tools" />
+      </View>
       <ExploreLink
         title="Your wellness plan"
         description="Choose small steps for the week."

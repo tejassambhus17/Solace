@@ -339,3 +339,11 @@ Phone screenshots from the browser are [Solace in light appearance](screenshots/
 ### Deferred release acceptance
 
 Live provider calls, public HTTPS deployment, installed Android and iOS verification, native microphone/audio behavior, reminder delivery and taps, and the final demo remain deferred at the user's direction. Expo exports verify bundling. The existing single-instance database and cold-start connectivity limits still apply.
+
+## Explore access correction — 6 November 2026
+
+- The browser preview previously required opening Moments before reaching the practice library. The bottom bar now has a labeled Explore action between Solace and Journey. The four main tabs keep their accessible tab roles and their existing order.
+- Opened all ten Explore destinations in the preview. Moments, reflection, toolkit, resources, reflective check-ins, plan, affirmation, and challenge each opened their named screen. Breathing opened with three minutes selected, and grounding opened its five-senses intro. These checks exercised navigation into each feature.
+- Verified that returning to Explore from a library detail restores the library, and that Back from the library returns to Today. The session-state regression also covers an origin on the Solace history screen, repeated Explore selection, and switching to a main tab.
+- The light preview measured 390, 358 and 851 CSS pixels without horizontal overflow. The Explore target measured 64 pixels wide in the narrow view. The final browser error log was empty. The final screen is captured in [Explore on a phone](screenshots/explore-restored-phone.png).
+- TypeScript, formatting, 34 session-state tests, seven wellness tests and 64 server integration tests passed. Expo exports passed for web, Android and iOS. Installed-device navigation and assistive technology remain separate.

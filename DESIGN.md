@@ -30,7 +30,7 @@ The light secondary-text adjustment to `#626B5D` preserves the visual identity w
 
 Cormorant Garamond headings and Inter body/UI text retain the editorial identity. Reserve the largest headings for arrival and the featured practice. Supporting labels remain compact and readable. Use body text around 14–16 points and touch controls at least 44 points high, with native Android targets sized appropriately.
 
-Keep four main destinations in order: **Today, Solace, Journey, Profile**, following the latest workspace instructions. Moments is reached from Today and Solace; its library links to all existing practices and toolkit. Explore remains a detail destination. Detail screens retain clear back actions and their originating context. Auth and immersive activities may suppress tabs. Wide web previews remain a centered mobile column.
+Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled Explore compass between Solace and Journey opens the practice library as a secondary destination. Tapping it from a library detail returns to the open library. Back from Explore restores its originating screen. Auth and immersive activities may suppress the bar. Wide web previews remain a centered mobile column.
 
 ## Today and the daily pause
 
@@ -49,7 +49,7 @@ The three-step path is supported by actual saved account/device records. Its acc
 
 ## Explore and supporting screens
 
-Explore uses an illustrated breathing feature followed by quiet grounding/writing/tool rows. Guides, reflective check-ins, toolkit, plan, challenges and affirmations remain available. Avoid repeated same-weight colored cards competing with the featured practice.
+Explore leads with a labeled Solace Moments link, then an illustrated breathing feature and quiet grounding, writing, and toolkit rows. Guides and reflective check-ins have their own group. Daily tools group the plan, affirmation, and challenge. Avoid repeated same-weight colored cards competing with the featured practice.
 
 Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Profile owns private photos, account settings and data controls. Welcome, login, signup and Today have no upper-right profile shortcut.
 

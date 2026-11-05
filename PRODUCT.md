@@ -27,7 +27,7 @@ React Native with Expo serves iOS and Android. The web preview shares the same s
 
 ## Connected Moments experience
 
-Four main destinations are Today, Solace, Journey and Profile. Today offers the daily pause and a Moments entry. Solace can carry the current message into a Moment; its activity result can lead back to the saved conversation. The Moments library keeps the full practice/toolkit collection accessible without another main tab.
+Four main tabs are Today, Solace, Journey and Profile. Explore is a labeled shortcut in the bottom bar and brings Moments and the full practice library together. Today also offers the daily pause and a Moments entry. Solace can carry the current message into a Moment, and its activity result can lead back to the saved conversation.
 
 A Moment contains validated activity data, a user-chosen environment and optional ambient sound. Completion uses actual foreground activity time, explicit saving and optional self-reported feedback. Memories require explicit approval and separate global personalization consent. Correcting/removing memories or disabling personalization resets future AI context while keeping saved history visible. Journey shows recorded calendar history, minutes, helpfulness, editable goals and gentle milestones; streaks start off and remain optional.
 

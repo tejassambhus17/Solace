@@ -2769,6 +2769,7 @@ function Plan() {
 function Affirmation() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const challengeOnly = app.route === "challenge";
   const text = todayAffirmation();
   const day = localDay();
   const favourite = (app.data.plans || []).find(
@@ -2823,48 +2824,59 @@ function Affirmation() {
   return (
     <Screen>
       <Header />
-      <PageIntro title={"Today’s\naffirmation"} />
-      <Card
-        style={{
-          padding: 24,
-          marginBottom: 20,
-          minHeight: 230,
-          backgroundColor:
-            resolved === "dark" ? colors.surface : colors.lavenderSurface,
-          borderColor:
-            resolved === "dark" ? colors.border : colors.lavenderSurface,
-        }}
-      >
-        <Text
-          style={[
-            styles.affirmation,
-            { color: resolved === "dark" ? colors.text : colors.lavenderText },
-          ]}
+      <PageIntro
+        title={challengeOnly ? "Daily challenge" : "Today’s\naffirmation"}
+      />
+      {!challengeOnly && (
+        <Card
+          style={{
+            padding: 24,
+            marginBottom: 20,
+            minHeight: 230,
+            backgroundColor:
+              resolved === "dark" ? colors.surface : colors.lavenderSurface,
+            borderColor:
+              resolved === "dark" ? colors.border : colors.lavenderSurface,
+          }}
         >
-          {text}
-        </Text>
-        <View style={{ marginTop: 25 }}>
-          <Button
-            title={
-              busy === "affirmation"
-                ? "Saving…"
-                : isSaved
-                  ? "Affirmation saved"
-                  : "Save affirmation"
-            }
-            onPress={saveAffirmation}
-            disabled={!!busy || isSaved}
-          />
-        </View>
-      </Card>
+          <Text
+            style={[
+              styles.affirmation,
+              {
+                color: resolved === "dark" ? colors.text : colors.lavenderText,
+              },
+            ]}
+          >
+            {text}
+          </Text>
+          <View style={{ marginTop: 25 }}>
+            <Button
+              title={
+                busy === "affirmation"
+                  ? "Saving…"
+                  : isSaved
+                    ? "Affirmation saved"
+                    : "Save affirmation"
+              }
+              onPress={saveAffirmation}
+              disabled={!!busy || isSaved}
+            />
+          </View>
+        </Card>
+      )}
       <Card style={{ padding: 20 }}>
-        <View style={styles.cardTop}>
-          <Mark name="leaf-outline" />
-          <Copy style={{ fontFamily: F.strong, fontSize: 12 }}>
-            A small daily challenge
-          </Copy>
-        </View>
-        <Heading small style={{ marginTop: 15, fontSize: 30 }}>
+        {!challengeOnly && (
+          <View style={styles.cardTop}>
+            <Mark name="leaf-outline" />
+            <Copy style={{ fontFamily: F.strong, fontSize: 12 }}>
+              A small daily challenge
+            </Copy>
+          </View>
+        )}
+        <Heading
+          small
+          style={{ marginTop: challengeOnly ? 0 : 15, fontSize: 30 }}
+        >
           Take a 3-minute reset
         </Heading>
         <Copy style={{ marginTop: 8 }}>
@@ -2898,15 +2910,19 @@ function Affirmation() {
       </Card>
       <ErrorNote error={error} />
       <Copy muted style={{ marginTop: 15, fontSize: 12 }}>
-        Your saved affirmations and completed challenges appear in your Journey.
+        {challengeOnly
+          ? "Completed challenges appear in your Journey."
+          : "Your saved affirmations and completed challenges appear in your Journey."}
       </Copy>
-      <View style={{ marginTop: 12 }}>
-        <Button
-          title="View saved affirmations"
-          variant="secondary"
-          onPress={() => app.navigate("saved-affirmations")}
-        />
-      </View>
+      {!challengeOnly && (
+        <View style={{ marginTop: 12 }}>
+          <Button
+            title="View saved affirmations"
+            variant="secondary"
+            onPress={() => app.navigate("saved-affirmations")}
+          />
+        </View>
+      )}
     </Screen>
   );
 }

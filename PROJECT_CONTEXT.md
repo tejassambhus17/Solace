@@ -41,3 +41,7 @@ The master brief requests Today, Solace, Moments, Journey; the subsequently supp
 The user explicitly asked to implement the full app now without questions and defer setups. The locally verified authentication repair is no longer a blocker for feature implementation. Follow the supplied workspace's four-tab order (Today, Solace, Journey, Profile); Moments is a first-class detail experience from Today/chat, and it retains access to Explore's complete library. This resolves the earlier navigation difference for the current implementation.
 
 The code now includes structured Moments/player, six-state petal companion, three ambient environments, explainable editable memories, calendar/time/helpfulness/weekly Journey, personal goals/optional streaks/actual-data milestones, turn-based recording/transcription/review and device TTS. Preserve the original design and working privacy/reminder/account flows. Live-provider configuration/evaluation, public hosting, native installs/device QA and demo are deliberately separate deferred work; never mark them verified from mocks or exports.
+
+## Explore discoverability correction
+
+The user reported that Explore and the existing tools were hard to find. Put a labeled Explore shortcut between Solace and Journey in the bottom bar. The four main tabs keep their existing order. Explore retains Back to the originating screen, and its library links lead directly to their named features.

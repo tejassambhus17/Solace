@@ -4,7 +4,7 @@ A personal wellness companion built with React Native + Expo, a Node.js API and 
 
 ## Current implementation
 
-The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The four main tabs are **Today → Solace → Journey → Profile**. Moments opens from Today or the Solace header; its library also keeps the earlier Explore practices and tools available.
+The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The four main tabs are **Today → Solace → Journey → Profile**. The center **Explore** shortcut opens Solace Moments, breathing, grounding, reflections, the saved toolkit, guides, reflective check-ins, plans, affirmations and challenges in one tap. Moments is also available from Today and the Solace header.
 
 The user explicitly asked to finish implementation while postponing provider, hosting and device setup. Those deferred setups no longer block feature coding. They remain verification and release work: an implemented adapter or a successful JavaScript export does not prove a real provider, installed native build or background reminder works. See [requirements](docs/REQUIREMENTS.md), [the implementation milestones](docs/IMPLEMENTATION_PLAN.md) and [actual verification results](docs/VERIFICATION.md).
 

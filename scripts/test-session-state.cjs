@@ -413,6 +413,26 @@ test("details keep their originating tab and main destinations start a stack wit
   assert.equal(h.render().activeTab, "today");
 });
 
+test("Explore returns to its open library without stacking duplicates and keeps the original Back destination", async () => {
+  const h = await signedIn();
+  h.render().setTab("chat");
+  h.render().navigate("history");
+  h.render().navigate("explore");
+  h.render().navigate("explore");
+  h.render().navigate("moments");
+  assert.equal(h.render().inExplore, true);
+  h.render().navigate("explore");
+  assert.equal(h.render().route, "explore");
+  h.render().back();
+  assert.equal(h.render().route, "history");
+  assert.equal(h.render().activeTab, "chat");
+  assert.equal(h.render().inExplore, false);
+  h.render().navigate("explore");
+  h.render().setTab("journey");
+  assert.equal(h.render().inExplore, false);
+  assert.equal(h.render().canGoBack, false);
+});
+
 test("retrying an idempotent toolkit add cannot duplicate a favorite in account state", async () => {
   const h = await signedIn();
   assert.deepEqual(Array.from(h.render().data.favorites), []);
