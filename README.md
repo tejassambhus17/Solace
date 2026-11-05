@@ -57,6 +57,8 @@ Personal weekly time goals can be changed, paused and resumed. Check-in streaks 
 
 Native check-in/journal drafts use bounded account-scoped SecureStore. Up to ten submitted check-ins/reflections can wait for retry after recoverable connection errors. Draft writes debounce 650ms and attempt protection when leaving the app; abrupt termination before a successful write can lose recent edits. Web writing is memory-only for the open tab. Cold launch still needs online API session restoration; chat and complete account snapshots are not placed in the protected writing vault.
 
+An unchanged chat draft reuses its request ID after a connection failure during the current app session. The API can replay its saved turn for up to 24 hours, including across API restarts. Editing the draft starts a new request. Chat drafts and pending request IDs live in app memory.
+
 ## Local setup
 
 The app and server have separate lockfiles. Root-only `npm ci` does not install the server's tsx dependency. The tested runtime is Node 24 LTS; the runtime wrapper validates compatible versions and never silently runs Expo on Windows' default Node 20. See [Mac/simulator repair instructions](docs/LOCAL_DEVELOPMENT.md).
@@ -124,7 +126,7 @@ npm run export:android
 npm run export:ios
 ```
 
-**193 regressions passed at this feature checkpoint**, including actual Expo native-permission configuration checks. Exact executed results are recorded in [VERIFICATION.md](docs/VERIFICATION.md). Provider adapter tests use controlled responses, and voice lifecycle tests do not prove native microphone recording. Native exports verify JavaScript/Hermes bundling, not installation, permission prompts, device audio or background notifications.
+**205 regressions passed in the latest hardening pass**, alongside client and server type checks and web, Android and iOS exports. The local browser run covered account restoration, interrupted chat recovery, human-support navigation, mood and Moment saves, and reminder preference editing. Provider adapters were tested with controlled responses. Verify microphone access, permission prompts, background notifications and installed app behavior on native devices. See [VERIFICATION.md](docs/VERIFICATION.md).
 
 Submission still needs a real provider, public HTTPS with a persistent database, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. [Release instructions](docs/RELEASE.md) cover those deferred operations. No new Docker setup or branch is required.
 

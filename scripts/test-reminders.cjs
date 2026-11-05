@@ -7,11 +7,10 @@ const test = require("node:test"),
   ts = require("typescript");
 function harness() {
   let release;
-  let releaseLastResponse;
+  let lastResponse = null;
+  let responseListener;
+  let clearedResponses = 0;
   let listenerRemoved = false;
-  const lastResponse = new Promise((resolve) => {
-    releaseLastResponse = resolve;
-  });
   const held = new Promise((resolve) => {
     release = resolve;
   });
@@ -43,12 +42,19 @@ function harness() {
       active.delete(id);
     },
     setNotificationHandler: () => {},
-    addNotificationResponseReceivedListener: () => ({
-      remove: () => {
-        listenerRemoved = true;
-      },
-    }),
-    getLastNotificationResponseAsync: () => lastResponse,
+    addNotificationResponseReceivedListener: (listener) => {
+      responseListener = listener;
+      return {
+        remove: () => {
+          listenerRemoved = true;
+        },
+      };
+    },
+    getLastNotificationResponse: () => lastResponse,
+    clearLastNotificationResponse: () => {
+      lastResponse = null;
+      clearedResponses++;
+    },
   };
   const storageMock = {
     getItem: async (key) => storage.get(key) ?? null,
@@ -96,7 +102,11 @@ function harness() {
     cancelled,
     storage,
     calls: () => calls,
-    releaseLastResponse,
+    setLastResponse: (response) => {
+      lastResponse = response;
+    },
+    emitResponse: (response) => responseListener(response),
+    clearedResponses: () => clearedResponses,
     listenerRemoved: () => listenerRemoved,
   };
 }
@@ -176,17 +186,74 @@ test("a pending test notification cannot survive logout", async () => {
   assert.deepEqual(h.cancelled, ["test-pending"]);
 });
 
-test("a late last-notification response cannot navigate after subscription cleanup", async () => {
+const checkinResponse = (date) => ({
+  actionIdentifier: "default",
+  notification: {
+    date,
+    request: {
+      identifier: "weekly-checkin",
+      content: { data: { screen: "checkin" } },
+    },
+  },
+});
+
+test("a queued response callback cannot navigate after subscription cleanup", () => {
   const h = harness();
   const routes = [];
   const unsubscribe = h.api.subscribeNotificationNavigation((route) =>
     routes.push(route),
   );
   unsubscribe();
-  h.releaseLastResponse({
-    notification: { request: { content: { data: { screen: "checkin" } } } },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
+  h.emitResponse(checkinResponse(1));
   assert.equal(h.listenerRemoved(), true);
   assert.deepEqual(routes, []);
+});
+
+test("the launch cache and tap listener route a delivery once, and later weekly deliveries still route", () => {
+  const h = harness();
+  const routes = [];
+  const response = checkinResponse(1);
+  h.setLastResponse(response);
+  const unsubscribe = h.api.subscribeNotificationNavigation((route) =>
+    routes.push(route),
+  );
+  h.emitResponse(response);
+  unsubscribe();
+  h.api.subscribeNotificationNavigation((route) => routes.push(route));
+  assert.deepEqual(routes, ["checkin"]);
+  assert.equal(h.clearedResponses(), 1);
+  h.setLastResponse(checkinResponse(2));
+  h.emitResponse(checkinResponse(2));
+  assert.deepEqual(routes, ["checkin", "checkin"]);
+  assert.equal(h.clearedResponses(), 2);
+});
+
+test("an editor waits for restoration and parallel map changes preserve each reminder", async () => {
+  const h = harness();
+  const restoring = h.api.restoreDeviceReminders("account", [reminder]);
+  await waitUntil(() => h.calls() === 1);
+  const manual = h.api.scheduleReminder(reminder);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.calls(), 1);
+  h.release("restored");
+  await restoring;
+  const scheduled = await manual;
+  await Promise.all([
+    h.api.rememberDeviceSchedule("account", "second", scheduled.ids),
+    h.api.rememberDeviceSchedule("account", "third", ["third-id"]),
+  ]);
+  const saved = h.storage.get("solace.device-reminders.account");
+  assert.deepEqual(JSON.parse(saved), {
+    daily: ["restored"],
+    second: ["new-2"],
+    third: ["third-id"],
+  });
+  await h.api.rememberDeviceSchedule("account", "second", []);
+  assert.equal(
+    Object.hasOwn(
+      JSON.parse(h.storage.get("solace.device-reminders.account")),
+      "second",
+    ),
+    false,
+  );
 });

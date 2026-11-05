@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
@@ -17,7 +17,7 @@ import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { CormorantGaramond_600SemiBold } from "@expo-google-fonts/cormorant-garamond/600SemiBold";
 import { ThemeProvider, useTheme } from "./src/theme";
 import { AppProvider, useApp } from "./src/store";
-import { AppText, Button, NavigationInset, Petal } from "./src/ui";
+import { AppText, Button, NavigationInset, Petal, Screen } from "./src/ui";
 import {
   AuthScreen,
   ChatScreen,
@@ -68,6 +68,8 @@ const wellnessScreens = new Set([
 function Shell() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const navigate = useRef(app.navigate);
+  navigate.current = app.navigate;
   const [navigationHeight, setNavigationHeight] = useState(88);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
@@ -100,7 +102,7 @@ function Shell() {
         ),
     );
     return subscribeNotificationNavigation((route: string) =>
-      app.navigate(route),
+      navigate.current(route),
     );
   }, [app.user?.id, app.sessionExpired]);
   useEffect(() => {
@@ -124,15 +126,15 @@ function Shell() {
   let content: React.ReactNode;
   if (app.sessionError && !app.user)
     content = (
-      <View style={{ flex: 1, justifyContent: "center", padding: 28, gap: 14 }}>
+      <Screen style={{ flexGrow: 1, justifyContent: "center", gap: 14 }}>
         <Petal size={70} />
-        <AppText variant="title">Let's try again.</AppText>
-        <AppText>{app.sessionError}</AppText>
-        <AppText variant="caption" color={colors.muted}>
-          Your saved session remains on this device.
+        <AppText variant="title" accessibilityRole="header">
+          Let's try again.
         </AppText>
+        <AppText accessibilityRole="alert">{app.sessionError}</AppText>
         <Button
           title="Retry connection"
+          disabled={app.busy}
           onPress={() => {
             app.retrySession().catch(() => {});
           }}
@@ -140,11 +142,12 @@ function Shell() {
         <Button
           title="Sign out"
           variant="secondary"
+          disabled={app.busy}
           onPress={() => {
             app.signOut().catch(() => {});
           }}
         />
-      </View>
+      </Screen>
     );
   else if (!app.user || app.sessionExpired) content = <AuthScreen />;
   else if (app.route === "today") content = <TodayScreen />;

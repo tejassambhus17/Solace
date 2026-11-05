@@ -543,6 +543,31 @@ test("removing queued writing discards its device record without claiming a serv
   h.close();
 });
 
+test("automatic sync cannot upload writing while its device discard is committing", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.onRequest = async () => {
+    throw Error("Disconnected");
+  };
+  const saved = await h.render().save("reflections", { text: "Discard me" });
+  const held = h.holdNextCredentialWrite();
+  const discard = h.render().discardPendingWrite(saved.id);
+  await until(() => held.started);
+  let uploads = 0;
+  h.onRequest = async () => {
+    uploads++;
+    return ok({ record: saved });
+  };
+  const sync = h.render().flushPendingWrites();
+  held.resolve();
+  await Promise.all([discard, sync]);
+  assert.equal(uploads, 0);
+  assert.equal(h.render().pendingWrites.length, 0);
+  h.close();
+});
+
 test("native queued writing and background-protected drafts restore only for their account and erase on logout", async () => {
   const storage = new Map();
   const h = harness({ platform: "ios", storage });
@@ -685,6 +710,103 @@ test("failed native logout erasure leaves a current retryable account rather tha
   h.failSecureRemove = null;
   await app.signOut();
   assert.equal(h.render().user, null);
+  h.close();
+});
+
+test("a render during logout cannot restore erased drafts or transmit private writes", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  const waiting = deferred();
+  let logoutStarted = false;
+  let writes = 0;
+  h.onRequest = async (route) => {
+    if (route === "/auth/logout") {
+      logoutStarted = true;
+      return waiting.promise;
+    }
+    writes++;
+    return ok({ record: { id: "write" } });
+  };
+  const logout = h.render().signOut();
+  await until(() => logoutStarted);
+  const current = h.render();
+  current.setEditorDraft("reflection:logout", { text: "Private writing" });
+  h.appState("background");
+  await assert.rejects(
+    current.save("reflections", { text: "Private writing" }),
+    /account change/,
+  );
+  waiting.resolve(ok({ ok: true }));
+  await logout;
+  await settle();
+  assert.equal(writes, 0);
+  assert.equal(h.storage.size, 0);
+  assert.deepEqual(Object.keys(h.render().editorDrafts), []);
+  h.close();
+});
+
+test("failed old-account erasure never persists the new account's credential", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.failSecureRemove = (key) => key.includes("solace.writing");
+  h.onRequest = accountTransport("account-b", "token-b");
+  await assert.rejects(
+    h.render().signIn("second@solace.test", "test-only-password"),
+    /storage unavailable/,
+  );
+  assert.equal(h.storage.get("solace.session"), "token-a");
+  assert.equal(h.render().user.id, "account-a");
+  h.close();
+});
+
+test("malformed API responses preserve a usable session and hide proxy HTML", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  h.onRequest = async () => new Response("<html>Proxy setup</html>");
+  await assert.rejects(
+    h.render().signIn("synthetic@solace.test", "test-only-password"),
+    /unexpected response/,
+  );
+  assert.equal(h.storage.has("solace.session"), false);
+  h.onRequest = async () =>
+    new Response("<html>Internal proxy details</html>", { status: 502 });
+  await assert.rejects(
+    h.render().signIn("synthetic@solace.test", "test-only-password"),
+    /Something went wrong/,
+  );
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.onRequest = async () =>
+    ok({ user: { id: "account-a" }, data: { checkins: null } });
+  await assert.rejects(h.render().refresh(), /could not read your saved space/);
+  assert.equal(h.render().user.id, "account-a");
+  assert.equal(h.render().data.checkins.length, 0);
+  h.close();
+});
+
+test("chat reuses the retry identity only for the same draft and original conversation", async () => {
+  const h = await signedIn();
+  const bodies = [];
+  h.onRequest = async (_route, { body }) => {
+    bodies.push(JSON.parse(body));
+    if (bodies.length <= 3) throw Error("Response lost");
+    return ok({ conversation: { id: "saved-conversation", messages: [] } });
+  };
+  await assert.rejects(h.render().chat("Original draft"));
+  await assert.rejects(h.render().chat("Original draft"));
+  assert.match(bodies[0].requestId, /^[0-9a-f-]{36}$/);
+  assert.equal(bodies[0].requestId, bodies[1].requestId);
+  await assert.rejects(h.render().chat("Original draft", "saved-conversation"));
+  assert.notEqual(bodies[0].requestId, bodies[2].requestId);
+  h.render().setChatDraft("new", "Edited draft");
+  await h.render().chat("Original draft");
+  assert.notEqual(bodies[0].requestId, bodies[3].requestId);
+  await h.render().chat("Original draft");
+  assert.notEqual(bodies[3].requestId, bodies[4].requestId);
   h.close();
 });
 
@@ -894,29 +1016,23 @@ test("first explicit feature identities create with POST, then known records upd
     seen.push([route, options.method]);
     return ok({ record });
   };
-  await h
-    .render()
-    .save("preferences", {
-      id: "wellness",
-      environment: "forest",
-      ambientEnabled: false,
-      streaksEnabled: false,
-    });
-  await h
-    .render()
-    .save("preferences", {
-      id: "wellness",
-      environment: "ocean",
-      ambientEnabled: false,
-      streaksEnabled: false,
-    });
-  await h
-    .render()
-    .save("sessions", {
-      id: "generated-stable",
-      kind: "generated",
-      completed: true,
-    });
+  await h.render().save("preferences", {
+    id: "wellness",
+    environment: "forest",
+    ambientEnabled: false,
+    streaksEnabled: false,
+  });
+  await h.render().save("preferences", {
+    id: "wellness",
+    environment: "ocean",
+    ambientEnabled: false,
+    streaksEnabled: false,
+  });
+  await h.render().save("sessions", {
+    id: "generated-stable",
+    kind: "generated",
+    completed: true,
+  });
   assert.deepEqual(seen, [
     ["/records/preferences", "POST"],
     ["/records/preferences/wellness", "PATCH"],

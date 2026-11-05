@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -81,6 +81,33 @@ async function fixture(file = ":memory:") {
     ).body;
   return { store, app, create };
 }
+test("failed initial session creation rolls back registration so signup can be retried", async () => {
+  const { app, store, create } = await fixture();
+  const run = store.run.bind(store);
+  let failTokenInsert = true;
+  store.run = (sql, params) => {
+    if (failTokenInsert && sql.startsWith("INSERT INTO tokens"))
+      throw new Error("Test session write failure");
+    run(sql, params);
+  };
+  try {
+    const email = "atomic-signup@example.com";
+    await request(app)
+      .post("/api/auth/register")
+      .send({ name: "Alex", email, password: "correct horse battery" })
+      .expect(500);
+    assert.equal(store.all("SELECT id FROM users").length, 0);
+    assert.equal(store.all("SELECT hash FROM tokens").length, 0);
+    failTokenInsert = false;
+    const account = await create(email);
+    await request(app)
+      .get("/api/state")
+      .auth(account.token, { type: "bearer" })
+      .expect(200);
+  } finally {
+    store.close();
+  }
+});
 test("registration hashes passwords, validates input, logs in and revokes sessions", async () => {
   const { app, store, create } = await fixture();
   try {
@@ -656,6 +683,17 @@ test("large chat requests and overlong conversation history are bounded before p
         .records[0].messages.length,
       199,
     );
+    const urgent = (
+      await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "I want to hurt myself", conversationId: record.id })
+        .expect(200)
+    ).body;
+    assert.equal(urgent.support, true);
+    assert.equal(urgent.provider, "offline");
+    assert.notEqual(urgent.conversation.id, record.id);
+    assert.equal(urgent.conversation.messages.length, 2);
   } finally {
     store.close();
   }
@@ -705,6 +743,19 @@ test("concurrent chat is bounded and a late provider response cannot revive a de
       .set(auth)
       .send({ text: "Concurrent question" })
       .expect(409);
+    const urgent = (
+      await request(live)
+        .post("/api/chat")
+        .set(auth)
+        .send({
+          text: "I want to hurt myself",
+          conversationId: conversation.id,
+        })
+        .expect(200)
+    ).body;
+    assert.equal(urgent.support, true);
+    assert.equal(urgent.provider, "offline");
+    assert.notEqual(urgent.conversation.id, conversation.id);
     await request(live)
       .delete(`/api/records/conversations/${conversation.id}`)
       .set(auth)
@@ -712,10 +763,12 @@ test("concurrent chat is bounded and a late provider response cannot revive a de
     release();
     const late = await pending;
     assert.equal(late.status, 404);
-    assert.equal(
-      (await request(live).get("/api/records/conversations").set(auth)).body
-        .records.length,
-      0,
+    const chats = (
+      await request(live).get("/api/records/conversations").set(auth)
+    ).body.records;
+    assert.deepEqual(
+      chats.map((chat: { id: string }) => chat.id),
+      [urgent.conversation.id],
     );
     // The failed request also releases the per-user chat lock.
     await request(live)
@@ -727,6 +780,154 @@ test("concurrent chat is bounded and a late provider response cannot revive a de
     release();
     globalThis.fetch = originalFetch;
     store.close();
+  }
+});
+test("a late reply cannot overwrite a new conversation that reused a deleted ID", async () => {
+  const { store, create } = await fixture();
+  const originalFetch = globalThis.fetch;
+  let start!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async () => {
+    start();
+    await released;
+    return new Response(JSON.stringify({ output_text: "Private reply" }));
+  }) as typeof fetch;
+  try {
+    const { token } = await create("replacement@example.com");
+    const auth = { Authorization: `Bearer ${token}` };
+    const app = createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
+    const id = "same-id";
+    const path = "/api/records/conversations";
+    const createConversation = (title: string) =>
+      request(app)
+        .post(path)
+        .set(auth)
+        .send({ id, title, messages: [] })
+        .expect(201);
+    await createConversation("Original");
+    const pending = request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "Private draft", conversationId: id })
+      .then((response) => response);
+    await started;
+    await request(app).delete(`${path}/${id}`).set(auth).expect(204);
+    const replacement = (await createConversation("Replacement")).body.record;
+    release();
+    const late = await pending;
+    assert.equal(late.status, 409);
+    assert.equal(late.body.code, "CONVERSATION_CHANGED");
+    const state = (await request(app).get(path).set(auth).expect(200)).body
+      .records;
+    assert.deepEqual(state, [replacement]);
+  } finally {
+    release();
+    globalThis.fetch = originalFetch;
+    store.close();
+  }
+});
+
+test("chat retries replay a durable, account-scoped turn and cannot restore a deleted chat", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "solace-chat-retry-"));
+  const file = join(folder, "retry.sqlite");
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = (async () => {
+    providerCalls++;
+    return new Response(
+      JSON.stringify({
+        output: [
+          { content: [{ type: "output_text", text: "We can take a pause." }] },
+        ],
+      }),
+    );
+  }) as typeof fetch;
+  const makeLive = (store: Store) =>
+    createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
+  let store: Store | undefined;
+  try {
+    const first = await fixture(file);
+    store = first.store;
+    const a = await first.create("retry-a@example.com");
+    const b = await first.create("retry-b@example.com");
+    const send = (
+      app: ReturnType<typeof createApp>,
+      token: string,
+      input: object,
+    ) =>
+      request(app)
+        .post("/api/chat")
+        .auth(token, { type: "bearer" })
+        .send(input);
+    const draft = { text: "Help me slow down", requestId: randomUUID() };
+    const sent = (await send(makeLive(store), a.token, draft).expect(200)).body;
+    store.close();
+    store = undefined;
+    store = await Store.open(file);
+    const app = makeLive(store);
+    const replayed = (await send(app, a.token, draft).expect(200)).body;
+    assert.deepEqual(replayed, sent);
+    assert.equal(providerCalls, 1);
+    const conflict = await send(app, a.token, {
+      ...draft,
+      text: "Changed draft",
+    }).expect(409);
+    assert.equal(conflict.body.code, "CHAT_REQUEST_CONFLICT");
+    await send(app, a.token, {
+      ...draft,
+      conversationId: sent.conversation.id,
+    }).expect(409);
+    const sameIdForOtherOwner = (await send(app, b.token, draft).expect(200))
+      .body;
+    assert.notEqual(sameIdForOtherOwner.conversation.id, sent.conversation.id);
+    assert.equal(providerCalls, 2);
+    await request(app)
+      .delete(`/api/records/conversations/${sent.conversation.id}`)
+      .auth(a.token, { type: "bearer" })
+      .expect(204);
+    await send(app, a.token, draft).expect(404);
+    assert.equal(providerCalls, 2);
+    const records = (
+      await request(app)
+        .get("/api/records/conversations")
+        .auth(a.token, { type: "bearer" })
+        .expect(200)
+    ).body.records;
+    assert.deepEqual(records, []);
+    assert.equal(store.all("SELECT id FROM chat_requests").length, 2);
+    await request(app)
+      .delete("/api/account")
+      .auth(a.token, { type: "bearer" })
+      .expect(204);
+    assert.deepEqual(store.all("SELECT user_id FROM chat_requests"), [
+      { user_id: b.user.id },
+    ]);
+    store.run("UPDATE chat_requests SET expires_at=0 WHERE user_id=?", [
+      b.user.id,
+    ]);
+    store.close();
+    store = undefined;
+    store = await Store.open(file);
+    assert.deepEqual(store.all("SELECT user_id FROM chat_requests"), []);
+    assert.equal(store.all("SELECT id FROM records").length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    store?.close();
+    rmSync(folder, { recursive: true, force: true });
   }
 });
 test("development CORS allows explicit loopback aliases and configured origins stay restricted", async () => {
@@ -891,6 +1092,12 @@ test("renaming a conversation while a reply is pending survives the reply commit
       .send({ text: "A question", conversationId: conversation.id })
       .then((response) => response);
     await providerStarted;
+    const edited = await request(app)
+      .patch(`/api/records/conversations/${conversation.id}`)
+      .set(auth)
+      .send({ messages: [{ role: "user", content: "Forged chat history" }] })
+      .expect(409);
+    assert.equal(edited.body.code, "CONVERSATION_HISTORY_LOCKED");
     await request(app)
       .patch(`/api/records/conversations/${conversation.id}`)
       .set(auth)
@@ -924,17 +1131,24 @@ test("provider transport and malformed responses are recoverable and do not save
       ai: { ...ai, mode: "live", apiKey: "test-only" },
       rateLimits: false,
     });
-    for (const failure of ["transport", "json", "shape"]) {
+    const invalidBodies = [
+      "not JSON",
+      "null",
+      JSON.stringify({
+        output: [{ content: [{ type: "output_text", text: 7 }] }],
+      }),
+      JSON.stringify({ status: "incomplete", output_text: "Partial reply" }),
+      JSON.stringify({
+        output_text: "Refused output",
+        output: [{ content: [{ type: "refusal", refusal: "Refused" }] }],
+      }),
+      JSON.stringify({ output_text: "a".repeat(10001) }),
+      JSON.stringify({ output_text: "Valid reply", data: "a".repeat(262144) }),
+    ];
+    for (const body of [undefined, ...invalidBodies]) {
       globalThis.fetch = (async () => {
-        if (failure === "transport") throw new TypeError("fetch failed");
-        return new Response(
-          failure === "json"
-            ? "not JSON"
-            : JSON.stringify({
-                output: [{ content: [{ type: "output_text", text: 7 }] }],
-              }),
-          { status: 200 },
-        );
+        if (body === undefined) throw new TypeError("fetch failed");
+        return new Response(body, { status: 200 });
       }) as typeof fetch;
       const failed = await request(app)
         .post("/api/chat")

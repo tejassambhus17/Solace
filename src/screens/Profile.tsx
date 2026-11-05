@@ -4,6 +4,7 @@ import {
   Switch,
   Pressable,
   Platform,
+  ScrollView,
   Linking,
   Share,
   Image,
@@ -11,6 +12,7 @@ import {
 import { useTheme } from "../theme";
 import { useApp } from "../store";
 import { chooseProfilePhoto } from "../photos";
+import { useReducedMotion } from "../Companion";
 import {
   Screen,
   AppText,
@@ -154,10 +156,15 @@ export default function ProfileScreen({ name }: { name: string }) {
   accountIdentity.current = app.user?.id;
   const [reminderType, setReminderType] = useState("checkin");
   const [reminderTitle, setReminderTitle] = useState("");
-  const [time, setTime] = useState("20:00");
+  const [time, setTime] = useState("2000");
   const [selectedDays, setDays] = useState([1, 2, 3, 4, 5]);
   const [enabled, setEnabled] = useState(true);
   const [reminderId, setReminderId] = useState<string | null>(null);
+  const [reminderStatusLocation, setReminderStatusLocation] = useState<
+    "form" | "list"
+  >("form");
+  const reminderScroll = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const reducedMotion = useReducedMotion();
   const [country, setCountry] = useState("");
   useEffect(() => {
     setMessage("");
@@ -246,6 +253,14 @@ export default function ProfileScreen({ name }: { name: string }) {
       )}
     </View>
   );
+  function resetReminder() {
+    setReminderId(null);
+    setReminderType("checkin");
+    setReminderTitle("");
+    setTime("2000");
+    setDays([1, 2, 3, 4, 5]);
+    setEnabled(true);
+  }
 
   if (name === "profile")
     return (
@@ -881,17 +896,23 @@ export default function ProfileScreen({ name }: { name: string }) {
 
   if (name === "reminders")
     return (
-      <Screen title="Gentle reminders" back={app.back}>
+      <Screen
+        title="Gentle reminders"
+        back={app.back}
+        scrollRef={reminderScroll}
+      >
         {heading(
-          "A moment, on your terms",
-          "Choose when a small pause would fit your day.",
+          reminderId ? "Edit reminder" : "A moment, on your terms",
+          "Choose when a small pause fits your day. Lock screen previews use a generic message.",
         )}
         <Card style={{ marginBottom: 18 }}>
           <Row>
             <View style={{ flex: 1 }}>
               <AppText variant="label">Enable reminder</AppText>
               <AppText variant="caption">
-                Your notification preview stays private.
+                {Platform.OS === "web"
+                  ? "Save a schedule for the mobile app."
+                  : "Use the schedule below on this device."}
               </AppText>
             </View>
             <Switch
@@ -935,14 +956,23 @@ export default function ProfileScreen({ name }: { name: string }) {
             style={{ marginBottom: 15 }}
           />
         )}
-        <AppText variant="label">Time (24-hour, your device timezone)</AppText>
+        <AppText variant="label">Time in your device’s time zone</AppText>
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={{ marginTop: 4 }}
+        >
+          Use four digits in 24-hour time, such as 0830 or 2000.
+        </AppText>
         <Input
-          accessibilityLabel="Reminder time HH colon MM"
-          placeholder="20:00"
+          accessibilityLabel="Reminder time, four digits in 24-hour time"
+          placeholder="2000"
           value={time}
           editable={!pending}
-          onChangeText={setTime}
-          keyboardType="numbers-and-punctuation"
+          onChangeText={(value) =>
+            setTime(value.replace(/\D/g, "").slice(0, 4))
+          }
+          keyboardType="number-pad"
           maxLength={5}
           style={{ marginTop: 8, marginBottom: 18 }}
         />
@@ -992,67 +1022,77 @@ export default function ProfileScreen({ name }: { name: string }) {
             </Pressable>
           ))}
         </View>
-        <Card style={{ marginBottom: 18 }}>
-          <Row>
-            <Petal size={40} />
-            <View>
-              <AppText variant="label">A moment for yourself</AppText>
-              <AppText variant="caption">
-                Your Solace reminder is ready.
-              </AppText>
-            </View>
-          </Row>
-        </Card>
         {Platform.OS === "web" && (
           <Notice text="This web preview saves preferences. Notification scheduling and delivery require the Android or iOS app." />
         )}
         <Button
           title={reminderId ? "Update reminder" : "Save reminder"}
           loading={pending}
-          onPress={() =>
-            perform(async () => {
-              if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+          onPress={() => {
+            setReminderStatusLocation("form");
+            return perform(async () => {
+              if (!/^([01]\d|2[0-3])[0-5]\d$/.test(time))
                 throw new Error(
-                  "Enter a valid 24-hour time, such as 08:30 or 20:00.",
+                  "Enter four digits in 24-hour time, such as 0830 or 2000.",
                 );
               if (!selectedDays.length)
                 throw new Error("Choose at least one day.");
               if (reminderType === "custom" && !reminderTitle.trim())
                 throw new Error("Add a title for your custom reminder.");
-              const [hour, minute] = time.split(":").map(Number);
               const record = {
                 type: reminderType,
                 title:
                   reminderType === "custom"
                     ? reminderTitle.trim()
                     : kinds.find((k) => k[0] === reminderType)![1],
-                hour,
-                minute,
-                days: selectedDays,
+                hour: Number(time.slice(0, 2)),
+                minute: Number(time.slice(2)),
+                days: [...selectedDays].sort((a, b) => a - b),
                 enabled,
               };
-              const previousIds = reminderId
-                ? await deviceReminderIds(String(app.user?.id), reminderId)
-                : [];
+              const owner = String(app.user?.id);
+              const previousIds =
+                reminderId && Platform.OS !== "web"
+                  ? await deviceReminderIds(owner, reminderId)
+                  : [];
               const result = await scheduleReminder(record);
+              let saved;
               try {
-                const saved = await app.save("reminders", {
+                saved = await app.save("reminders", {
                   ...(reminderId ? { id: reminderId } : {}),
                   ...record,
                   notificationIds: result.ids,
                   permission: result.permission,
                 });
-                await rememberDeviceSchedule(
-                  String(app.user?.id),
-                  String(saved.id),
-                  result.ids,
-                );
               } catch (e) {
-                await cancelReminders(result.ids);
+                try {
+                  await cancelReminders(result.ids);
+                } catch {
+                  throw new Error(
+                    "Solace couldn’t confirm the save or cancel the new device alerts. Restart Solace to refresh your reminder schedule.",
+                  );
+                }
                 throw e;
               }
-              await cancelReminders(previousIds);
-              setReminderId(null);
+              resetReminder();
+              if (Platform.OS !== "web") {
+                const id = String(saved.id);
+                try {
+                  await rememberDeviceSchedule(owner, id, [
+                    ...previousIds,
+                    ...result.ids,
+                  ]);
+                  if (previousIds.length) {
+                    await cancelReminders(previousIds);
+                    await rememberDeviceSchedule(owner, id, result.ids);
+                  }
+                } catch {
+                  setMessage(
+                    "Preferences saved. Solace couldn’t verify the device schedule. Restart Solace to refresh your alerts.",
+                  );
+                  return;
+                }
+              }
               setMessage(
                 Platform.OS === "web"
                   ? "Preferences saved. Open the mobile app to schedule delivery."
@@ -1060,25 +1100,39 @@ export default function ProfileScreen({ name }: { name: string }) {
                     ? "Reminder scheduled on this device."
                     : "Reminder disabled.",
               );
-            })
-          }
+            });
+          }}
         />
+        {reminderId && (
+          <Button
+            title="Cancel editing"
+            variant="ghost"
+            disabled={pending}
+            onPress={() => {
+              resetReminder();
+              setError("");
+              setMessage("");
+            }}
+          />
+        )}
         <Button
           title="Send a test in 10 seconds"
           variant="ghost"
           disabled={pending || Platform.OS === "web"}
-          onPress={() =>
-            perform(async () => {
+          onPress={() => {
+            setReminderStatusLocation("form");
+            return perform(async () => {
               await testNotification();
               setMessage(
                 "Test scheduled. Close the app normally and tap the notification when it arrives.",
               );
-            })
-          }
+            });
+          }}
         />
-        {status}
+        {reminderStatusLocation === "form" && status}
         <View style={{ marginTop: 16 }}>
           <SectionTitle title="Your reminders" />
+          {reminderStatusLocation === "list" && status}
           {!app.data.reminders.length && (
             <AppText color={colors.muted}>No reminders saved yet.</AppText>
           )}
@@ -1091,7 +1145,7 @@ export default function ProfileScreen({ name }: { name: string }) {
               <AppText variant="caption">
                 {r.days.map((d: number) => days[d]).join(", ")} ·{" "}
                 {r.enabled ? "Enabled" : "Disabled"}
-                {r.permission === "web-preview" ? " · Preferences only" : ""}
+                {Platform.OS === "web" ? " · Preferences only" : ""}
               </AppText>
               <Row>
                 <Button
@@ -1103,34 +1157,73 @@ export default function ProfileScreen({ name }: { name: string }) {
                     setReminderType(r.type);
                     setReminderTitle(r.title);
                     setTime(
-                      `${String(r.hour).padStart(2, "0")}:${String(r.minute).padStart(2, "0")}`,
+                      `${String(r.hour).padStart(2, "0")}${String(r.minute).padStart(2, "0")}`,
                     );
                     setDays(r.days);
                     setEnabled(r.enabled);
-                    setMessage(
-                      "Editing reminder. Change the fields above, then save.",
-                    );
+                    setDeleteId(null);
+                    setReminderStatusLocation("form");
+                    setMessage("");
+                    setError("");
+                    reminderScroll.current?.scrollTo({
+                      y: 0,
+                      animated: !reducedMotion,
+                    });
                   }}
                 />
                 <Button
                   title="Delete"
                   variant="ghost"
                   disabled={pending}
-                  onPress={() =>
-                    perform(async () => {
-                      await cancelReminders(
-                        await deviceReminderIds(
-                          String(app.user?.id),
-                          String(r.id),
-                        ),
-                      );
-                      await app.remove("reminders", r.id!);
-                      if (reminderId === r.id) setReminderId(null);
-                      setMessage("Reminder removed.");
-                    })
-                  }
+                  onPress={() => setDeleteId(r.id!)}
                 />
               </Row>
+              {deleteId === r.id && (
+                <>
+                  <AppText variant="caption" color={colors.muted}>
+                    Delete this reminder and its schedule?
+                  </AppText>
+                  <Row style={{ flexWrap: "wrap" }}>
+                    <Button
+                      title="Keep reminder"
+                      variant="ghost"
+                      disabled={pending}
+                      onPress={() => setDeleteId(null)}
+                    />
+                    <Button
+                      title="Delete reminder"
+                      variant="secondary"
+                      loading={pending}
+                      onPress={() => {
+                        setReminderStatusLocation("list");
+                        return perform(async () => {
+                          const owner = String(app.user?.id);
+                          const id = String(r.id);
+                          const ids =
+                            Platform.OS === "web"
+                              ? []
+                              : await deviceReminderIds(owner, id);
+                          await app.remove("reminders", id);
+                          if (reminderId === id) resetReminder();
+                          setDeleteId(null);
+                          if (Platform.OS !== "web") {
+                            try {
+                              await cancelReminders(ids);
+                              await rememberDeviceSchedule(owner, id, []);
+                            } catch {
+                              setMessage(
+                                "Reminder removed from your account. Restart Solace to refresh alerts on this device.",
+                              );
+                              return;
+                            }
+                          }
+                          setMessage("Reminder removed.");
+                        });
+                      }}
+                    />
+                  </Row>
+                </>
+              )}
             </Card>
           ))}
         </View>

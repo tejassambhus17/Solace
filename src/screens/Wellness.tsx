@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  AccessibilityInfo,
   Animated,
   AppState,
   BackHandler,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -14,6 +14,7 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
+import { useReducedMotion } from "../Companion";
 import {
   Screen,
   Card,
@@ -46,6 +47,8 @@ const errText = (error: unknown) =>
     ? error.message
     : "We could not save that. Please try again.";
 const stamp = () => new Date().toISOString();
+const monotonicNow = () =>
+  typeof performance !== "undefined" ? performance.now() : Date.now();
 const clock = (seconds: number) =>
   `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 
@@ -216,18 +219,21 @@ function Choice({
   selected,
   onPress,
   icon,
+  disabled = false,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
   icon?: string;
+  disabled?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
+      accessibilityState={{ checked: selected, disabled }}
       aria-checked={selected}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.choice,
@@ -593,21 +599,26 @@ function Grounding({ params }: { params: AnyRecord }) {
   const [tried, setTried] = useState<number[]>([]);
   const [ending, setEnding] = useState(false);
   const accumulated = useRef(0);
-  const since = useRef(0);
+  const since = useRef<number | null>(null);
   const finished = useRef(false);
   const startedAt = useRef(stamp());
   const stopClock = () => {
-    if (since.current)
-      accumulated.current += (Date.now() - since.current) / 1000;
-    since.current = 0;
+    if (since.current !== null)
+      accumulated.current += Math.max(0, monotonicNow() - since.current) / 1000;
+    since.current = null;
   };
   useEffect(() => {
     if (started && !ending && AppState.currentState === "active")
-      since.current = Date.now();
+      since.current = monotonicNow();
     const listener = AppState.addEventListener("change", (state) => {
       if (state !== "active") stopClock();
-      else if (started && !ending && !finished.current)
-        since.current = Date.now();
+      else if (
+        started &&
+        !ending &&
+        !finished.current &&
+        since.current === null
+      )
+        since.current = monotonicNow();
     });
     return () => {
       stopClock();
@@ -615,7 +626,8 @@ function Grounding({ params }: { params: AnyRecord }) {
     };
   }, [started, ending]);
   function leave() {
-    if (started) {
+    if (ending) setEnding(false);
+    else if (started) {
       stopClock();
       setEnding(true);
     } else app.back();
@@ -626,7 +638,7 @@ function Grounding({ params }: { params: AnyRecord }) {
       return true;
     });
     return () => listener.remove();
-  }, [started]);
+  }, [started, ending]);
   function finish(nextTried: number[]) {
     if (finished.current) return;
     finished.current = true;
@@ -1147,12 +1159,21 @@ function Assessment({ params }: { params: AnyRecord }) {
   const [answers, setAnswers] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const saveLock = useRef(false);
+  const activeAssessment = useRef<string | null>(definition.id);
+  activeAssessment.current = definition.id;
   useEffect(() => {
+    activeAssessment.current = definition.id;
     setIndex(0);
     setAnswers([]);
     setError("");
+    setSaving(false);
+    return () => {
+      activeAssessment.current = null;
+    };
   }, [definition.id]);
   async function next() {
+    if (saveLock.current) return;
     if (answers[index] === undefined) {
       setError("Choose the answer that feels closest to your experience.");
       return;
@@ -1162,6 +1183,7 @@ function Assessment({ params }: { params: AnyRecord }) {
       setError("");
       return;
     }
+    saveLock.current = true;
     setSaving(true);
     setError("");
     try {
@@ -1174,13 +1196,15 @@ function Assessment({ params }: { params: AnyRecord }) {
         summary,
         createdAt: stamp(),
       });
-      app.navigate("assessment-result", {
-        result: saved || { assessmentType: definition.id, summary },
-      });
+      if (activeAssessment.current === definition.id)
+        app.navigate("assessment-result", {
+          result: saved || { assessmentType: definition.id, summary },
+        });
     } catch (e) {
-      setError(errText(e));
+      if (activeAssessment.current === definition.id) setError(errText(e));
     } finally {
-      setSaving(false);
+      saveLock.current = false;
+      if (activeAssessment.current === definition.id) setSaving(false);
     }
   }
   return (
@@ -1221,6 +1245,7 @@ function Assessment({ params }: { params: AnyRecord }) {
             key={label}
             label={label}
             selected={answers[index] === value}
+            disabled={saving}
             onPress={() => {
               const nextAnswers = [...answers];
               nextAnswers[index] = value;
@@ -1237,6 +1262,7 @@ function Assessment({ params }: { params: AnyRecord }) {
             title="Back"
             icon="arrow-back"
             variant="secondary"
+            disabled={saving}
             onPress={() => (index ? setIndex(index - 1) : app.back())}
           />
         </View>
@@ -1337,7 +1363,7 @@ function Breathing({ params }: { params: AnyRecord }) {
   const [running, setRunning] = useState(false);
   const [started, setStarted] = useState(false);
   const [autoPaused, setAutoPaused] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(false);
+  const reducedMotion = useReducedMotion();
   const [ending, setEnding] = useState(false);
   const base = useRef(0);
   const before = useRef(0);
@@ -1376,21 +1402,11 @@ function Breathing({ params }: { params: AnyRecord }) {
       },
     });
   }
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then(setReducedMotion)
-      .catch(() => {});
-    const listener = AccessibilityInfo.addEventListener(
-      "reduceMotionChanged",
-      setReducedMotion,
-    );
-    return () => listener.remove();
-  }, []);
   function pause() {
     if (!active.current) return before.current;
     before.current = Math.min(
       duration,
-      before.current + (Date.now() - base.current) / 1000,
+      before.current + Math.max(0, monotonicNow() - base.current) / 1000,
     );
     active.current = false;
     setElapsed(before.current);
@@ -1399,7 +1415,11 @@ function Breathing({ params }: { params: AnyRecord }) {
   }
   function resume() {
     if (finished.current) return;
-    base.current = Date.now();
+    if (before.current >= duration) {
+      finish(duration, true);
+      return;
+    }
+    base.current = monotonicNow();
     active.current = true;
     setRunning(true);
     setStarted(true);
@@ -1409,7 +1429,8 @@ function Breathing({ params }: { params: AnyRecord }) {
     if (!running) return;
     const timer = setInterval(() => {
       if (!active.current) return;
-      const seconds = before.current + (Date.now() - base.current) / 1000;
+      const seconds =
+        before.current + Math.max(0, monotonicNow() - base.current) / 1000;
       // The visible timer changes once a second; keep fractional clock time in
       // refs so the native petal animation stays smooth without rerendering the
       // entire activity ten times a second.
@@ -1436,7 +1457,7 @@ function Breathing({ params }: { params: AnyRecord }) {
     Animated.timing(scale, {
       toValue: phase === "Breathe in" ? 1.12 : 0.85,
       duration: Math.max(100, phaseRemaining * 1000),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== "web",
     }).start();
     return () => scale.stopAnimation();
   }, [phase, running, reducedMotion]);
@@ -1451,7 +1472,8 @@ function Breathing({ params }: { params: AnyRecord }) {
     }
     resumeAfterEnd.current = active.current;
     endSeconds.current = pause();
-    setEnding(true);
+    if (endSeconds.current >= duration) finish(duration, true);
+    else setEnding(true);
   }
   function keepGoing() {
     setEnding(false);

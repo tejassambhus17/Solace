@@ -173,6 +173,22 @@ export function calendarMonth(
     throw new RangeError("Choose a valid calendar month.");
   const records = journeyRecords(data, now);
   const first = new Date(year, month, 1, 12);
+  const prefix = localDay(first).slice(0, 7);
+  const today = localDay(now);
+  const entries = new Map<string, { count: number; mood: string | null }>();
+  for (const collection of categories) {
+    for (const record of records[collection]) {
+      const key = recordDay(record);
+      if (!key || !key.startsWith(prefix)) continue;
+      const entry = entries.get(key);
+      if (entry) entry.count += 1;
+      else
+        entries.set(key, {
+          count: 1,
+          mood: collection === "checkins" ? record.mood || null : null,
+        });
+    }
+  }
   const offset = (first.getDay() + 6) % 7;
   const length = new Date(year, month + 1, 0, 12).getDate();
   const cells = Math.ceil((offset + length) / 7) * 7;
@@ -181,21 +197,28 @@ export function calendarMonth(
     if (day < 1 || day > length) return null;
     const date = new Date(year, month, day, 12);
     const key = localDay(date);
-    const checkins = records.checkins.filter((item) => recordDay(item) === key);
-    const count = categories.reduce(
-      (sum, collection) =>
-        sum +
-        records[collection].filter((item) => recordDay(item) === key).length,
-      0,
-    );
+    const entry = entries.get(key);
     return {
       key,
       day,
-      mood: checkins[0]?.mood || null,
-      count,
-      future: key > localDay(now),
+      mood: entry?.mood ?? null,
+      count: entry?.count ?? 0,
+      future: key > today,
     };
   });
+}
+
+/** Open a past month on its first day and the current month on today. */
+export function adjacentCalendarDay(
+  day: string,
+  direction: -1 | 1,
+  now = new Date(),
+) {
+  const [year, month] = day.split("-").map(Number);
+  const target = new Date(year, month - 1 + direction, 1, 12);
+  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1, 12);
+  if (target.getFullYear() < 1900 || target > currentMonth) return null;
+  return localDay(target.getTime() === currentMonth.getTime() ? now : target);
 }
 
 export function entriesOnDay(

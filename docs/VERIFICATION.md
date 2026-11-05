@@ -307,3 +307,35 @@ Using the synthetic Avery QA account against the real local API, with live AI of
 Live AI generation/conversation/weekly reflection and real transcription require private provider configuration and actual provider evaluation. Mock transport tests and built-in activities do not prove those services. Native recording/permission denial, audio routing, app lifecycle, OS accessibility, glass materials, reminder/background/tap behavior, physical-device performance and native installable builds remain unverified. New audio/speech modules require a rebuilt native binary for those features; the guarded fallback is not native voice verification.
 
 Public HTTPS deployment, a final APK tested on physical hardware, Mac/iOS simulator acceptance and final demo/submission remain deliberately deferred. The existing SQL.js adapter is single-instance, full account state is still loaded as a snapshot, cold offline launch still requires session restoration, and prior root toolchain audit findings remain documented above. No Docker, public social features, extra branch or real credential was introduced.
+
+## Reliability and UI hardening — 6 November 2026
+
+### Changes
+
+- `server/src/app.ts`, `database.ts` and provider readers now make registration and initial session creation atomic, validate bounded provider responses, and protect conversation metadata and privacy boundaries during concurrent writes. A successful turn and its account-scoped retry receipt are written together. Within 24 hours an identical request replays the stored turn, including after API restart. Deleted conversations cannot be recreated by replaying their receipts.
+- `src/store.tsx`, `notifications.ts` and voice controls reject late account mutations, protect stored credentials and writing during account transitions, deduplicate reminder taps, serialize restore/edit work, and keep interrupted drafts or voice feedback available for recovery.
+- `App.tsx`, `src/ui.tsx` and the Solace, Moments, Journey, Profile and Wellness screens simplify first-use actions, keep scrollable controls above the floating tabs, expose a direct support action for urgent chat replies, invalidate stale activity previews, preserve paused practice time, and clarify reminder editing and confirmation.
+- `scripts/preview.mjs` serves packaged WAV assets with their media type and byte ranges and returns an actual 404 for missing files. Animated scenes use the web driver in the preview and the native driver on mobile.
+
+### Checks executed
+
+**205 tests passed on Node 24.22.1.** Server integration and process tests passed 64/64. Tooling passed 18/18, API configuration 10/10, session state 33/33, wellness 7/7, insights 9/9, routine 10/10, offline writing 8/8, voice 15/15, Journey progress 10/10, Moments 7/7, native configuration 6/6, and reminders 8/8.
+
+Client and server TypeScript, the server pretest compilation, Prettier, and `git diff --check` passed. Expo exported the development web preview and Android and iOS Hermes bundles. Metro fell back to a full file crawl after an incompatible local cache read and completed the affected exports. The UI source detector returned zero findings for its scanned files. The packaged preview passed HTTP checks for the root page, WAV HEAD and partial byte responses, an unsatisfiable range and a missing asset.
+
+### Browser checks executed
+
+Used a synthetic account and separate SQLite file on a loopback API configured for built-in replies.
+
+1. Completed onboarding and signup. Reloaded after an API and Expo restart and restored the signed-in account and conversation. Logged out through Privacy & data, logged back in, and reopened the saved Journey.
+2. Viewed the light Solace screen and dark Journey at 390 × 845 CSS pixels. The document measured 390 pixels wide with no horizontal overflow. A starter filled the composer and the other starter disappeared. Sent a message, reopened it from history, and followed the direct human-support action for synthetic distress text.
+3. Stopped the local API before sending a draft. The composer preserved the full text and offered Retry. After restarting the API, retry added one visible copy of the message and cleared the composer.
+4. Moved to the previous Journey month and returned to today. Saved a Calm check-in and saw it in the calendar. Chose and saved Ocean Calm, generated a built-in activity and verified that editing the feeling removed the old preview.
+5. Started a breathing Moment and paused at 17 seconds. Opened and canceled exit, confirmed the timer stayed at 17 seconds, then resumed and enabled ambience. The browser reported playback. Completed the active minute, saved it with Helped feedback, and saw both real test entries in Journey after reauthentication.
+6. Entered a reminder at 0830, saw the saved 08:30 preference, canceled an edit, and verified the delete confirmation with Keep reminder. The browser showed Preferences only and disabled the native delivery test. The final observed browser error log list was empty.
+
+Phone screenshots from the browser are [Solace in light appearance](screenshots/polish-chat-light.png) and [Journey in dark appearance](screenshots/polish-journey-dark.png). The loopback preview on port 8083 uses synthetic data.
+
+### Deferred release acceptance
+
+Live provider calls, public HTTPS deployment, installed Android and iOS verification, native microphone/audio behavior, reminder delivery and taps, and the final demo remain deferred at the user's direction. Expo exports verify bundling. The existing single-instance database and cold-start connectivity limits still apply.

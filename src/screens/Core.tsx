@@ -59,12 +59,15 @@ export function AuthScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
+  const submitting = useRef(false);
   function changePage(next: "welcome" | "intro" | "login" | "signup") {
+    if (submitting.current || app.busy) return;
     setPage(next);
     setNotice("");
+    setShowPassword(false);
   }
   async function submit() {
-    if (app.busy) return;
+    if (submitting.current || app.busy) return;
     setNotice("");
     if (!email.trim() || !password || (page === "signup" && !name.trim())) {
       setNotice("Please complete each field.");
@@ -74,12 +77,15 @@ export function AuthScreen() {
       setNotice("Use at least 8 characters for your password.");
       return;
     }
+    submitting.current = true;
     try {
       if (page === "signup")
         await app.signUp(name.trim(), email.trim(), password);
       else await app.signIn(email.trim(), password);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      submitting.current = false;
     }
   }
   if (page === "welcome")
@@ -258,6 +264,7 @@ export function AuthScreen() {
                 placeholder="What should we call you?"
                 value={name}
                 onChangeText={setName}
+                editable={!app.busy}
                 autoCapitalize="words"
                 autoComplete="name"
                 textContentType="name"
@@ -271,6 +278,7 @@ export function AuthScreen() {
               placeholder="you@example.com"
               value={email}
               onChangeText={setEmail}
+              editable={!app.busy}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -288,6 +296,7 @@ export function AuthScreen() {
                 }
                 value={password}
                 onChangeText={setPassword}
+                editable={!app.busy}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -327,6 +336,7 @@ export function AuthScreen() {
                 : "Create an account"
             }
             variant="secondary"
+            disabled={app.busy}
             onPress={() => changePage(page === "signup" ? "login" : "signup")}
           />
         </View>
@@ -376,6 +386,7 @@ export function ChatScreen() {
   const inputRef = useRef(input);
   inputRef.current = input;
   const [failure, setFailure] = useState("");
+  const sending = useRef(false);
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const mounted = useRef(true);
   const nearBottom = useRef(true);
@@ -411,27 +422,31 @@ export function ChatScreen() {
     conversationId: id,
   };
   const action = lastAssistant?.action;
+  const showSupport =
+    lastAssistant?.support === true || lastAssistant?.safety === true;
+  const sendDisabled =
+    !input.trim() ||
+    !!pending ||
+    voiceState === "listening" ||
+    voiceState === "thinking";
   function writeDraft(text: string) {
+    inputRef.current = text;
     setInput(text);
     app.setChatDraft(draftKey, text);
   }
   async function send() {
-    const text = input.trim();
-    if (
-      !text ||
-      pending ||
-      voiceState === "listening" ||
-      voiceState === "thinking"
-    )
-      return;
+    const submitted = inputRef.current;
+    const text = submitted.trim();
+    if (!text || sendDisabled || sending.current) return;
+    sending.current = true;
     nearBottom.current = true;
     setShowLatest(false);
-    app.setChatDraft(draftKey, input);
+    app.setChatDraft(draftKey, submitted);
     setPending(text);
     setFailure("");
     try {
       const result = await app.chat(text, id);
-      app.setChatDraft(draftKey, "", input);
+      app.setChatDraft(draftKey, "", submitted);
       if (mounted.current) {
         setInput("");
         setId(result.conversation.id);
@@ -445,6 +460,7 @@ export function ChatScreen() {
             : "Could not send. Your message is kept below; try again.",
         );
     } finally {
+      sending.current = false;
       if (mounted.current) setPending("");
     }
   }
@@ -467,9 +483,13 @@ export function ChatScreen() {
             justifyContent: "space-between",
           }}
         >
-          <Row style={{ gap: 8 }}>
+          <Row style={{ gap: 8, flex: 1, minWidth: 0 }}>
             <Companion size={36} state={pending ? "thinking" : voiceState} />
-            <AppText variant="heading" style={{ fontSize: 31 }}>
+            <AppText
+              variant="heading"
+              accessibilityRole="header"
+              style={{ fontSize: 31, flexShrink: 1 }}
+            >
               Solace
             </AppText>
           </Row>
@@ -527,65 +547,51 @@ export function ChatScreen() {
           >
             {messages.length === 0 && !pending && (
               <>
-                <View
-                  style={{
-                    alignItems: "center",
-                    paddingTop: 22,
-                    paddingBottom: 30,
-                  }}
-                >
-                  <Artwork kind="petal" size={108} />
-                  <AppText variant="title" style={{ marginTop: 16 }}>
-                    A little space to talk.
+                <View style={{ paddingTop: 14, paddingBottom: 24 }}>
+                  <AppText variant="title" accessibilityRole="header">
+                    Start where you are.
                   </AppText>
                   <AppText
                     color={colors.muted}
-                    style={{ textAlign: "center", maxWidth: 275, marginTop: 9 }}
+                    style={{ maxWidth: 290, marginTop: 9 }}
                   >
-                    You don't have to have the right words. Start wherever you
-                    are.
+                    Share what’s on your mind, or use a prompt to begin.
                   </AppText>
                 </View>
-                <Card
-                  style={{
-                    borderBottomLeftRadius: 6,
-                    maxWidth: "94%",
-                    marginBottom: 22,
-                  }}
-                >
-                  <AppText>
-                    Hi there. I'm Solace. I'm here to listen and help you find a
-                    little calm, whenever you need it.
-                  </AppText>
-                </Card>
-                <View style={{ gap: 9 }}>
-                  {[
-                    "I've been feeling overwhelmed",
-                    "I'd like to reflect on my day",
-                  ].map((text) => (
-                    <Pressable
-                      key={text}
-                      accessibilityRole="button"
-                      onPress={() => writeDraft(text)}
-                      style={({ pressed }) => ({
-                        paddingVertical: 13,
-                        paddingHorizontal: 17,
-                        borderWidth: 0.75,
-                        borderColor: colors.border,
-                        borderRadius: 22,
-                        alignSelf: "flex-start",
-                        backgroundColor: pressed
-                          ? colors.surface2
-                          : colors.surface,
-                      })}
-                    >
-                      <Row style={{ gap: 9 }}>
-                        <Icon name="leaf-outline" size={16} />
-                        <AppText style={{ fontSize: 13 }}>{text}</AppText>
-                      </Row>
-                    </Pressable>
-                  ))}
-                </View>
+                {!input && (
+                  <View style={{ gap: 9 }}>
+                    {[
+                      "I've been feeling overwhelmed",
+                      "I'd like to reflect on my day",
+                    ].map((text) => (
+                      <Pressable
+                        key={text}
+                        accessibilityRole="button"
+                        onPress={() => {
+                          if (!inputRef.current) writeDraft(text);
+                        }}
+                        style={({ pressed }) => ({
+                          paddingVertical: 13,
+                          paddingHorizontal: 17,
+                          borderWidth: 0.75,
+                          borderColor: colors.border,
+                          borderRadius: 22,
+                          alignSelf: "flex-start",
+                          backgroundColor: pressed
+                            ? colors.surface2
+                            : colors.surface,
+                        })}
+                      >
+                        <Row style={{ gap: 9 }}>
+                          <Icon name="leaf-outline" size={16} />
+                          <AppText variant="caption" style={{ flexShrink: 1 }}>
+                            {text}
+                          </AppText>
+                        </Row>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
               </>
             )}
             {messages.map((m: any, index: number) => (
@@ -639,7 +645,16 @@ export function ChatScreen() {
                 </Row>
               </>
             )}
-            {!!action && !pending && (
+            {showSupport && !pending && (
+              <Button
+                title="Find human support"
+                variant="secondary"
+                icon="heart-outline"
+                onPress={() => app.navigate("support")}
+                style={{ alignSelf: "flex-start", marginBottom: 12 }}
+              />
+            )}
+            {!!action && !showSupport && !pending && (
               <Card
                 style={{
                   marginTop: 8,
@@ -744,27 +759,13 @@ export function ChatScreen() {
               accessibilityRole="button"
               accessibilityLabel={failure ? "Retry message" : "Send message"}
               accessibilityState={{
-                disabled:
-                  !input.trim() ||
-                  !!pending ||
-                  voiceState === "listening" ||
-                  voiceState === "thinking",
+                disabled: sendDisabled,
                 busy: !!pending,
               }}
-              aria-disabled={
-                !input.trim() ||
-                !!pending ||
-                voiceState === "listening" ||
-                voiceState === "thinking"
-              }
+              aria-disabled={sendDisabled}
               aria-busy={!!pending}
               onPress={send}
-              disabled={
-                !input.trim() ||
-                !!pending ||
-                voiceState === "listening" ||
-                voiceState === "thinking"
-              }
+              disabled={sendDisabled}
               style={({ pressed }) => ({
                 height: 50,
                 width: 50,
@@ -772,7 +773,7 @@ export function ChatScreen() {
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: colors.primary,
-                opacity: !input.trim() || pending ? 0.45 : pressed ? 0.75 : 1,
+                opacity: sendDisabled ? 0.45 : pressed ? 0.75 : 1,
               })}
             >
               <Icon
@@ -788,11 +789,13 @@ export function ChatScreen() {
               color={colors.muted}
               style={{ fontSize: 10 }}
             >
-              {lastAssistant?.provider === "offline"
-                ? "Built-in companion · Live AI is off"
-                : lastAssistant?.provider === "live"
-                  ? "Live AI companion"
-                  : "AI wellness companion"}
+              {showSupport
+                ? "Support guidance"
+                : lastAssistant?.provider === "offline"
+                  ? "Built-in reply"
+                  : lastAssistant?.provider === "live"
+                    ? "Live AI reply"
+                    : "AI wellness companion"}
             </AppText>
             <Pressable
               accessibilityRole="button"

@@ -35,13 +35,17 @@ Integration follows [OpenAI's text generation documentation](https://developers.
 | POST | `/api/records/:collection` | Record body → `{record}`, 201 |
 | PATCH | `/api/records/:collection/:id` | Changes → `{record}` |
 | DELETE | `/api/records/:collection/:id` | Removes owned record, 204 |
-| POST | `/api/chat` | `{text,conversationId?}` → `{conversation,reply,provider,action?}` |
+| POST | `/api/chat` | `{text,conversationId?,requestId?}` → `{conversation,reply,provider,action?}` |
 | GET | `/api/export` | Downloadable JSON for current account |
 | DELETE | `/api/account` or `/api/auth/me` | Deletes account, sessions and records, 204 |
 
 All non-public routes require `Authorization: Bearer <token>`. Tokens are random, stored as hashes and expire after 30 days. Passwords are scrypt-derived with independent random salts. Returned user objects never include password hashes. Body size, collection names, known fields, IDs and auth inputs are validated. Account ownership is imposed by the server, irrespective of any user identifier in JSON data.
 
-The chat endpoint stores each successful user/assistant exchange together. Deleting a conversation also removes preferences whose `sourceConversationId` is that conversation. Session-derived preferences have owned source validation and are removed when their source session is deleted. An in-flight reply cannot recreate a deleted conversation or deleted account. One in-flight chat is allowed per account. Conversations are limited to 200 messages and 80,000 input characters before requesting a new conversation. Reminders store preferences only: native scheduling and delivery are performed by the Expo client, not this server.
+The chat endpoint stores each successful user/assistant exchange together. Saved conversations can be renamed without editing their message history. Deleting a conversation also removes preferences whose `sourceConversationId` is that conversation. Session-derived preferences have owned source validation and are removed when their source session is deleted. An in-flight reply cannot recreate a deleted conversation or deleted account. One provider chat is allowed in flight per account. Conversations are limited to 200 messages and 80,000 input characters before requesting a new conversation. Explicit distress receives local human-support guidance even when a provider request is pending or a conversation is full.
+
+Clients can provide a UUID `requestId` and reuse it with the same text and original conversation ID when retrying. For 24 hours the API returns the saved exchange without another provider call, rejects changed input, and rejects retrying an exchange from a deleted conversation. The receipt contains IDs and an expiration timestamp. Expired receipts are pruned on startup and on later chat writes for that account. Account deletion removes its receipts.
+
+Live provider response bodies are limited to 256 KiB. Malformed, refused, incomplete, or oversized replies surface as recoverable provider errors. Reminders store preferences on the server and the Expo client handles native scheduling and delivery.
 
 ## Deployment
 

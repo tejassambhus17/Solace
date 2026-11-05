@@ -291,6 +291,14 @@ test("deleted or revoked approved memory cannot appear in a late generated recom
             .auth(a.token, { type: "bearer" })
             .send({ feeling: "I need a minute" })
             .expect(409);
+          const urgent = await request(app)
+            .post("/api/moments/generate")
+            .auth(a.token, { type: "bearer" })
+            .send({ feeling: "I can't keep myself safe" })
+            .expect(200);
+          assert.equal(urgent.body.support, true);
+          assert.equal(urgent.body.activity, null);
+          assert.deepEqual(urgent.body.usedMemoryIds, []);
           if (revoke)
             await request(app)
               .patch("/api/auth/me")

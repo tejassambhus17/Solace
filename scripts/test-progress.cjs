@@ -25,10 +25,13 @@ function load(file, dependencies = {}) {
   return module.exports;
 }
 const content = load("src/content.ts");
-const { journeySummary, calendarMonth, entriesOnDay, goalProgress } = load(
-  "src/progress.ts",
-  { "./content": content },
-);
+const {
+  adjacentCalendarDay,
+  journeySummary,
+  calendarMonth,
+  entriesOnDay,
+  goalProgress,
+} = load("src/progress.ts", { "./content": content });
 const now = () => new Date(2026, 10, 5, 12);
 const item = (id, day, extra = {}) => ({ id, day, ...extra });
 
@@ -45,6 +48,15 @@ test("a new journey has no earned milestone, mood, duration or streak", () => {
     calendarMonth(2026, 10, {}, now()).filter((day) => day?.mood).length,
     0,
   );
+});
+
+test("changing months keeps selection in the visible month and never moves into the future", () => {
+  assert.equal(adjacentCalendarDay("2026-11-05", -1, now()), "2026-10-01");
+  assert.equal(adjacentCalendarDay("2026-10-31", 1, now()), "2026-11-05");
+  assert.equal(adjacentCalendarDay("2026-11-01", 1, now()), null);
+  assert.equal(adjacentCalendarDay("1900-02-01", -1, now()), "1900-01-01");
+  assert.equal(adjacentCalendarDay("1900-01-01", -1, now()), null);
+  assert.equal(adjacentCalendarDay("2026-01-31", -1, now()), "2025-12-01");
 });
 
 test("actual completed duration and self-reported feedback exclude partial/future/duplicate records", () => {

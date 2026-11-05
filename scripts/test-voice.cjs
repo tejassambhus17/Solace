@@ -54,6 +54,30 @@ test("permission denial does not start or upload audio and offers text fallback"
   assert.equal(f.turn.state, "idle");
   assert.match(f.events.at(-1).error, /type your message/);
 });
+
+test("an interruption explanation survives asynchronous recorder cleanup", async () => {
+  let releaseCleanup;
+  const f = fixture({
+    cancel: () =>
+      new Promise((resolve) => {
+        releaseCleanup = resolve;
+      }),
+  });
+  await f.turn.start();
+  const cleanup = f.turn.cancel(
+    "Recording was discarded when you left the app.",
+  );
+  await Promise.resolve();
+  assert.equal(f.turn.state, "cancelling");
+  await Promise.resolve();
+  releaseCleanup();
+  await cleanup;
+  assert.deepEqual(f.events.at(-1), {
+    state: "idle",
+    error: "Recording was discarded when you left the app.",
+  });
+  assert.equal(f.uploads(), 0);
+});
 test("an actual start and stop yields a reviewable transcript without an automatic chat send", async () => {
   const f = fixture();
   await f.turn.start();

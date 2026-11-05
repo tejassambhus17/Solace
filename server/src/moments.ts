@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { isUrgent, provider, type AIConfig } from "./ai.js";
+import { readProviderText } from "./provider-response.js";
 
 export const environments = ["forest", "ocean", "twilight"] as const;
 import type {
@@ -291,32 +292,7 @@ export async function structuredOutput(
   } catch {
     throw new Error("AI_UNAVAILABLE");
   }
-  if (!response.ok) throw new Error("AI_UNAVAILABLE");
-  let body: any;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error("AI_INVALID_RESPONSE");
-  }
-  if (body.status && body.status !== "completed")
-    throw new Error("AI_INCOMPLETE_RESPONSE");
-  const content = Array.isArray(body.output)
-    ? body.output.flatMap((item: any) =>
-        Array.isArray(item?.content) ? item.content : [],
-      )
-    : [];
-  if (content.some((item: any) => item?.type === "refusal"))
-    throw new Error("AI_REFUSED");
-  const text =
-    typeof body.output_text === "string"
-      ? body.output_text
-      : content
-          .filter(
-            (item: any) =>
-              item?.type === "output_text" && typeof item.text === "string",
-          )
-          .map((item: any) => item.text)
-          .join("\n");
+  const text = await readProviderText(response);
   if (!text || text.length > 20000) throw new Error("AI_INVALID_RESPONSE");
   try {
     return JSON.parse(text) as unknown;

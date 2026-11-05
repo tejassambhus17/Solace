@@ -44,6 +44,7 @@ export function VoiceControlsImpl({
   const latest = useRef({ app, onTranscript, onState });
   latest.current = { app, onTranscript, onState };
   const uri = useRef<string | null>(null);
+  const requestingPermission = useRef(false);
   const mime = useRef(voiceContentType(Platform.OS));
   const turnRef = useRef<VoiceTurn | null>(null);
   const recorder = useAudioRecorder(
@@ -63,8 +64,7 @@ export function VoiceControlsImpl({
     (recording) => {
       if (!mounted.current) return;
       if (recording.hasError) {
-        void turnRef.current?.cancel();
-        setError(
+        void turnRef.current?.cancel(
           "Recording was interrupted. Please try again, or type your message.",
         );
       } else if (
@@ -77,8 +77,13 @@ export function VoiceControlsImpl({
   );
   const status = useAudioRecorderState(recorder, 250);
   async function erase() {
-    const value = uri.current || recorder.uri;
+    let value = uri.current;
     uri.current = null;
+    try {
+      value ||= recorder.uri;
+    } catch {
+      // The native recorder may already have been released on unmount.
+    }
     if (!value) return;
     if (Platform.OS === "web") URL.revokeObjectURL(value);
     else {
@@ -92,11 +97,17 @@ export function VoiceControlsImpl({
   }
   if (!turnRef.current)
     turnRef.current = new VoiceTurn({
-      permission: async () =>
-        (await AudioModule.requestRecordingPermissionsAsync()).granted,
+      permission: async () => {
+        requestingPermission.current = true;
+        try {
+          return (await AudioModule.requestRecordingPermissionsAsync()).granted;
+        } finally {
+          requestingPermission.current = false;
+        }
+      },
       start: async () => {
         ++speechVersion.current;
-        await Speech.stop();
+        await Speech.stop().catch(() => {});
         if (mounted.current) setSpeaking(false);
         await erase();
         await setAudioModeAsync({
@@ -171,12 +182,15 @@ export function VoiceControlsImpl({
       ++speechVersion.current;
       clearSpeechWait();
       setStartingSpeech(false);
-      void Speech.stop();
+      void Speech.stop().catch(() => {});
       setSpeaking(false);
+      // The iOS permission sheet can make the app inactive before recording starts.
+      if (next === "inactive" && requestingPermission.current) return;
       if (turn.state !== "idle") {
-        void turn.cancel();
-        setError(
-          "Recording paused when you left the app. Start again when you're ready.",
+        void turn.cancel(
+          turn.state === "transcribing"
+            ? "Transcription was interrupted when you left the app. Try recording again, or type your message."
+            : "Recording was discarded when you left the app. Start again when you're ready.",
         );
       }
     });
@@ -185,7 +199,7 @@ export function VoiceControlsImpl({
       ++speechVersion.current;
       clearSpeechWait();
       turn.dispose();
-      void Speech.stop();
+      void Speech.stop().catch(() => {});
       listener.remove();
       latest.current.onState("idle");
     };
@@ -205,15 +219,14 @@ export function VoiceControlsImpl({
     if (state === "listening" && recorder.getStatus().durationMillis >= 59_000)
       void turn.stop();
     if (state === "listening" && status.mediaServicesDidReset) {
-      void turn.cancel();
-      setError("Recording was interrupted. Please try again.");
+      void turn.cancel("Recording was interrupted. Please try again.");
     }
   }, [status.durationMillis, status.mediaServicesDidReset, state]);
   useEffect(() => {
     ++speechVersion.current;
     clearSpeechWait();
     setStartingSpeech(false);
-    void Speech.stop();
+    void Speech.stop().catch(() => {});
     setSpeaking(false);
   }, [reply, disabled]);
   async function speak() {
@@ -221,7 +234,7 @@ export function VoiceControlsImpl({
       ++speechVersion.current;
       clearSpeechWait();
       setStartingSpeech(false);
-      await Speech.stop();
+      await Speech.stop().catch(() => {});
       setSpeaking(false);
       return;
     }
@@ -240,7 +253,7 @@ export function VoiceControlsImpl({
       speechTimer.current = setTimeout(() => {
         if (!mounted.current || speechVersion.current !== version) return;
         ++speechVersion.current;
-        void Speech.stop();
+        void Speech.stop().catch(() => {});
         setStartingSpeech(false);
         setSpeaking(false);
         setError(
@@ -335,7 +348,9 @@ export function VoiceControlsImpl({
                 ? "Transcribing…"
                 : state === "preparing"
                   ? "Starting microphone…"
-                  : "Review before sending"}
+                  : state === "cancelling"
+                    ? "Discarding…"
+                    : "Voice message"}
           </AppText>
         </Row>
         {!!reply && (
@@ -364,8 +379,8 @@ export function VoiceControlsImpl({
       {state === "listening" && (
         <View style={{ paddingBottom: 8, gap: 6 }}>
           <AppText variant="caption" color={colors.muted}>
-            Stopping sends this recording for transcription. You review the
-            words before sending a chat message.
+            The recording is sent for transcription when you stop or reach one
+            minute. You review the words before sending a chat message.
           </AppText>
           <Button
             title="Discard recording"

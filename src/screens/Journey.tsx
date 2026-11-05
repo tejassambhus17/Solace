@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Switch, View } from "react-native";
+import { AppState, Pressable, Switch, View } from "react-native";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
@@ -16,6 +16,7 @@ import { Companion } from "../Companion";
 import { localDay, recordDay } from "../content";
 import { weeklyReview } from "../insights";
 import {
+  adjacentCalendarDay,
   calendarMonth,
   entriesOnDay,
   goalProgress,
@@ -35,6 +36,7 @@ const dateLabel = (value: string) =>
     day: "numeric",
   });
 const sectionStyle = { paddingTop: 25, marginTop: 23, borderTopWidth: 0.75 };
+type JourneySection = "goal" | "reflection" | "streaks";
 
 function HistoryEntry({ entry }: { entry: DayEntry }) {
   const app = useApp();
@@ -113,19 +115,25 @@ export function JourneyScreen() {
   const app = useApp();
   const { colors } = useTheme();
   const [now, setNow] = useState(() => new Date());
-  const [month, setMonth] = useState(
-    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12),
-  );
-  const [selectedDay, setSelectedDay] = useState(() => localDay());
+  const [browsedDay, setBrowsedDay] = useState<string | null>(null);
+  const today = localDay(now);
+  const selectedDay = browsedDay && browsedDay < today ? browsedDay : today;
+  const monthKey = selectedDay.slice(0, 7);
+  const month = useMemo(() => new Date(`${monthKey}-01T12:00:00`), [monthKey]);
+  const previousDay = adjacentCalendarDay(selectedDay, -1, now);
+  const nextDay = adjacentCalendarDay(selectedDay, 1, now);
   const [showAllEntries, setShowAllEntries] = useState(false);
   const [showMilestones, setShowMilestones] = useState(false);
   const [celebration, setCelebration] = useState<string | null>(null);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalTitle, setGoalTitle] = useState("Make a little time for myself");
   const [goalMinutes, setGoalMinutes] = useState("15");
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState<JourneySection | null>(null);
+  const [status, setStatus] = useState<{
+    section: JourneySection;
+    message: string;
+    error?: boolean;
+  } | null>(null);
   const [reflection, setReflection] = useState<{
     provider: string;
     reflection: string;
@@ -137,12 +145,18 @@ export function JourneyScreen() {
   account.current = app.user?.id;
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(timer);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setNow(new Date());
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
   }, []);
   useEffect(() => {
     setReflection(null);
-    setError("");
-    setNotice("");
+    setBusy(null);
+    setStatus(null);
     setCelebration(null);
     setEditingGoal(false);
   }, [app.user?.id]);
@@ -169,47 +183,67 @@ export function JourneyScreen() {
     goal?.targetMinutesPerWeek,
     summary.weeklySeconds,
   );
-  const isCurrentMonth =
-    month.getFullYear() === now.getFullYear() &&
-    month.getMonth() === now.getMonth();
   const selectedMood = summary.records.checkins.find(
     (item) => recordDay(item) === selectedDay,
   )?.mood;
 
-  async function perform(label: string, work: () => Promise<void>) {
+  function showStatus(section: JourneySection) {
+    return status?.section === section ? (
+      <AppText
+        accessibilityLiveRegion="polite"
+        color={status.error ? colors.danger : colors.muted}
+        style={{ marginTop: 10 }}
+      >
+        {status.message}
+      </AppText>
+    ) : null;
+  }
+  function selectDay(day: string) {
+    setBrowsedDay(day === today ? null : day);
+    setShowAllEntries(false);
+  }
+  async function perform(section: JourneySection, work: () => Promise<void>) {
     if (lock.current) return;
     lock.current = true;
-    setBusy(label);
-    setError("");
-    setNotice("");
+    setBusy(section);
+    setStatus(null);
     const owner = account.current;
     try {
       await work();
     } catch (e) {
       if (owner === account.current)
-        setError(
-          e instanceof Error ? e.message : "Could not save. Please try again.",
-        );
+        setStatus({
+          section,
+          error: true,
+          message:
+            e instanceof Error
+              ? e.message
+              : "Something went wrong. Please try again.",
+        });
     } finally {
       lock.current = false;
-      if (owner === account.current) setBusy("");
+      if (owner === account.current) setBusy(null);
     }
   }
   function editGoal() {
     setGoalTitle(goal?.title || "Make a little time for myself");
     setGoalMinutes(String(goal?.targetMinutesPerWeek || 15));
     setEditingGoal(true);
-    setError("");
+    setStatus(null);
   }
   async function saveGoal() {
     const target = Number(goalMinutes);
     if (
       !goalTitle.trim() ||
-      !Number.isInteger(target) ||
+      !/^\d{1,3}$/.test(goalMinutes) ||
       target < 5 ||
       target > 210
     ) {
-      setError("Give your goal a name and choose 5–210 minutes for the week.");
+      setStatus({
+        section: "goal",
+        error: true,
+        message: "Give your goal a name and choose 5–210 minutes for the week.",
+      });
       return;
     }
     const owner = account.current;
@@ -218,11 +252,11 @@ export function JourneyScreen() {
         ...(goal || { id: "personal-weekly-goal" }),
         title: goalTitle.trim(),
         targetMinutesPerWeek: target,
-        active: true,
+        active: goal?.active !== false,
       });
       if (owner === account.current) {
         setEditingGoal(false);
-        setNotice("Your goal is saved. You can change it whenever you like.");
+        setStatus({ section: "goal", message: "Your goal is saved." });
       }
     });
   }
@@ -248,8 +282,8 @@ export function JourneyScreen() {
   return (
     <Screen>
       <AppText variant="title">Your journey</AppText>
-      <AppText color={colors.muted} style={{ marginTop: 8, marginBottom: 26 }}>
-        Small moments, honestly remembered. There is no perfect pace.
+      <AppText color={colors.muted} style={{ marginTop: 8, marginBottom: 20 }}>
+        The moments you’ve made for yourself.
       </AppText>
 
       <View
@@ -261,21 +295,19 @@ export function JourneyScreen() {
           padding: 12,
         }}
       >
-        <Row style={{ justifyContent: "space-between", marginBottom: 12 }}>
+        <Row style={{ justifyContent: "space-between", marginBottom: 6 }}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Previous month"
-            disabled={month.getFullYear() <= 1900 || !!busy}
-            onPress={() =>
-              setMonth(
-                new Date(month.getFullYear(), month.getMonth() - 1, 1, 12),
-              )
-            }
+            accessibilityState={{ disabled: !previousDay }}
+            disabled={!previousDay}
+            onPress={() => previousDay && selectDay(previousDay)}
             style={{
               minWidth: 44,
               minHeight: 44,
               justifyContent: "center",
               alignItems: "center",
+              opacity: previousDay ? 1 : 0.25,
             }}
           >
             <Icon name="chevron-back" />
@@ -289,19 +321,15 @@ export function JourneyScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Next month"
-            accessibilityState={{ disabled: isCurrentMonth }}
-            disabled={isCurrentMonth || !!busy}
-            onPress={() =>
-              setMonth(
-                new Date(month.getFullYear(), month.getMonth() + 1, 1, 12),
-              )
-            }
+            accessibilityState={{ disabled: !nextDay }}
+            disabled={!nextDay}
+            onPress={() => nextDay && selectDay(nextDay)}
             style={{
               minWidth: 44,
               minHeight: 44,
               justifyContent: "center",
               alignItems: "center",
-              opacity: isCurrentMonth ? 0.25 : 1,
+              opacity: nextDay ? 1 : 0.25,
             }}
           >
             <Icon name="chevron-forward" />
@@ -334,10 +362,7 @@ export function JourneyScreen() {
                     disabled: day.future,
                   }}
                   disabled={day.future}
-                  onPress={() => {
-                    setSelectedDay(day.key);
-                    setShowAllEntries(false);
-                  }}
+                  onPress={() => selectDay(day.key)}
                   style={({ pressed }) => ({
                     minHeight: 46,
                     borderRadius: 12,
@@ -380,9 +405,27 @@ export function JourneyScreen() {
             </View>
           ))}
         </View>
-        <AppText variant="caption" color={colors.muted} style={{ margin: 7 }}>
-          A dot marks something you saved. Your moods are your own words.
-        </AppText>
+        <Row style={{ justifyContent: "space-between", minHeight: 44 }}>
+          <AppText variant="caption" color={colors.muted}>
+            Dots mark saved entries.
+          </AppText>
+          {selectedDay !== today && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Return to today in the calendar"
+              onPress={() => selectDay(today)}
+              style={{
+                minHeight: 44,
+                justifyContent: "center",
+                paddingHorizontal: 8,
+              }}
+            >
+              <AppText variant="label" color={colors.primary}>
+                Today
+              </AppText>
+            </Pressable>
+          )}
+        </Row>
       </View>
 
       <View style={{ marginTop: 24 }}>
@@ -391,9 +434,7 @@ export function JourneyScreen() {
         >
           <View style={{ flex: 1 }}>
             <AppText variant="heading">
-              {selectedDay === localDay(now)
-                ? "Today, so far"
-                : formatDay(selectedDay)}
+              {selectedDay === today ? "Today, so far" : formatDay(selectedDay)}
             </AppText>
             <AppText variant="caption" color={colors.muted}>
               {entries.length} {entries.length === 1 ? "entry" : "entries"}
@@ -424,11 +465,11 @@ export function JourneyScreen() {
         ) : (
           <View style={{ paddingVertical: 18 }}>
             <AppText color={colors.muted}>
-              {selectedDay === localDay(now)
+              {selectedDay === today
                 ? "A blank space can be a beginning. Check in or take a small pause when you want to."
                 : "Nothing was saved on this day. There is no catching up to do."}
             </AppText>
-            {selectedDay === localDay(now) && (
+            {selectedDay === today && (
               <Button
                 title="Take a Moment"
                 variant="secondary"
@@ -488,6 +529,7 @@ export function JourneyScreen() {
           onPress={createReflection}
           style={{ marginTop: 18 }}
         />
+        {showStatus("reflection")}
         {reflection && (
           <View
             accessibilityLiveRegion="polite"
@@ -672,11 +714,15 @@ export function JourneyScreen() {
                 title="Cancel"
                 variant="ghost"
                 disabled={!!busy}
-                onPress={() => setEditingGoal(false)}
+                onPress={() => {
+                  setEditingGoal(false);
+                  setStatus(null);
+                }}
               />
             </Row>
           </View>
         )}
+        {showStatus("goal")}
       </View>
 
       <View style={[sectionStyle, { borderColor: colors.border }]}>
@@ -721,6 +767,7 @@ export function JourneyScreen() {
                 }
               />
             </Row>
+            {showStatus("streaks")}
             {preferences?.streaksEnabled === true && (
               <AppText color={colors.muted} style={{ marginBottom: 13 }}>
                 {summary.streak
@@ -796,24 +843,6 @@ export function JourneyScreen() {
         )}
       </View>
 
-      {!!error && (
-        <AppText
-          accessibilityLiveRegion="polite"
-          color={colors.danger}
-          style={{ marginTop: 18 }}
-        >
-          {error}
-        </AppText>
-      )}
-      {!!notice && (
-        <AppText
-          accessibilityLiveRegion="polite"
-          color={colors.muted}
-          style={{ marginTop: 18 }}
-        >
-          {notice}
-        </AppText>
-      )}
       <View style={[sectionStyle, { borderColor: colors.border }]}>
         <SectionTitle title="Keep exploring your story" />
         {[

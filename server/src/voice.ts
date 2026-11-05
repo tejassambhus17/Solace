@@ -1,4 +1,5 @@
 import { type AIConfig, provider } from "./ai.js";
+import { readProviderJson } from "./provider-response.js";
 
 export const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
 export const audioTypes: Record<string, string> = {
@@ -46,10 +47,9 @@ export async function transcribeAudio(
   } catch {
     throw new Error("VOICE_UNAVAILABLE");
   }
-  if (!response.ok) throw new Error("VOICE_UNAVAILABLE");
-  let result: any;
+  let result: Awaited<ReturnType<typeof readProviderJson>>;
   try {
-    result = await response.json();
+    result = await readProviderJson(response);
   } catch {
     throw new Error("VOICE_INVALID_RESPONSE");
   }

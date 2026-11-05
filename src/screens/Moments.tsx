@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   AppState as NativeAppState,
   BackHandler,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { AmbientSound } from "../AmbientSound";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -117,6 +119,64 @@ function EnvironmentPicker({
   );
 }
 
+function EnvironmentOptions({
+  value,
+  onChange,
+  disabled = false,
+  children,
+}: {
+  value: MomentEnvironment;
+  onChange: (environment: MomentEnvironment) => void;
+  disabled?: boolean;
+  children?: React.ReactNode;
+}) {
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(false);
+  const environment = ENVIRONMENTS.find((item) => item.id === value)!;
+  return (
+    <View
+      style={{
+        marginTop: 18,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open, disabled }}
+        disabled={disabled}
+        onPress={() => setOpen(!open)}
+        style={{ minHeight: 58, justifyContent: "center" }}
+      >
+        <Row>
+          <Icon name="leaf-outline" size={19} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <AppText variant="caption" color={colors.muted}>
+              Space for this Moment
+            </AppText>
+            <AppText variant="label">{environment.title}</AppText>
+          </View>
+          <Icon
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.muted}
+          />
+        </Row>
+      </Pressable>
+      {open && (
+        <View style={{ paddingTop: 8, paddingBottom: 4 }}>
+          <EnvironmentPicker
+            value={value}
+            onChange={onChange}
+            disabled={disabled}
+          />
+          {children}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function MomentsScreen() {
   const app = useApp();
   const { colors } = useTheme();
@@ -138,10 +198,16 @@ export function MomentsScreen() {
   const [result, setResult] = useState<GeneratedMoment | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingPreference, setSavingPreference] = useState(false);
+  const [preferenceStatus, setPreferenceStatus] = useState<{
+    message: string;
+    error?: boolean;
+  } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [why, setWhy] = useState(false);
   const generation = useRef(0);
+  const generationLock = useRef(false);
+  const preferenceLock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -168,13 +234,22 @@ export function MomentsScreen() {
     }
   }, [app.user?.personalization, app.data.memories, result]);
   function writeFeeling(value: string) {
+    if (generationLock.current) return;
     setFeeling(value);
+    setResult(null);
+    setError("");
+    setNotice("");
+    setWhy(false);
     app.setEditorDraft("moment-builder", { feeling: value });
   }
   async function generate() {
-    if (loading || !feeling.trim()) return;
+    if (generationLock.current || !feeling.trim()) return;
+    generationLock.current = true;
     const version = ++generation.current;
+    Keyboard.dismiss();
     setLoading(true);
+    setResult(null);
+    setWhy(false);
     setError("");
     setNotice("");
     try {
@@ -183,40 +258,47 @@ export function MomentsScreen() {
         environment,
       );
       if (!mounted.current || version !== generation.current) return;
-      if (response.activity && !isPlayableMoment(response.activity))
+      if (!response?.support && !isPlayableMoment(response?.activity))
         throw new Error(
           "This Moment couldn't be prepared safely. Your words are kept—please try again.",
         );
       setResult(response);
-      setWhy(false);
     } catch (error) {
       if (mounted.current && version === generation.current)
         setError(errorText(error));
     } finally {
+      generationLock.current = false;
       if (mounted.current && version === generation.current) setLoading(false);
     }
   }
   async function saveEnvironment() {
-    if (savingPreference) return;
+    if (preferenceLock.current) return;
+    preferenceLock.current = true;
     setSavingPreference(true);
-    setNotice("");
-    setError("");
+    setPreferenceStatus(null);
     try {
       await app.save("preferences", {
+        ambientEnabled: false,
+        streaksEnabled: false,
+        ...preference,
         id: "wellness",
         environment,
-        ambientEnabled: preference?.ambientEnabled ?? false,
-        streaksEnabled: preference?.streaksEnabled ?? false,
       });
       if (mounted.current)
-        setNotice(
-          "Your preferred space is saved. You can change it for any Moment.",
-        );
+        setPreferenceStatus({ message: "Your preferred space is saved." });
     } catch (error) {
-      if (mounted.current) setError(errorText(error));
+      if (mounted.current)
+        setPreferenceStatus({ message: errorText(error), error: true });
     } finally {
+      preferenceLock.current = false;
       if (mounted.current) setSavingPreference(false);
     }
+  }
+  function scrollToResult(event: LayoutChangeEvent) {
+    scroll.current?.scrollTo({
+      y: Math.max(0, event.nativeEvent.layout.y - 20),
+      animated: !reducedMotion,
+    });
   }
   return (
     <Screen title="Solace Moments" back={app.back} scrollRef={scroll}>
@@ -288,21 +370,39 @@ export function MomentsScreen() {
           </Pressable>
         ))}
       </View>
-      <AppText variant="heading" style={{ marginTop: 26, marginBottom: 13 }}>
-        Choose your space
-      </AppText>
-      <EnvironmentPicker
+      <EnvironmentOptions
         value={environment}
-        onChange={setEnvironment}
-        disabled={loading}
-      />
+        onChange={(value) => {
+          setEnvironment(value);
+          setPreferenceStatus(null);
+        }}
+        disabled={loading || savingPreference}
+      >
+        <Button
+          title={
+            preference?.environment === environment
+              ? "Preferred space saved"
+              : "Remember this space"
+          }
+          disabled={loading || preference?.environment === environment}
+          loading={savingPreference}
+          variant="ghost"
+          onPress={saveEnvironment}
+          style={{ marginTop: 4 }}
+        />
+        {preferenceStatus && (
+          <Notice error={preferenceStatus.error}>
+            {preferenceStatus.message}
+          </Notice>
+        )}
+      </EnvironmentOptions>
       <Button
         title={loading ? "Preparing your Moment…" : "Create my Moment"}
         onPress={generate}
         loading={loading}
         disabled={!feeling.trim()}
         icon="sparkles-outline"
-        style={{ marginTop: 24 }}
+        style={{ marginTop: 12 }}
       />
       <AppText variant="caption" color={colors.muted} style={{ marginTop: 10 }}>
         This uses what you share here. Approved preferences are used only with
@@ -311,24 +411,21 @@ export function MomentsScreen() {
       {!!error && <Notice error>{error}</Notice>}
       {!!notice && <Notice>{notice}</Notice>}
       {result?.support && (
-        <Card style={{ marginTop: 18 }}>
-          <AppText variant="heading">A person can help right now.</AppText>
-          <AppText style={{ marginVertical: 13 }}>{result.message}</AppText>
-          <Button
-            title="Find human support"
-            onPress={() => app.navigate("support")}
-          />
-        </Card>
+        <View onLayout={scrollToResult} style={{ marginTop: 18 }}>
+          <Card>
+            <AppText variant="heading">A person can help right now.</AppText>
+            <AppText style={{ marginVertical: 13 }}>{result.message}</AppText>
+            <Button
+              title="Find human support"
+              onPress={() => app.navigate("support")}
+            />
+          </Card>
+        </View>
       )}
-      {result?.activity && (
+      {result?.activity && !result.support && (
         <View
           key={result.activity.id}
-          onLayout={(event) =>
-            scroll.current?.scrollTo({
-              y: Math.max(0, event.nativeEvent.layout.y - 20),
-              animated: !reducedMotion,
-            })
-          }
+          onLayout={scrollToResult}
           style={{
             marginTop: 27,
             paddingTop: 24,
@@ -394,33 +491,11 @@ export function MomentsScreen() {
           borderTopColor: colors.border,
         }}
       >
-        <Row>
-          <Icon name="leaf-outline" color={colors.accent} />
-          <View style={{ flex: 1 }}>
-            <AppText variant="label">Keep a favorite space</AppText>
-            <AppText variant="caption" color={colors.muted}>
-              Your environment stays yours to choose.
-            </AppText>
-          </View>
-        </Row>
         <Button
-          title={
-            preference?.environment === environment
-              ? "Preferred space saved"
-              : "Remember this environment"
-          }
-          disabled={preference?.environment === environment}
-          loading={savingPreference}
-          variant="secondary"
-          onPress={saveEnvironment}
-          style={{ marginTop: 13 }}
-        />
-        <Button
-          title="Browse all practices & your toolkit"
+          title="Browse practices and your toolkit"
           variant="ghost"
           icon="compass-outline"
           onPress={() => app.navigate("explore")}
-          style={{ marginTop: 12 }}
         />
       </View>
     </Screen>
@@ -430,7 +505,19 @@ export function MomentsScreen() {
 export function MomentPlayerScreen() {
   const app = useApp();
   const activity = app.params?.activity;
-  if (!isPlayableMoment(activity))
+  const playable = isPlayableMoment(activity);
+  useEffect(() => {
+    if (playable) return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        app.back();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [playable, app.back]);
+  if (!playable)
     return (
       <Screen title="Solace Moment" back={app.back}>
         <AppText variant="title">Let's make a new Moment.</AppText>
@@ -477,6 +564,7 @@ function PlayableMoment({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const clock = useRef(emptyClock());
+  const resumeAfterExit = useRef(false);
   const finishedAt = useRef<string | null>(null);
   const saveLock = useRef(false);
   const saveSnapshot = useRef<Item | null>(null);
@@ -506,12 +594,22 @@ function PlayableMoment({
     setStarted(true);
     setRunning(true);
   }
+  function dismissExit() {
+    setExitConfirmation(false);
+    if (resumeAfterExit.current && !finished) resume();
+    resumeAfterExit.current = false;
+  }
   function leave() {
     if (saveLock.current) return;
+    if (exitConfirmation) {
+      dismissExit();
+      return;
+    }
     if (!started || savedSession) {
       app.back();
       return;
     }
+    resumeAfterExit.current = clock.current.runningSince !== null;
     pause();
     setExitConfirmation(true);
   }
@@ -544,7 +642,7 @@ function PlayableMoment({
       subscription.remove();
       hardwareBack.remove();
     };
-  }, [started, finished, savedSession]);
+  }, [started, finished, savedSession, exitConfirmation]);
   async function save() {
     if (saveLock.current || !complete) return;
     saveLock.current = true;
@@ -709,21 +807,15 @@ function PlayableMoment({
                 ? " · Breathe naturally whenever you prefer."
                 : " · Take only what feels comfortable."}
             </AppText>
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={{ marginTop: 18, marginBottom: 12 }}
-            >
-              {ENVIRONMENTS.find((item) => item.id === environment)?.sound} ·
-              original synthesized ambience
-            </AppText>
-            <EnvironmentPicker
-              value={environment}
-              onChange={(value) => {
-                pause();
-                setEnvironment(value);
-              }}
-            />
+            <EnvironmentOptions value={environment} onChange={setEnvironment}>
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 8 }}
+              >
+                {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
+              </AppText>
+            </EnvironmentOptions>
             {!!activity.reflectionPrompts.length && (
               <View style={{ marginTop: 24 }}>
                 <AppText variant="label">A thought to sit with</AppText>
@@ -903,11 +995,14 @@ function PlayableMoment({
                 : "Your pause is stopped. Leaving won't record this as a completed Moment."}
             </AppText>
             <Button
-              title={finished ? "Keep my Moment" : "Keep going"}
-              onPress={() => {
-                setExitConfirmation(false);
-                if (!finished) resume();
-              }}
+              title={
+                finished
+                  ? "Keep my Moment"
+                  : resumeAfterExit.current
+                    ? "Keep going"
+                    : "Return to Moment"
+              }
+              onPress={dismissExit}
             />
             <Button
               title="Leave without saving"

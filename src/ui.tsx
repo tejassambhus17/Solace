@@ -93,7 +93,7 @@ export function Screen({
         {
           paddingHorizontal: 24,
           paddingTop: 18,
-          paddingBottom: 32 + navigationInset,
+          paddingBottom: 32 + (scroll ? 0 : navigationInset),
         },
         style,
       ]}
@@ -115,7 +115,13 @@ export function Screen({
               <Icon name="arrow-back" size={23} />
             </Pressable>
           )}
-          <AppText variant="heading">{title}</AppText>
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={{ flexShrink: 1 }}
+          >
+            {title}
+          </AppText>
         </Row>
       )}
       {children}
@@ -129,6 +135,9 @@ export function Screen({
       {scroll ? (
         <ScrollView
           ref={scrollRef}
+          style={
+            navigationInset ? { marginBottom: navigationInset } : undefined
+          }
           onContentSizeChange={onContentSizeChange}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -246,11 +255,7 @@ export function Button({
         {
           borderRadius: 30,
           backgroundColor:
-            variant === "primary"
-              ? colors.primary
-              : variant === "secondary"
-                ? "transparent"
-                : "transparent",
+            variant === "primary" ? colors.primary : "transparent",
           borderWidth: variant === "secondary" ? 1 : 0,
           borderColor: colors.border,
           paddingHorizontal: 20,
@@ -268,7 +273,10 @@ export function Button({
       ) : (
         <Row style={{ justifyContent: "center" }}>
           {icon && <Icon name={icon} color={fg} size={18} />}
-          <AppText variant="label" style={{ color: fg, textAlign: "center" }}>
+          <AppText
+            variant="label"
+            style={{ color: fg, textAlign: "center", flexShrink: 1 }}
+          >
             {title}
           </AppText>
         </Row>

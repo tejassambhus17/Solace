@@ -21,7 +21,9 @@ An account can save and reopen private records; conversations retain context; su
 
 ## Platform
 
-adaptive — React Native with Expo for iOS and Android. Web is a preview of the same source, not evidence of native installation, permission behavior or OS material rendering.
+adaptive
+
+React Native with Expo serves iOS and Android. The web preview shares the same source. Verify installation, permissions, and OS materials on native devices.
 
 ## Connected Moments experience
 

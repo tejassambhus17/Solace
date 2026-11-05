@@ -57,14 +57,10 @@ export class VoiceTurn {
       if (!this.current(version)) return;
       this.publish("listening");
     } catch {
-      if (this.current(version)) {
-        await this.cancel();
-        if (this.current(version + 1))
-          this.publish(
-            "idle",
-            "Recording could not start. Try again, or type your message.",
-          );
-      }
+      if (this.current(version))
+        await this.cancel(
+          "Recording could not start. Try again, or type your message.",
+        );
     }
   }
   async stop() {
@@ -88,16 +84,12 @@ export class VoiceTurn {
       this.audio = audio;
       await this.convert(version);
     } catch (error) {
-      if (this.current(version)) {
-        await this.cancel();
-        if (this.current(version + 1))
-          this.publish(
-            "idle",
-            error instanceof Error
-              ? error.message
-              : "Could not read the recording. Please try again.",
-          );
-      }
+      if (this.current(version))
+        await this.cancel(
+          error instanceof Error
+            ? error.message
+            : "Could not read the recording. Please try again.",
+        );
     }
   }
   async retry() {
@@ -129,7 +121,7 @@ export class VoiceTurn {
   get canRetry() {
     return !!this.audio && this.state === "idle";
   }
-  cancel(): Promise<void> {
+  cancel(message = ""): Promise<void> {
     if (this.cancelling) return this.cancelling;
     const version = ++this.version;
     this.audio = null;
@@ -139,7 +131,7 @@ export class VoiceTurn {
     this.cancelling = (async () => {
       await Promise.allSettled([starting, stopping]);
       await this.io.cancel().catch(() => {});
-      if (this.current(version)) this.publish("idle");
+      if (this.current(version)) this.publish("idle", message);
     })().finally(() => {
       this.cancelling = null;
     });

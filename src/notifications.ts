@@ -23,6 +23,18 @@ export const reminderDestination = (type: string) =>
 export async function scheduleReminder(
   reminder: ReminderInput,
 ): Promise<{ ids: string[]; permission: string }> {
+  const generation = reminderGeneration;
+  await restorationTail;
+  if (generation !== reminderGeneration)
+    throw new Error(
+      "Your session changed. Save the reminder again in the current account.",
+    );
+  return scheduleDeviceReminder(reminder);
+}
+
+async function scheduleDeviceReminder(
+  reminder: ReminderInput,
+): Promise<{ ids: string[]; permission: string }> {
   if (Platform.OS === "web") return { ids: [], permission: "web-preview" };
   if (!reminder.enabled) return { ids: [], permission: "disabled" };
   const generation = reminderGeneration;
@@ -95,6 +107,12 @@ export async function cancelReminders(ids: string[] = []) {
 let reminderGeneration = 0;
 let cancellationTail: Promise<void> = Promise.resolve();
 let mapWriteTail: Promise<void> = Promise.resolve();
+let restorationTail: Promise<void> = Promise.resolve();
+function writeScheduleMap(update: () => Promise<void>) {
+  const write = mapWriteTail.then(update);
+  mapWriteTail = write.catch(() => {});
+  return write;
+}
 export async function cancelAllReminders() {
   const generation = ++reminderGeneration;
   if (Platform.OS !== "web") {
@@ -107,27 +125,60 @@ export async function cancelAllReminders() {
   return generation;
 }
 const localKey = (userId: string) => `solace.device-reminders.${userId}`;
+async function readScheduleMap(
+  userId: string,
+): Promise<Record<string, string[]>> {
+  const value = await AsyncStorage.getItem(localKey(userId));
+  if (value) {
+    try {
+      const map = JSON.parse(value);
+      if (map && typeof map === "object" && !Array.isArray(map))
+        return Object.fromEntries(
+          Object.entries(map).filter(
+            (entry): entry is [string, string[]] =>
+              Array.isArray(entry[1]) &&
+              entry[1].every((id) => typeof id === "string"),
+          ),
+        );
+    } catch {}
+  }
+  return {};
+}
 export async function deviceReminderIds(
   userId: string,
   id: string,
 ): Promise<string[]> {
-  const map = JSON.parse(
-    (await AsyncStorage.getItem(localKey(userId))) || "{}",
-  );
-  return map[id] || [];
+  await restorationTail;
+  await mapWriteTail;
+  const map = await readScheduleMap(userId);
+  return Object.hasOwn(map, id) ? map[id] : [];
 }
 export async function rememberDeviceSchedule(
   userId: string,
   id: string,
   ids: string[],
 ) {
-  const map = JSON.parse(
-    (await AsyncStorage.getItem(localKey(userId))) || "{}",
-  );
-  map[id] = ids;
-  await AsyncStorage.setItem(localKey(userId), JSON.stringify(map));
+  const generation = reminderGeneration;
+  await restorationTail;
+  await writeScheduleMap(async () => {
+    const map = { ...(await readScheduleMap(userId)), [id]: ids };
+    if (generation !== reminderGeneration)
+      throw new Error(
+        "Your session changed. Save the reminder again in the current account.",
+      );
+    if (!ids.length) delete map[id];
+    if (Object.keys(map).length)
+      await AsyncStorage.setItem(localKey(userId), JSON.stringify(map));
+    else await AsyncStorage.removeItem(localKey(userId));
+  });
 }
-export async function restoreDeviceReminders(userId: string, reminders: any[]) {
+export function restoreDeviceReminders(userId: string, reminders: any[]) {
+  const restore = restoreSchedules(userId, reminders);
+  restorationTail = restore.catch(() => {});
+  return restore;
+}
+
+async function restoreSchedules(userId: string, reminders: any[]) {
   if (Platform.OS === "web") return;
   // Schedules belong to the signed-in account and this device, not IDs copied from another phone.
   const generation = await cancelAllReminders();
@@ -135,15 +186,12 @@ export async function restoreDeviceReminders(userId: string, reminders: any[]) {
   if (!isCurrent()) return;
   const map: Record<string, string[]> = {};
   const createdIds: string[] = [];
-  const writeMapIfCurrent = async (value: string | null) => {
-    const write = mapWriteTail.then(async () => {
+  const writeMapIfCurrent = (value: string | null) =>
+    writeScheduleMap(async () => {
       if (!isCurrent()) return;
       if (value === null) await AsyncStorage.removeItem(localKey(userId));
       else await AsyncStorage.setItem(localKey(userId), value);
     });
-    mapWriteTail = write.catch(() => {});
-    await write;
-  };
   try {
     const permission = await Notifications.getPermissionsAsync();
     if (!isCurrent()) return;
@@ -157,7 +205,7 @@ export async function restoreDeviceReminders(userId: string, reminders: any[]) {
         return;
       }
       if (!reminder.enabled) continue;
-      const result = await scheduleReminder(reminder);
+      const result = await scheduleDeviceReminder(reminder);
       createdIds.push(...result.ids);
       if (!isCurrent()) {
         await cancelReminders(createdIds);
@@ -217,6 +265,14 @@ export async function testNotification() {
     assertCurrent();
   }
 }
+const handledResponses = new Set<string>();
+const responseKey = (response: Notifications.NotificationResponse) =>
+  JSON.stringify([
+    response.notification.request.identifier,
+    response.notification.date,
+    response.actionIdentifier,
+  ]);
+
 export function subscribeNotificationNavigation(
   navigate: (route: string) => void,
 ) {
@@ -226,10 +282,25 @@ export function subscribeNotificationNavigation(
     if (!active) return;
     const screen = response.notification.request.content.data?.screen;
     if (
-      typeof screen === "string" &&
-      Object.values(destinations).includes(screen)
+      typeof screen !== "string" ||
+      !Object.values(destinations).includes(screen)
     )
-      navigate(screen);
+      return;
+    const key = responseKey(response);
+    if (handledResponses.has(key)) return;
+    handledResponses.add(key);
+    if (handledResponses.size > 32) {
+      const oldest = handledResponses.values().next().value;
+      if (oldest !== undefined) handledResponses.delete(oldest);
+    }
+    navigate(screen);
+    try {
+      const last = Notifications.getLastNotificationResponse();
+      if (last && responseKey(last) === key)
+        Notifications.clearLastNotificationResponse();
+    } catch {
+      // In-memory deduplication still works when the native cache is unavailable.
+    }
   };
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -241,11 +312,11 @@ export function subscribeNotificationNavigation(
   });
   const listener =
     Notifications.addNotificationResponseReceivedListener(handler);
-  Notifications.getLastNotificationResponseAsync()
-    .then((response) => {
-      if (response) handler(response);
-    })
-    .catch(() => {});
+  let last: Notifications.NotificationResponse | null = null;
+  try {
+    last = Notifications.getLastNotificationResponse();
+  } catch {}
+  if (last) handler(last);
   return () => {
     active = false;
     listener.remove();

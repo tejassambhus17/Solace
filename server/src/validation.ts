@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { momentSchema, environments } from "./moments.js";
+import { MESSAGE_MAX_LENGTH } from "./ai.js";
 
 export const collections = [
   "checkins",
@@ -56,6 +57,7 @@ export const registerSchema = z.object({
   password: z.string().min(8).max(128),
 });
 export const loginSchema = registerSchema.omit({ name: true });
+export const conversationTitle = z.string().trim().min(1).max(160);
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
   preferences: base
     .extend({
@@ -106,13 +108,13 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
     contextResetMessageCount: z.number().int().min(0).max(200).optional(),
     contextResetAt: isoDate.optional(),
     contextResetId: idSchema.optional(),
-    title: z.string().trim().min(1).max(160).optional(),
+    title: conversationTitle.optional(),
     messages: z
       .array(
         z.object({
           id: idSchema.optional(),
           role: z.enum(["user", "assistant"]),
-          content: z.string().min(1).max(10000),
+          content: z.string().min(1).max(MESSAGE_MAX_LENGTH),
           createdAt: z.string().optional(),
           provider: z.enum(["live", "offline"]).optional(),
           action: z

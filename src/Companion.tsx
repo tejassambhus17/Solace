@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Easing, Image, View } from "react-native";
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  Image,
+  Platform,
+  View,
+} from "react-native";
 import { useTheme } from "./theme";
 
 export type CompanionState =
@@ -62,7 +69,7 @@ export function Companion({
         toValue: Math.max(0, Math.min(1, breathingProgress)),
         duration: 240,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== "web",
       });
       animation.start();
       return () => animation.stop();
@@ -83,7 +90,8 @@ export function Companion({
         toValue: 1,
         duration,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== "web",
+        isInteraction: false,
       }),
       ...(state === "breathing" && breathing?.hold
         ? [Animated.delay(breathing.hold * 1000)]
@@ -93,7 +101,8 @@ export function Companion({
         duration:
           state === "breathing" ? 1000 * (breathing?.exhale || 6) : duration,
         easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== "web",
+        isInteraction: false,
       }),
     ]);
     const animation = state === "happy" ? cycle : Animated.loop(cycle);

@@ -1,3 +1,6 @@
+import { readProviderText } from "./provider-response.js";
+
+export const MESSAGE_MAX_LENGTH = 10000;
 export type Message = {
   id: string;
   role: "user" | "assistant";
@@ -146,28 +149,13 @@ export async function getReply(
     // rather than a misleading database/save failure or a silent fallback.
     throw new Error("AI_UNAVAILABLE");
   }
-  if (!response.ok) throw new Error(`AI_PROVIDER_${response.status}`);
-  let json: {
-    output_text?: string;
-    output?: { type: string; content?: { type: string; text?: string }[] }[];
-  };
-  try {
-    json = await response.json();
-  } catch {
-    throw new Error("AI_INVALID_RESPONSE");
-  }
-  const reply =
-    (typeof json?.output_text === "string" ? json.output_text : undefined) ??
-    (Array.isArray(json?.output) ? json.output : [])
-      .flatMap((o) => (Array.isArray(o?.content) ? o.content : []))
-      .filter((c) => c?.type === "output_text" && typeof c.text === "string")
-      .map((c) => c.text)
-      .join("\n");
-  if (!reply?.trim()) throw new Error("AI_EMPTY_RESPONSE");
+  const reply = (await readProviderText(response)).trim();
+  if (!reply) throw new Error("AI_EMPTY_RESPONSE");
+  if (reply.length > MESSAGE_MAX_LENGTH) throw new Error("AI_INVALID_RESPONSE");
   const action: Action | undefined = /breath|pause|ground/i.test(reply)
     ? { type: "breathing", label: "Try a 60-second reset" }
     : /reflect|write|journal/i.test(reply)
       ? { type: "reflection", label: "Write a short reflection" }
       : undefined;
-  return { reply: reply.trim(), action, provider: "live" };
+  return { reply, action, provider: "live" };
 }

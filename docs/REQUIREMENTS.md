@@ -32,6 +32,16 @@ The user explicitly directed feature implementation to continue without question
 | PDF7–9 | Required architecture | React Native + Expo Android/iOS app, web preview from the same source, Node API and persistent SQLite; portable dual-lockfile setup | Types, server integration/process checks and exports recorded separately from native builds |
 | PDF9–10 | Final build and demo | EAS build configuration and release/demo instructions retained | New functional APK, physical-device testing, iOS verification, public HTTPS, real AI and final recording remain deferred release work |
 
+## Latest reliability and usability checks
+
+| Area | Hardening | Evidence |
+|---|---|---|
+| Signup and private state | Account creation rolls back if initial session creation fails. Account transitions protect local drafts and credentials from late writes. | Server integration and client lifecycle regressions. Browser signup and session restoration across API restart. |
+| Chat and support | Unchanged retry requests replay the saved turn within 24 hours. History edits preserve message provenance and privacy boundaries. The latest support reply includes a direct route to human help. | Account-scoped replay, concurrency, deletion and distress regressions. Local outage recovery and support navigation in the browser. |
+| Moments and Journey | Optional environment controls expand on demand. Changed feelings invalidate old previews. Canceling exit keeps a paused Moment paused. Calendar month and selected day stay in sync. | Focused helper tests and browser generation, pause, completion, feedback and calendar checks. |
+| Reminder preferences | Four-digit time input, clear edit/reset, explicit delete confirmation, serialized restore and edit, deduplicated tap routing. | Coordination tests and browser preference saving and editing. Native scheduling, delivery and tap acceptance remain separate. |
+| Preview and motion | Packaged web preview serves real audio MIME and byte ranges. Web motion uses its available driver, and mobile retains native animation. | Local HTTP smoke check, browser playback state and Expo exports. |
+
 ## Current exclusions and limits
 
 - No social feeds, public profiles, following, public posting or community messaging. The user's explicit scope resolves the PDF's unexplained social wording.

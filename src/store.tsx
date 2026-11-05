@@ -86,6 +86,15 @@ const apiConfiguration = resolveApiConfiguration({
 });
 export const API_URL = apiConfiguration.baseUrl || "";
 const TOKEN_KEY = "solace.session";
+const newChatRequestId = () => {
+  if (typeof globalThis.crypto?.randomUUID === "function")
+    return globalThis.crypto.randomUUID();
+  // This is an idempotency identifier scoped to an account, never a credential.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (digit) => {
+    const bits = Math.floor(Math.random() * 16);
+    return (digit === "x" ? bits : (bits & 3) | 8).toString(16);
+  });
+};
 const persist = {
   get: () =>
     Platform.OS === "web"
@@ -203,19 +212,26 @@ async function request(
     if (text) {
       try {
         body = JSON.parse(text);
-      } catch {
-        body = { error: text };
-      }
+      } catch {}
     }
     if (!response.ok) {
       const error = new Error(
-        body?.error ||
-          body?.message ||
+        (typeof body?.error === "string" && body.error) ||
+          (typeof body?.message === "string" && body.message) ||
           "Something went wrong. Please try again.",
       ) as Error & { status?: number };
       error.status = response.status;
       throw error;
     }
+    if (
+      response.status === 204 &&
+      (options.method === "DELETE" || path === "/auth/logout")
+    )
+      return null;
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      throw new Error(
+        "Solace returned an unexpected response. Please try again.",
+      );
     return body;
   } finally {
     clearTimeout(timer);
@@ -223,6 +239,7 @@ async function request(
 }
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const generation = useRef(0);
+  const accountTransition = useRef<number | null>(null);
   const owner = useRef<string | null>(null);
   const revision = useRef(0);
   const credentialWrites = useRef<Promise<void>>(Promise.resolve());
@@ -245,6 +262,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const editors = useRef<Record<string, EditorDraft>>({});
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushLock = useRef<Promise<void> | null>(null);
+  const discarding = useRef(new Set<string>());
   const retryWriting = useRef<
     Partial<
       Record<WritingCollection, { fingerprint: string; entry: PendingWrite }>
@@ -269,10 +287,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         "Your session changed. Please try again in the current account.",
       );
   };
+  const canUseAccount = (version: number) =>
+    version === generation.current && accountTransition.current !== version;
+  const assertActiveSession = (version: number) => {
+    assertSession(version);
+    if (!canUseAccount(version))
+      throw new Error(
+        "Wait for the current account change to finish and try again.",
+      );
+  };
+  const finishAccountTransition = (version: number) => {
+    if (accountTransition.current === version) accountTransition.current = null;
+    if (version === generation.current) setBusy(false);
+  };
   const [user, setUser] = useState<Item | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [data, setData] = useState<Data>(emptyData());
   const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
+  const chatAttempts = useRef(new Map<string, { id: string; text: string }>());
   const [editorDrafts, setEditorDrafts] = useState<Record<string, EditorDraft>>(
     {},
   );
@@ -322,7 +354,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const draftGeneration = generation.current;
   const setChatDraft = (key: string, text: string, expected?: string) => {
     // A late completion from an old account must never restore its private text.
-    if (draftGeneration !== generation.current) return;
+    if (!canUseAccount(draftGeneration)) return;
+    if (
+      expected === undefined &&
+      chatAttempts.current.get(key)?.text !== text.trim()
+    )
+      chatAttempts.current.delete(key);
     setChatDrafts((previous) => {
       if (expected !== undefined && previous[key] !== expected) return previous;
       if (text) return { ...previous, [key]: text };
@@ -336,7 +373,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     draft: EditorDraft | null,
     expected?: EditorDraft,
   ) => {
-    if (draftGeneration !== generation.current) return;
+    if (!canUseAccount(draftGeneration)) return;
     const previous = editors.current;
     const current = previous[key];
     if (
@@ -360,6 +397,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       Object.entries(next).filter(([draftKey]) => isProtectedDraft(draftKey)),
     );
     const persistDraft = async () => {
+      if (!canUseAccount(draftGeneration)) return;
       try {
         await vault.update(account, (snapshot) => ({
           ...snapshot,
@@ -412,8 +450,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     path: string,
     options: RequestInit,
     version: number,
+    allowAccountTransition = false,
   ) => {
-    assertSession(version);
+    if (allowAccountTransition) assertSession(version);
+    else assertActiveSession(version);
     if (!token) throw new Error("Please sign in again to continue.");
     try {
       return await request(path, token, options);
@@ -427,6 +467,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const startedAt = revision.current;
     const result = await request("/state", t);
     assertSession(version);
+    if (
+      typeof result?.user?.id !== "string" ||
+      !result.user.id ||
+      !result.data ||
+      typeof result.data !== "object" ||
+      Array.isArray(result.data) ||
+      Object.keys(emptyData()).some(
+        (key) => key in result.data && !Array.isArray(result.data[key]),
+      )
+    )
+      throw new Error(
+        "Solace could not read your saved space. Please try again.",
+      );
     owner.current = String(result.user.id);
     if (writingOwner.current !== owner.current)
       await restoreWriting(owner.current, version);
@@ -484,7 +537,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const retrySession = async () => {
     const version = draftGeneration;
-    assertSession(version);
+    assertActiveSession(version);
     setInitializing(true);
     try {
       const t = token || (await persist.get());
@@ -496,8 +549,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
   const authorize = async (path: string, values: Item) => {
-    assertSession(draftGeneration);
+    assertActiveSession(draftGeneration);
     const version = ++generation.current;
+    accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);
     setBusy(true);
@@ -508,16 +562,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify(values),
       });
       assertSession(version);
+      if (
+        typeof result?.token !== "string" ||
+        !result.token ||
+        typeof result.user?.id !== "string" ||
+        !result.user.id
+      )
+        throw new Error(
+          "Solace could not read your new session. Please try again.",
+        );
+      const sameAccount = owner.current === result.user.id;
+      if (!sameAccount) await clearWriting(owner.current);
+      assertSession(version);
       await writeCredential(result.token, version);
       assertSession(version);
-      const sameAccount = owner.current === String(result.user?.id);
       if (!sameAccount) {
-        await clearWriting(owner.current);
-        assertSession(version);
         writingOwner.current = null;
         retryWriting.current = {};
         publishPending([]);
         editors.current = {};
+        chatAttempts.current.clear();
         setChatDrafts({});
         setEditorDrafts({});
         setData(emptyData());
@@ -545,7 +609,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (version === generation.current) setError(m);
       throw e;
     } finally {
-      if (version === generation.current) setBusy(false);
+      finishAccountTransition(version);
     }
   };
   const signIn = (email: string, password: string) =>
@@ -555,57 +619,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     assertSession(draftGeneration);
     const version = ++generation.current;
+    accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);
     setBusy(true);
-    // Do not report logout complete if protected writing could not be erased.
     try {
-      await clearWriting(owner.current);
-    } catch (error) {
-      if (version === generation.current) {
-        setOfflineError(
-          "Protected writing could not be removed from this device. Please try signing out again.",
-        );
-        setBusy(false);
+      // Do not report logout complete if protected writing could not be erased.
+      try {
+        await clearWriting(owner.current);
+      } catch (error) {
+        if (version === generation.current)
+          setOfflineError(
+            "Protected writing could not be removed from this device. Please try signing out again.",
+          );
+        throw error;
       }
-      throw error;
-    }
-    assertSession(version);
-    try {
-      if (token) await request("/auth/logout", token, { method: "POST" });
-    } catch {}
-    if (version !== generation.current) return;
-    try {
-      await writeCredential(null, version);
-    } catch (error) {
-      if (version === generation.current) {
-        setOfflineError(
-          "This device could not clear its saved sign-in. Please try signing out again.",
-        );
-        setBusy(false);
+      assertSession(version);
+      try {
+        if (token) await request("/auth/logout", token, { method: "POST" });
+      } catch {}
+      if (version !== generation.current) return;
+      try {
+        await writeCredential(null, version);
+      } catch (error) {
+        if (version === generation.current)
+          setOfflineError(
+            "This device could not clear its saved sign-in. Please try signing out again.",
+          );
+        throw error;
       }
-      throw error;
+      assertSession(version);
+      owner.current = null;
+      writingOwner.current = null;
+      retryWriting.current = {};
+      publishPending([]);
+      editors.current = {};
+      setOfflineError(null);
+      setToken(null);
+      setUser(null);
+      setSessionError(null);
+      setSessionExpired(false);
+      setData(emptyData());
+      chatAttempts.current.clear();
+      setChatDrafts({});
+      setEditorDrafts({});
+      setStack([{ name: "today", params: {} }]);
+    } finally {
+      finishAccountTransition(version);
     }
-    assertSession(version);
-    owner.current = null;
-    writingOwner.current = null;
-    retryWriting.current = {};
-    publishPending([]);
-    editors.current = {};
-    setOfflineError(null);
-    setToken(null);
-    setUser(null);
-    setBusy(false);
-    setSessionError(null);
-    setSessionExpired(false);
-    setData(emptyData());
-    setChatDrafts({});
-    setEditorDrafts({});
-    setStack([{ name: "today", params: {} }]);
   };
   const refresh = async () => {
     const version = draftGeneration;
-    assertSession(version);
+    assertActiveSession(version);
     if (token) {
       try {
         await load(token, version);
@@ -655,7 +720,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const flushPendingWrites = async () => {
     const version = draftGeneration;
-    assertSession(version);
+    assertActiveSession(version);
     if (!token || !owner.current)
       throw new Error("Please sign in again to sync your writing.");
     if (flushLock.current) return flushLock.current;
@@ -666,6 +731,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         for (const entry of [...pending.current]) {
           assertSession(version);
+          if (discarding.current.has(entry.id)) continue;
           const saved = await postWriting(entry, version);
           assertSession(version);
           const snapshot = await vault.update(account, (current) => ({
@@ -706,28 +772,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const discardPendingWrite = async (id: string) => {
     const version = draftGeneration;
-    assertSession(version);
+    assertActiveSession(version);
     if (flushLock.current)
       throw new Error(
         "Please wait for syncing to finish before removing this entry.",
       );
     const account = owner.current;
     const entry = pending.current.find((item) => item.id === id);
-    if (!account || !entry) return;
-    const snapshot = await vault.update(account, (current) => ({
-      ...current,
-      pending: current.pending.filter((item) => item.id !== id),
-    }));
-    assertSession(version);
-    publishPending(snapshot.pending);
-    revision.current += 1;
-    setData((previous) => ({
-      ...previous,
-      [entry.collection]: previous[entry.collection].filter(
-        (item) => item.id !== id,
-      ),
-    }));
-    setOfflineError(null);
+    if (!account || !entry || discarding.current.has(id)) return;
+    discarding.current.add(id);
+    try {
+      const snapshot = await vault.update(account, (current) => ({
+        ...current,
+        pending: current.pending.filter((item) => item.id !== id),
+      }));
+      assertSession(version);
+      publishPending(snapshot.pending);
+      revision.current += 1;
+      setData((previous) => ({
+        ...previous,
+        [entry.collection]: previous[entry.collection].filter(
+          (item) => item.id !== id,
+        ),
+      }));
+      setOfflineError(null);
+    } finally {
+      discarding.current.delete(id);
+    }
   };
   const save = async (collection: Collection, record: Item) => {
     const version = draftGeneration;
@@ -740,7 +811,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Sync this device-saved entry before editing it.");
     if (!id && (collection === "checkins" || collection === "reflections")) {
       const account = owner.current;
-      assertSession(version);
+      assertActiveSession(version);
       if (!account)
         throw new Error("Please sign in again to save your writing.");
       const fields = writingRecord(collection, { ...record, id: "identity" });
@@ -840,17 +911,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     assertSession(version);
     revision.current += 1;
+    if (collection === "conversations") chatAttempts.current.delete(id);
     setData((previous) => {
       const next = {
         ...previous,
         [collection]: previous[collection].filter((record) => record.id !== id),
       };
       if (collection === "conversations" || collection === "sessions") {
-        next.memories = next.memories.filter((memory) =>
-          collection === "conversations"
-            ? memory.sourceConversationId !== id &&
-              !(memory.sourceType === "conversation" && memory.sourceId === id)
-            : !(memory.sourceType === "session" && memory.sourceId === id),
+        const sessionIds = new Set(
+          collection === "sessions"
+            ? [id]
+            : previous.sessions
+                .filter((session) => session.sourceConversationId === id)
+                .map((session) => session.id),
+        );
+        next.memories = next.memories.filter(
+          (memory) =>
+            !(
+              memory.sourceType === "session" && sessionIds.has(memory.sourceId)
+            ) &&
+            (collection !== "conversations" ||
+              (memory.sourceConversationId !== id &&
+                !(
+                  memory.sourceType === "conversation" && memory.sourceId === id
+                ))),
         );
       }
       return next;
@@ -865,16 +949,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const chat = async (text: string, conversationId?: string) => {
     const version = draftGeneration;
+    assertActiveSession(version);
     if (!token) throw new Error("Please sign in first.");
-    const result = await authenticatedRequest(
-      "/chat",
-      {
-        method: "POST",
-        body: JSON.stringify({ text, conversationId }),
-      },
-      version,
-    );
+    const key = conversationId || "new";
+    const previous = chatAttempts.current.get(key);
+    const attempt =
+      previous?.text === text ? previous : { text, id: newChatRequestId() };
+    chatAttempts.current.set(key, attempt);
+    const forgetAttempt = () => {
+      if (chatAttempts.current.get(key) === attempt)
+        chatAttempts.current.delete(key);
+    };
+    let result: any;
+    try {
+      result = await authenticatedRequest(
+        "/chat",
+        {
+          method: "POST",
+          body: JSON.stringify({ text, conversationId, requestId: attempt.id }),
+        },
+        version,
+      );
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (
+        status &&
+        status >= 400 &&
+        status < 500 &&
+        ![401, 408, 425, 429].includes(status)
+      )
+        forgetAttempt();
+      throw error;
+    }
     assertSession(version);
+    if (
+      typeof result?.conversation?.id !== "string" ||
+      !Array.isArray(result.conversation.messages)
+    )
+      throw new Error(
+        "Solace returned an unexpected reply. Please retry your message.",
+      );
+    forgetAttempt();
     revision.current += 1;
     setData((prev) => ({
       ...prev,
@@ -929,9 +1044,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUser(result.user);
   };
   const deleteAccount = async () => {
-    assertSession(draftGeneration);
+    assertActiveSession(draftGeneration);
     if (!token) throw new Error("Please sign in first.");
     const version = ++generation.current;
+    accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);
     setBusy(true);
@@ -954,7 +1070,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           (record) => !localIds.has(record.id!),
         ),
       }));
-      await authenticatedRequest("/account", { method: "DELETE" }, version);
+      await authenticatedRequest(
+        "/account",
+        { method: "DELETE" },
+        version,
+        true,
+      );
       assertSession(version);
       owner.current = null;
       writingOwner.current = null;
@@ -965,6 +1086,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setToken(null);
       setUser(null);
       setData(emptyData());
+      chatAttempts.current.clear();
       setChatDrafts({});
       setEditorDrafts({});
       setSessionExpired(false);
@@ -987,7 +1109,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
       throw error;
     } finally {
-      if (version === generation.current) setBusy(false);
+      finishAccountTransition(version);
     }
   };
   const exportData = async () => {
@@ -1032,7 +1154,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const account = owner.current;
     if (!account || !token) return;
     const protect = () => {
-      if (version !== generation.current) return;
+      if (!canUseAccount(version)) return;
       if (draftTimer.current) clearTimeout(draftTimer.current);
       draftTimer.current = null;
       const drafts = Object.fromEntries(

@@ -7,6 +7,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z, ZodError } from "zod";
 import { Store } from "./database.js";
 import {
@@ -20,13 +21,21 @@ import {
 import {
   collections,
   collectionSchema,
+  conversationTitle,
   idSchema,
   registerSchema,
   loginSchema,
   parseRecord,
   type Collection,
 } from "./validation.js";
-import { getReply, provider, type AIConfig, type Message } from "./ai.js";
+import {
+  getReply,
+  isUrgent,
+  provider,
+  type Action,
+  type AIConfig,
+  type Message,
+} from "./ai.js";
 import { AvatarError, prepareAvatar } from "./avatar.js";
 import { generateMoment, environments, type MomentMemory } from "./moments.js";
 import { calendarDay, weeklyFacts, weeklyReflection } from "./weekly.js";
@@ -34,6 +43,18 @@ import { transcribeAudio, voiceAvailable, audioTypes } from "./voice.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
+type ChatReceipt = {
+  conversation_id: string;
+  assistant_message_id: string;
+  source_conversation_id: string | null;
+};
+type StoredChatMessage = Message & {
+  action?: Action;
+  provider?: "live" | "offline";
+  support?: boolean;
+  safety?: boolean;
+};
+const CHAT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export type AppConfig = {
   store: Store;
   ai: AIConfig;
@@ -219,14 +240,13 @@ export function createApp(config: AppConfig) {
     Object.fromEntries(collections.map((c) => [c, list(owner, c)]));
   const issueToken = (id: string) => {
     const token = newToken();
-    store.transaction(() => {
-      store.run("DELETE FROM tokens WHERE expires_at < ?", [Date.now()]);
-      store.run("INSERT INTO tokens(hash,user_id,expires_at) VALUES(?,?,?)", [
-        tokenHash(token),
-        id,
-        Date.now() + 30 * 86400000,
-      ]);
-    });
+    const now = Date.now();
+    store.run("DELETE FROM tokens WHERE expires_at < ?", [now]);
+    store.run("INSERT INTO tokens(hash,user_id,expires_at) VALUES(?,?,?)", [
+      tokenHash(token),
+      id,
+      now + 30 * 86400000,
+    ]);
     return token;
   };
   app.get("/api/health", (_req, res) =>
@@ -253,13 +273,15 @@ export function createApp(config: AppConfig) {
         );
       const password = await hashPassword(input.password);
       const id = randomUUID();
+      let token: string;
       try {
-        store.transaction(() =>
+        token = store.transaction(() => {
           store.run(
             "INSERT INTO users(id,email,name,password,created_at) VALUES(?,?,?,?,?)",
             [id, input.email, input.name, password, new Date().toISOString()],
-          ),
-        );
+          );
+          return issueToken(id);
+        });
       } catch (error) {
         if (store.one("SELECT id FROM users WHERE email=?", [input.email]))
           return apiError(
@@ -271,9 +293,7 @@ export function createApp(config: AppConfig) {
         throw error;
       }
       const row = store.one<UserRow>("SELECT * FROM users WHERE id=?", [id])!;
-      return res
-        .status(201)
-        .json({ token: issueToken(id), user: publicUser(row) });
+      return res.status(201).json({ token, user: publicUser(row) });
     }),
   );
   app.post(
@@ -291,14 +311,22 @@ export function createApp(config: AppConfig) {
             input.password,
             "00112233445566778899aabbccddeeff:" + "0".repeat(128),
           );
-      if (!row || !valid)
+      const current =
+        row && valid
+          ? store.one<UserRow>(
+              "SELECT * FROM users WHERE id=? AND password=?",
+              [row.id, row.password],
+            )
+          : undefined;
+      if (!current)
         return apiError(
           res,
           401,
           "Email or password is incorrect.",
           "INVALID_CREDENTIALS",
         );
-      return res.json({ token: issueToken(row.id), user: publicUser(row) });
+      const token = store.transaction(() => issueToken(current.id));
+      return res.json({ token, user: publicUser(current) });
     }),
   );
   app.use("/api", (req: AuthRequest, res, next) => {
@@ -429,6 +457,7 @@ export function createApp(config: AppConfig) {
       delete parsed.contextResetMessageCount;
       delete parsed.contextResetAt;
       delete parsed.contextResetId;
+      parsed.conversationInstanceId = randomUUID();
     }
     const record: RecordData = {
       ...parsed,
@@ -495,18 +524,37 @@ export function createApp(config: AppConfig) {
     const existing = get(user(req).id, collection, id);
     if (!existing)
       return apiError(res, 404, "This item was not found.", "NOT_FOUND");
+    if (collection === "conversations") {
+      const { title, messages } = z
+        .object({
+          title: conversationTitle.optional(),
+          messages: z.unknown().optional(),
+        })
+        .parse(req.body);
+      if (
+        messages !== undefined &&
+        !isDeepStrictEqual(messages, existing.messages)
+      )
+        return apiError(
+          res,
+          409,
+          "Messages cannot be edited in a saved conversation.",
+          "CONVERSATION_HISTORY_LOCKED",
+        );
+      if (title === undefined) return res.json({ record: existing });
+      const record = {
+        ...existing,
+        title,
+        updatedAt: new Date().toISOString(),
+      };
+      store.transaction(() => put(user(req).id, collection, record));
+      return res.json({ record });
+    }
     const merged = parseRecord(collection, {
       ...existing,
       ...req.body,
       id: existing.id,
       createdAt: existing.createdAt,
-      ...(collection === "conversations"
-        ? {
-            contextResetMessageCount: existing.contextResetMessageCount,
-            contextResetAt: existing.contextResetAt,
-            contextResetId: existing.contextResetId,
-          }
-        : {}),
     });
     const record: RecordData = {
       ...merged,
@@ -645,6 +693,10 @@ export function createApp(config: AppConfig) {
         .strict()
         .parse(req.body);
       const owner = user(req).id;
+      if (isUrgent(input.feeling))
+        return res.json(
+          await generateMoment(config.ai, { ...input, memories: [] }),
+        );
       if (generationLocks.has(owner))
         return apiError(
           res,
@@ -834,7 +886,7 @@ export function createApp(config: AppConfig) {
       }
     }),
   );
-  const chatLocks = new Set<string>();
+  const chatLocks = new Map<string, string | undefined>();
   app.post(
     "/api/chat",
     asyncRoute(async (req, res) => {
@@ -842,45 +894,104 @@ export function createApp(config: AppConfig) {
         .object({
           text: z.string().trim().min(1).max(4000),
           conversationId: idSchema.optional(),
+          requestId: z
+            .uuid()
+            .transform((value) => value.toLowerCase())
+            .optional(),
         })
         .parse(req.body);
       const owner = user(req).id;
-      if (chatLocks.has(owner))
+      if (input.requestId) {
+        const receipt = store.one<ChatReceipt>(
+          "SELECT conversation_id,assistant_message_id,source_conversation_id FROM chat_requests WHERE user_id=? AND id=? AND expires_at>?",
+          [owner, input.requestId, Date.now()],
+        );
+        if (receipt) {
+          const conversation = get(
+            owner,
+            "conversations",
+            receipt.conversation_id,
+          );
+          const messages = (conversation?.messages ??
+            []) as StoredChatMessage[];
+          const index = messages.findIndex(
+            (message) => message.id === receipt.assistant_message_id,
+          );
+          const reply = messages[index];
+          const question = messages[index - 1];
+          if (!conversation || !reply || !question)
+            return apiError(
+              res,
+              404,
+              "This conversation was deleted.",
+              "NOT_FOUND",
+            );
+          if (
+            (input.conversationId ?? null) !== receipt.source_conversation_id ||
+            input.text !== question.content
+          )
+            return apiError(
+              res,
+              409,
+              "This retry belongs to a different message. Send your draft as a new message.",
+              "CHAT_REQUEST_CONFLICT",
+            );
+          return res.json({
+            conversation,
+            reply: reply.content,
+            action: reply.action,
+            provider: reply.provider,
+            support: reply.support,
+            safety: reply.safety,
+          });
+        }
+      }
+      const urgent = isUrgent(input.text);
+      const busy = chatLocks.has(owner);
+      if (
+        busy &&
+        (!urgent ||
+          (input.requestId && chatLocks.get(owner) === input.requestId))
+      )
         return apiError(
           res,
           409,
           "Please wait for the current reply before sending another message.",
           "CHAT_BUSY",
         );
-      const previous = input.conversationId
+      const requested = input.conversationId
         ? get(owner, "conversations", input.conversationId)
         : undefined;
-      if (input.conversationId && !previous)
+      if (input.conversationId && !requested && !urgent)
         return apiError(
           res,
           404,
           "This conversation was not found.",
           "NOT_FOUND",
         );
-      const history = (previous?.messages ?? []) as Message[];
-      const resetCount = Number(previous?.contextResetMessageCount) || 0;
-      const providerHistory = history.slice(
-        Math.max(0, Math.min(history.length, resetCount)),
-      );
-      if (
-        history.length >= 199 ||
-        history.reduce(
+      const requestedHistory = (requested?.messages ?? []) as Message[];
+      const full =
+        requestedHistory.length >= 199 ||
+        requestedHistory.reduce(
           (length, m) => length + m.content.length,
           input.text.length,
-        ) > 80000
-      )
+        ) > 80000;
+      if (full && !urgent)
         return apiError(
           res,
           400,
           "Please start a new conversation to continue.",
           "CONVERSATION_LIMIT",
         );
-      chatLocks.add(owner);
+      // Explicit distress uses the local support response even if an AI
+      // turn is pending or the selected conversation cannot accept new turns.
+      const previous = busy || full ? undefined : requested;
+      const history = previous ? requestedHistory : [];
+      const resetCount = Number(previous?.contextResetMessageCount) || 0;
+      const providerHistory = history.slice(
+        Math.max(0, Math.min(history.length, resetCount)),
+      );
+      if (!busy) chatLocks.set(owner, input.requestId);
       try {
         const chatPersonalization = (account: UserRow) =>
           account.personalization
@@ -896,14 +1007,15 @@ export function createApp(config: AppConfig) {
                   })),
               }
             : null;
-        const personalization = chatPersonalization(user(req));
+        const personalization = urgent ? null : chatPersonalization(user(req));
         const memories =
           personalization?.memories.map((memory) => memory.text) || [];
-        const context = user(req).personalization
-          ? list(owner, "checkins")
-              .slice(0, 3)
-              .map((c) => ({ mood: c.mood, tags: c.tags, date: c.createdAt }))
-          : [];
+        const context =
+          personalization?.context.map(({ mood, tags, date }) => ({
+            mood,
+            tags,
+            date,
+          })) ?? [];
         const reply = await getReply(config.ai, {
           text: input.text,
           name: user(req).name,
@@ -935,15 +1047,24 @@ export function createApp(config: AppConfig) {
           );
         // Metadata can change while the provider is working (for example a
         // history rename). Re-read it so this reply cannot restore an old title.
-        const current = input.conversationId
-          ? get(owner, "conversations", input.conversationId)
+        const current = previous
+          ? get(owner, "conversations", previous.id)
           : undefined;
-        if (input.conversationId && !current)
+        if (previous && !current)
           return apiError(
             res,
             404,
             "This conversation was deleted.",
             "NOT_FOUND",
+          );
+        if (
+          current?.conversationInstanceId !== previous?.conversationInstanceId
+        )
+          return apiError(
+            res,
+            409,
+            "This conversation was replaced while your reply was being prepared. Please start a new conversation.",
+            "CONVERSATION_CHANGED",
           );
         if (
           current &&
@@ -958,10 +1079,15 @@ export function createApp(config: AppConfig) {
             "CONTEXT_CHANGED",
           );
         const now = new Date().toISOString();
+        const assistantMessageId = randomUUID();
         const conversation = {
           ...current,
           id: current?.id ?? randomUUID(),
-          title: current?.title ?? input.text.slice(0, 60),
+          conversationInstanceId:
+            current?.conversationInstanceId ?? randomUUID(),
+          title:
+            current?.title ??
+            (urgent ? "Support right now" : input.text.slice(0, 60)),
           createdAt: current?.createdAt ?? now,
           updatedAt: now,
           messages: [
@@ -973,7 +1099,7 @@ export function createApp(config: AppConfig) {
               createdAt: now,
             },
             {
-              id: randomUUID(),
+              id: assistantMessageId,
               role: "assistant",
               content: reply.reply,
               createdAt: now,
@@ -984,10 +1110,32 @@ export function createApp(config: AppConfig) {
             },
           ],
         };
-        store.transaction(() => put(owner, "conversations", conversation));
+        store.transaction(() => {
+          put(owner, "conversations", conversation);
+          if (input.requestId) {
+            const savedAt = Date.now();
+            // Opaque receipts outlive conversation deletion briefly so a lost
+            // response cannot bring the deleted chat back on a retry.
+            store.run(
+              "DELETE FROM chat_requests WHERE user_id=? AND expires_at<=?",
+              [owner, savedAt],
+            );
+            store.run(
+              "INSERT INTO chat_requests(user_id,id,conversation_id,assistant_message_id,source_conversation_id,expires_at) VALUES(?,?,?,?,?,?)",
+              [
+                owner,
+                input.requestId,
+                conversation.id,
+                assistantMessageId,
+                input.conversationId ?? null,
+                savedAt + CHAT_RETRY_WINDOW_MS,
+              ],
+            );
+          }
+        });
         return res.json({ conversation, ...reply });
       } finally {
-        chatLocks.delete(owner);
+        if (!busy) chatLocks.delete(owner);
       }
     }),
   );
