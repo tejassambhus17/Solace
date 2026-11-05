@@ -21,12 +21,6 @@ const tabs = [
   { name: "today", title: "Today", icon: "home-outline", active: "home" },
   { name: "chat", title: "Solace", icon: "leaf-outline", active: "leaf" },
   {
-    name: "explore",
-    title: "Explore",
-    icon: "compass-outline",
-    active: "compass",
-  },
-  {
     name: "journey",
     title: "Journey",
     icon: "analytics-outline",

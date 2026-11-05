@@ -17,3 +17,16 @@ Build the full discussed experience: accounts and onboarding; personal home; con
 
 ## Success evidence
 An account can save and reopen private records; conversations retain context; suggestions launch working activities; feedback appears in Journey; preferences are inspectable and removable; reminders schedule and route to the right screen; the final APK works without a development server.
+
+
+## Platform
+
+adaptive — React Native with Expo for iOS and Android. Web is a preview of the same source, not evidence of native installation, permission behavior or OS material rendering.
+
+## Connected Moments experience
+
+Four main destinations are Today, Solace, Journey and Profile. Today offers the daily pause and a Moments entry. Solace can carry the current message into a Moment; its activity result can lead back to the saved conversation. The Moments library keeps the full practice/toolkit collection accessible without another main tab.
+
+A Moment contains validated activity data, a user-chosen environment and optional ambient sound. Completion uses actual foreground activity time, explicit saving and optional self-reported feedback. Memories require explicit approval and separate global personalization consent. Correcting/removing memories or disabling personalization resets future AI context while keeping saved history visible. Journey shows recorded calendar history, minutes, helpfulness, editable goals and gentle milestones; streaks start off and remain optional.
+
+Voice is turn based: explicit recording permission, stop, server transcription, transcript review, manual send and optional device speech playback. Built-in guidance remains available without a provider key and is visibly labeled. Voice transcription requires a configured provider and otherwise offers text fallback. External setup and device acceptance are deferred at the user's request; implementation work proceeds without those checks being misreported as passed.

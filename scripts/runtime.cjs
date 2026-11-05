@@ -50,6 +50,12 @@ async function main() {
     doctor: { args: [file("doctor.cjs"), ...rest] },
     tooling: { args: ["--test", file("test-tooling.cjs"), ...rest] },
     dev: { args: [file("dev.mjs"), ...rest] },
+    "native-config": {
+      args: ["--test", file("test-native-config.cjs"), ...rest],
+    },
+    moments: { args: ["--test", file("test-moments.cjs"), ...rest] },
+    voice: { args: ["--test", file("test-voice.cjs"), ...rest] },
+    progress: { args: ["--test", file("test-progress.cjs"), ...rest] },
     insights: { args: ["--test", file("test-insights.mjs"), ...rest] },
     routine: { args: ["--test", file("test-routine.mjs"), ...rest] },
     offline: { args: ["--test", file("test-offline.cjs"), ...rest] },

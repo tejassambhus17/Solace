@@ -35,6 +35,12 @@ import {
 } from "../notifications";
 
 const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const memoryCategories = [
+  ["preference", "Preference"],
+  ["activity", "Activities"],
+  ["goal", "Wellness goal"],
+  ["context", "Approved context"],
+] as const;
 const kinds = [
   ["checkin", "Check-in"],
   ["affirmation", "Affirmation"],
@@ -130,6 +136,14 @@ export default function ProfileScreen({ name }: { name: string }) {
   const [pending, setPending] = useState(false);
   const [preference, setPreference] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  const [memoryCategory, setMemoryCategory] = useState("preference");
+  const [memorySource, setMemorySource] = useState<{
+    sourceType?: "session" | "conversation";
+    sourceId?: string;
+    sourceConversationId?: string;
+  }>({});
+  const [clearMemories, setClearMemories] = useState(false);
+  const prefillIdentity = useRef("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [accountName, setAccountName] = useState(app.user?.name || "");
   const [deleteAccount, setDeleteAccount] = useState(false);
@@ -149,10 +163,36 @@ export default function ProfileScreen({ name }: { name: string }) {
     setMessage("");
     setError("");
     setDeleteId(null);
+    setClearMemories(false);
     setDeleteAccount(false);
     setLogoutConfirm(false);
     setDiscardWriteId(null);
   }, [name]);
+  useEffect(() => {
+    const suggested = app.params?.suggestedPreference;
+    const sourceType = app.params?.sourceType;
+    const sourceId = app.params?.sourceId;
+    if (name !== "memory" || typeof suggested !== "string" || !suggested.trim())
+      return;
+    const identity = `${app.user?.id}:${sourceType}:${sourceId}:${suggested}`;
+    if (prefillIdentity.current === identity) return;
+    prefillIdentity.current = identity;
+    setEditing(null);
+    setPreference(suggested.slice(0, 500));
+    setMemoryCategory("activity");
+    setMemorySource(
+      (sourceType === "session" || sourceType === "conversation") &&
+        typeof sourceId === "string"
+        ? { sourceType, sourceId }
+        : {},
+    );
+  }, [
+    name,
+    app.params?.suggestedPreference,
+    app.params?.sourceType,
+    app.params?.sourceId,
+    app.user?.id,
+  ]);
   async function perform(work: () => Promise<void>) {
     if (operationLock.current) return;
     operationLock.current = true;
@@ -438,19 +478,51 @@ export default function ProfileScreen({ name }: { name: string }) {
       </Screen>
     );
 
-  if (name === "memory")
+  if (name === "memory") {
+    const sourceFor = (item: Record<string, any>) => {
+      const session =
+        item.sourceType === "session"
+          ? app.data.sessions.find((record) => record.id === item.sourceId)
+          : undefined;
+      const conversation =
+        item.sourceType === "conversation" || item.sourceConversationId
+          ? app.data.conversations.find(
+              (record) =>
+                record.id === (item.sourceConversationId || item.sourceId),
+            )
+          : undefined;
+      return session
+        ? {
+            label: `Saved after ${session.title || session.activity?.title || "a Moment"}`,
+            route: "session-detail",
+            id: session.id,
+          }
+        : conversation
+          ? {
+              label: `From ${conversation.title || "a conversation you approved"}`,
+              route: "chat",
+              id: conversation.id,
+            }
+          : null;
+    };
     return (
       <Screen title="What Solace remembers" back={app.back}>
         {heading(
-          "You are in control",
-          "Save what you want Solace to remember. When enabled, approved preferences and recent check-ins provide context.",
+          "A little context. Your choice.",
+          "Only preferences you explicitly save belong here. You can correct them, remove them, or turn personalization off.",
         )}
-        <Card style={{ marginBottom: 20 }}>
+        <Card style={{ marginBottom: 22 }}>
           <Row>
             <View style={{ flex: 1 }}>
               <AppText variant="label">Use my approved preferences</AppText>
-              <AppText variant="caption">
-                You can turn this off at any time.
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 5 }}
+              >
+                {app.user?.personalization
+                  ? "Approved preferences may shape conversations and Moments. Suggestions name the preferences they use."
+                  : "Personalization is off. Saved preferences are kept for you but excluded from new personalized suggestions."}
               </AppText>
             </View>
             <Switch
@@ -462,74 +534,228 @@ export default function ProfileScreen({ name }: { name: string }) {
                 app.user?.personalization ? colors.primaryText : colors.muted
               }
               ios_backgroundColor={colors.surface2}
-              onValueChange={(v) =>
+              onValueChange={(value) =>
                 perform(async () => {
-                  await app.updateUser({ personalization: v });
+                  await app.updateUser({ personalization: value });
+                  setMessage(
+                    value
+                      ? "Personalization enabled. Only approved context is used."
+                      : "Personalization disabled for new suggestions and conversations.",
+                  );
                 })
               }
             />
           </Row>
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={{ marginTop: 14 }}
+          >
+            Editing or removing a preference, or turning personalization off,
+            resets the context used for future AI replies. Your saved history
+            stays visible.
+          </AppText>
         </Card>
-        <SectionTitle title="Approved preferences" />
+        <SectionTitle
+          title="Saved preferences"
+          subtitle={`${app.data.memories.length} ${app.data.memories.length === 1 ? "preference" : "preferences"} you control`}
+        />
         {app.data.memories.length === 0 && (
-          <Card>
-            <AppText>
-              No preferences saved yet. You can add one below, or save a useful
-              preference after a Moment.
+          <View style={{ paddingVertical: 16, gap: 8 }}>
+            <Icon name="leaf-outline" color={colors.muted} size={29} />
+            <AppText>No saved preferences yet.</AppText>
+            <AppText color={colors.muted}>
+              Try a simple preference, such as short breathing sessions or a
+              quieter environment. Solace never invents memories.
             </AppText>
-          </Card>
+          </View>
         )}
-        {app.data.memories.map((item) => (
-          <Card key={item.id} style={{ marginBottom: 10 }}>
-            <AppText>{item.text}</AppText>
-            <Row style={{ marginTop: 10 }}>
-              <Button
-                title="Edit"
-                variant="ghost"
-                disabled={pending}
-                onPress={() => {
-                  setEditing(item.id!);
-                  setPreference(item.text);
+        {app.data.memories.map((item) => {
+          const source = sourceFor(item);
+          return (
+            <View
+              key={item.id}
+              style={{
+                paddingVertical: 18,
+                borderBottomWidth: 0.75,
+                borderBottomColor: colors.border,
+              }}
+            >
+              <Row
+                style={{
+                  flexWrap: "wrap",
+                  justifyContent: "space-between",
+                  gap: 6,
                 }}
-              />
-              <Button
-                title="Delete"
-                variant="ghost"
-                disabled={pending}
-                onPress={() => setDeleteId(item.id!)}
-              />
-            </Row>
-            {deleteId === item.id && (
-              <View>
-                <AppText>
-                  Remove this preference from future conversations?
+              >
+                <AppText variant="caption" color={colors.muted}>
+                  {memoryCategories.find(
+                    ([value]) => value === item.category,
+                  )?.[1] || "Preference"}
                 </AppText>
-                <Row style={{ marginTop: 10 }}>
+                <AppText variant="caption" color={colors.muted}>
+                  {item.approved === false
+                    ? "Not approved · not used"
+                    : app.user?.personalization
+                      ? "Approved"
+                      : "Saved · personalization off"}
+                </AppText>
+              </Row>
+              <AppText style={{ marginTop: 7 }}>
+                {item.text || item.content || item.value}
+              </AppText>
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 8 }}
+              >
+                {source?.label ||
+                  (item.sourceType || item.sourceConversationId
+                    ? "Source no longer available"
+                    : "Added directly by you")}
+              </AppText>
+              <Row style={{ marginTop: 8, flexWrap: "wrap", gap: 5 }}>
+                <Button
+                  title="Edit"
+                  variant="ghost"
+                  disabled={pending}
+                  onPress={() => {
+                    setEditing(item.id!);
+                    setPreference(
+                      item.text || item.content || item.value || "",
+                    );
+                    setMemoryCategory(item.category || "preference");
+                    setMemorySource({
+                      ...(item.sourceType
+                        ? { sourceType: item.sourceType }
+                        : {}),
+                      ...(item.sourceId ? { sourceId: item.sourceId } : {}),
+                      ...(item.sourceConversationId
+                        ? { sourceConversationId: item.sourceConversationId }
+                        : {}),
+                    });
+                  }}
+                />
+                <Button
+                  title="Delete"
+                  variant="ghost"
+                  disabled={pending}
+                  onPress={() => setDeleteId(item.id!)}
+                />
+                {source && (
                   <Button
-                    title="Keep"
-                    variant="secondary"
+                    title="View source"
+                    variant="ghost"
                     disabled={pending}
-                    onPress={() => setDeleteId(null)}
+                    onPress={() =>
+                      app.navigate(source.route, { id: source.id })
+                    }
                   />
+                )}
+                {item.approved === false && (
                   <Button
-                    title="Remove preference"
+                    title="Approve"
+                    variant="ghost"
                     disabled={pending}
                     onPress={() =>
                       perform(async () => {
-                        await app.remove("memories", item.id!);
-                        setDeleteId(null);
+                        await app.save("memories", { ...item, approved: true });
+                        setMessage(
+                          "Preference approved. It is used only when personalization is enabled.",
+                        );
                       })
                     }
                   />
-                </Row>
-              </View>
-            )}
-          </Card>
-        ))}
-        <View style={{ marginTop: 20 }}>
-          <AppText variant="label">
-            {editing ? "Edit preference" : "Add a preference"}
-          </AppText>
+                )}
+              </Row>
+              {deleteId === item.id && (
+                <View style={{ marginTop: 12, gap: 10 }}>
+                  <AppText>
+                    Remove this saved preference from future personalization?
+                    The source activity or conversation stays in your history.
+                  </AppText>
+                  <Row style={{ flexWrap: "wrap" }}>
+                    <Button
+                      title="Keep"
+                      variant="secondary"
+                      disabled={pending}
+                      onPress={() => setDeleteId(null)}
+                    />
+                    <Button
+                      title="Remove preference"
+                      disabled={pending}
+                      onPress={() =>
+                        perform(async () => {
+                          await app.remove("memories", item.id!);
+                          setDeleteId(null);
+                          if (editing === item.id) {
+                            setEditing(null);
+                            setPreference("");
+                            setMemorySource({});
+                          }
+                          setMessage(
+                            "Preference removed from active personalization. Previously saved conversations and Moment instructions remain in your history.",
+                          );
+                        })
+                      }
+                    />
+                  </Row>
+                </View>
+              )}
+            </View>
+          );
+        })}
+        <View style={{ marginTop: 28 }}>
+          <SectionTitle
+            title={editing ? "Correct this preference" : "Add a preference"}
+            subtitle="Keep it general. Share only the context you want processed."
+          />
+          <Row style={{ flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+            {memoryCategories.map(([category, label]) => (
+              <Pressable
+                key={category}
+                accessibilityRole="button"
+                accessibilityLabel={`Memory category: ${label}`}
+                accessibilityState={{ selected: memoryCategory === category }}
+                disabled={pending}
+                onPress={() => setMemoryCategory(category)}
+                style={{
+                  minHeight: 44,
+                  borderRadius: 22,
+                  justifyContent: "center",
+                  paddingHorizontal: 14,
+                  backgroundColor:
+                    memoryCategory === category
+                      ? colors.primary
+                      : colors.surface2,
+                }}
+              >
+                <AppText
+                  variant="caption"
+                  color={
+                    memoryCategory === category
+                      ? colors.primaryText
+                      : colors.text
+                  }
+                >
+                  {label}
+                </AppText>
+              </Pressable>
+            ))}
+          </Row>
+          {!!memorySource.sourceId && (
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={{ marginBottom: 10 }}
+            >
+              Linked to the{" "}
+              {memorySource.sourceType === "session"
+                ? "Moment"
+                : "conversation"}{" "}
+              you chose. Review the wording before saving.
+            </AppText>
+          )}
           <Input
             accessibilityLabel="Preference"
             placeholder="For example: I prefer short grounding exercises"
@@ -537,37 +763,121 @@ export default function ProfileScreen({ name }: { name: string }) {
             value={preference}
             onChangeText={setPreference}
             maxLength={500}
-            style={{ marginVertical: 12 }}
+            editable={!pending}
+            style={{ marginBottom: 12 }}
           />
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={{ marginBottom: 14 }}
+          >
+            Saving explicitly approves this preference. It influences
+            suggestions only while personalization is enabled.
+          </AppText>
           <Button
             title={editing ? "Save changes" : "Save preference"}
             disabled={!preference.trim() || pending}
             onPress={() =>
               perform(async () => {
+                const existing = editing
+                  ? app.data.memories.find((item) => item.id === editing)
+                  : undefined;
                 await app.save("memories", {
+                  ...existing,
+                  ...memorySource,
                   ...(editing ? { id: editing } : {}),
                   text: preference.trim(),
+                  category: memoryCategory,
+                  approved: true,
                 });
                 setEditing(null);
                 setPreference("");
-                setMessage("Preference saved.");
+                setMemorySource({});
+                setMemoryCategory("preference");
+                setMessage(
+                  "Preference saved. You can change or remove it whenever you like.",
+                );
               })
             }
           />
-          {editing && (
+          {(editing || memorySource.sourceId) && (
             <Button
-              title="Cancel edit"
+              title={editing ? "Cancel edit" : "Clear suggestion"}
               variant="ghost"
+              disabled={pending}
               onPress={() => {
                 setEditing(null);
                 setPreference("");
+                setMemorySource({});
+                setMemoryCategory("preference");
               }}
             />
           )}
         </View>
+        {app.data.memories.length > 0 && (
+          <View
+            style={{
+              marginTop: 30,
+              paddingTop: 20,
+              borderTopWidth: 0.75,
+              borderTopColor: colors.border,
+            }}
+          >
+            {!clearMemories ? (
+              <Button
+                title="Clear all saved preferences…"
+                variant="ghost"
+                disabled={pending}
+                onPress={() => setClearMemories(true)}
+              />
+            ) : (
+              <View style={{ gap: 13 }}>
+                <AppText variant="label">Clear all saved preferences?</AppText>
+                <AppText>
+                  They will be removed from active personalization. Your
+                  conversation and activity history stays saved. This cannot be
+                  undone.
+                </AppText>
+                <Row style={{ flexWrap: "wrap" }}>
+                  <Button
+                    title="Keep preferences"
+                    variant="secondary"
+                    disabled={pending}
+                    onPress={() => setClearMemories(false)}
+                  />
+                  <Button
+                    title="Clear preferences"
+                    disabled={pending}
+                    onPress={() =>
+                      perform(async () => {
+                        const ids = app.data.memories.map((item) => item.id!);
+                        try {
+                          for (const id of ids)
+                            await app.remove("memories", id);
+                        } catch {
+                          throw new Error(
+                            "Some preferences could not be removed. Successfully removed preferences stay removed. Review the remaining list and try again.",
+                          );
+                        }
+                        setClearMemories(false);
+                        setEditing(null);
+                        setPreference("");
+                        setMemorySource({});
+                        setMessage(
+                          "All saved preferences were removed from active personalization. Previously saved conversations and activities remain in your history.",
+                        );
+                      })
+                    }
+                  />
+                </Row>
+              </View>
+            )}
+          </View>
+        )}
         {status}
       </Screen>
     );
+  }
 
   if (name === "reminders")
     return (

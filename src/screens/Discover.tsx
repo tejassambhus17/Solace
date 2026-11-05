@@ -265,13 +265,19 @@ export function TodayScreen() {
         >
           Your daily pause
         </AppText>
-        <AppText
-          variant="caption"
-          color={colors.muted}
-          style={{ fontSize: 11 }}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Explore Solace Moments"
+          onPress={() => app.navigate("moments")}
+          style={{ minHeight: 44, justifyContent: "center" }}
         >
-          {!next ? "Made time for you" : "At your pace"}
-        </AppText>
+          <Row style={{ gap: 4 }}>
+            <AppText variant="caption" color={colors.muted}>
+              Moments
+            </AppText>
+            <Icon name="arrow-forward" color={colors.muted} size={14} />
+          </Row>
+        </Pressable>
       </Row>
       <View
         style={{

@@ -1,37 +1,55 @@
 # Requirements and coverage
 
-Source: root 11-page PDF; reviewed guide narration and visible reference. "Implemented" means code exists, not necessarily externally/device verified. See VERIFICATION.md for actual evidence.
+Sources: the original 11-page hackathon PDF, approved botanical references, the user's master implementation brief and the subsequently supplied workspace instructions. **Implemented** means working code exists; **verified** requires the actual check recorded in [VERIFICATION.md](VERIFICATION.md). No JavaScript export or provider stub counts as an installed-device or real-provider test.
 
-| Source | Capability | Implementation | Verification boundary |
+## Current delivery scope
+
+The user explicitly directed feature implementation to continue without questions while deferring provider, hosting and device setup. Local authentication repair is retained; pending Mac/provider access does not block implementation. The current four-tab order is **Today, Solace, Journey, Profile**. Moments opens from Today or the Solace header, and its library preserves access to the earlier Explore tools. These choices supersede the historical five-tab descriptions below.
+
+| Source | Capability | Current implementation | Verification boundary |
 |---|---|---|---|
-| PDF2–3 | Splash, onboarding, signup/login | Core welcome, branded loading, forms, account API | Browser signup; native launch pending |
-| PDF3–4 | Personal home and simple navigation | Illustrated Today/daily pause + five focused tabs (latest user override) | Current browser evidence in VERIFICATION.md; native appearance pending |
-| PDF4–5 | Real contextual AI | Server Responses adapter, current chat context | Provider adapter stub tested; real key intentionally absent |
-| PDF5–6 | Retained history, new, continue, delete | Conversation API + history UI | Backend integration; browser continuity |
-| PDF5–6 | Consented personalized context | Approved memory UI, optional global consent, check-in context | Backend consent/source-deletion tests |
-| PDF5 | AI actions connect to activities | Action card → activity → feedback → conversation | Browser journey test |
-| PDF6–7 | Reminder preferences, timing, background, taps | Native local scheduling + server preferences | Browser preferences only; native delivery pending |
-| PDF7–9 | Required stack and backend/database | React Native + Expo, Node + SQLite | TypeScript, web/Android bundling, API tests |
-| PDF8 | Consistent visuals, transitions, feedback | Both themes, fonts, raster art, text states, breathing motion | Browser visual review; full native/a11y pending |
-| PDF3,7; video05:09 | Mood, affirmations, recommendations | Cohesive mood tray, stable daily affirmation entry, curated daily pause | API-backed saves and selector tests; latest browser evidence in VERIFICATION.md |
-| Video05:41–05:59 | Mood/anxiety/self-love assessments | Three four-question reflective flows + saved results | Pure logic tests; browser assessment |
-| Video06:03–06:06 | Guided breathing | 1–3min timer, named phases, pause/end, optional feedback | Browser timer; interruption code reviewed |
-| PDF5,7 | Reflection and self-care | Saved journal and guides | API validation + browser |
-| Video06:08–06:42 | Mindfulness, anxiety, low mood, self-esteem, sleep | Five guides, interactive checklist, completion | Browser guide |
-| Video06:15–06:30 | Nearby therapists/human help | External professional directory, country support directory | External URLs checked; no geolocation/booking claimed |
-| PDF5,7 | Plans and daily challenges | Editable 3-step plan and completion tracking | API-backed saves |
-| PDF3,7; video05:09 | Progress, streak, XP/level, milestones | Date-aware participation calculations and first/three-day check-in milestones | 7 pure regression tests |
-| User, latest override | Simple navigation; optional new tab; light/dark/system | Today, Solace, Explore, Journey, Profile; theme persistence | Browser checks recorded in VERIFICATION; native checks pending |
-| Product trust | Data export, memory removal, delete account | Profile + ownership scoped API | Backend integration tests |
-| PDF9–10 | APK, demo, later TestFlight | EAS APK profile, local Android build, release and demo checklist | Compilation-check APK produced; functional phone build, demo and TestFlight pending |
+| PDF2–3 / core | Splash, onboarding, accounts and sessions | Branded loading/welcome, signup/login/logout, server-validated sessions and recovery | Actual local browser auth/restart verified; native fresh installation and force-quit/relaunch pending |
+| PDF3–4 / workspace | Personal home and four main tabs | Botanical Today/daily pause, Solace, Journey and Profile; Moments and library as detail destinations | Current browser evidence in VERIFICATION.md; native navigation/materials/gestures pending |
+| PDF4–5 / core | Real contextual conversations | Server Responses adapter, bounded current conversation and consented context; explicitly labeled built-in companion | Adapter and failure/isolation tests plus actual built-in browser exchanges; real provider deferred |
+| PDF5–6 / core | Conversation history | Start new, search, rename, continue, delete; recent-conversation entry and unsent-text recovery | Server/provider-state regressions and actual browser continuity; native storage lifecycle pending |
+| Master 1 | Expressive companion | Reusable lightweight petal with idle, listening, thinking, speaking, celebration and breathing states driven by actual events; reduced-motion support | Source, lifecycle tests and browser activity states; native recording/playback animation correspondence pending |
+| Master 2 | Structured Solace Moments | Authenticated generation with schema-validated activity type/title/duration/steps, bounded breathing rhythm, prompts and environment; live/curated labels | Server schema/provider-transport/safety/isolation tests and curated browser generation; actual configured provider deferred |
+| Master 2 | Immersive activity player | Active-time progress, named steps, pause/resume, background pause, exit confirmation, environment/audio controls, completion, feedback, retryable persistence and optional explicit memory save | Player regressions and actual browser completion/pause/environment/ambience evidence; native interruption/audio pending |
+| Master 3 | Explainable consent-based memory | View/add/correct/category/approve/delete/clear, actual source links, global consent; suggested wording always needs explicit save; explanation identifies used approved memories | Server consent/deletion/race tests plus browser source-memory save/edit/consent; real-provider personalization evaluation pending |
+| Master 3 / privacy | Delete from active personalization | Conversation/source-session deletion cascades derived memories; memory edits/deletion and consent-off reset future AI history context while preserving visible/exportable conversations; stale-context replies rejected | Server privacy/isolation/race regressions; external provider retention is not claimed to be controlled by Solace |
+| Master 4 | Mood and activity Journey | Selectable monthly calendar/day history, completed-practice minutes, reflections, optional helpfulness, truthful empty states | Progress/weekly helper tests and actual browser Journey updates; native accessibility pending |
+| Master 4 | AI-assisted weekly reflection | Backend derives bounded weekly facts from saved records; live adapter or explicitly labeled recorded summary; no fabricated clinical patterns | Server facts/transport/change-race tests, local recorded summary browser flow; real AI output evaluation deferred |
+| Master 5 | Turn-based voice | Expo Audio permission/record/stop, bounded authenticated raw-audio transcription, explicit transcript review/manual message send, retries, text fallback and Expo Speech callbacks; Expo permission configuration regression checks | Lifecycle and provider-adapter tests; actual microphone, permission denial, device routing and TTS playback remain native/device checks |
+| Master 6 | Ambient environments | Forest Sanctuary, Ocean Calm and Twilight Sky, distinct lightweight scenes, purposeful motion, optional locally bundled original ambient loops and user preference | Browser switching and actual playback status observed; native sound/background/reduced-motion behavior pending |
+| Master 7 | Gentle progress | Persisted personal time goals with pause/resume, optional streaks and earned first-Moment/three-reflection/five-pause/seven-day milestones | Pure actual-record/goal/date tests and browser saved goal/milestone flow; no wellbeing or competitive score |
+| PDF3,7 | Mood, affirmations and daily recommendations | Mood tray, saved same-day state, curated daily pause/affirmation and explicit generated-Moment entry | API-backed saves, routine tests and browser flows; curated text is never labeled generated AI |
+| Video05:41–05:59 | Reflective assessments | Three four-question mood/anxiety/self-compassion flows and saved results | Existing pure logic and browser checks; not diagnostic instruments |
+| Video06:03–06:06 | Existing guided breathing/grounding | Timed breathing, optional five-senses grounding with skips/alternatives and honest incomplete counts | Existing tests/browser flows; native Back/background handling pending |
+| PDF5,7 / video | Reflection, resources and plans | Journaling, five guides, interactive resource completion, personal toolkit, editable plan, affirmations and small challenges | Existing API/browser/isolation/export/deletion coverage retained |
+| PDF6–7 / core | Scheduled reminders and tap routing | Private recurring local schedules, preference editing, cancellation and destination routing | Coordination tests/browser preference flow only; actual delivery/tap/denial/background checks pending |
+| User / privacy | Profile photos and writing recovery | Private bounded JPEG normalization, metadata removal, account export/delete; protected native drafts and bounded retry queue; web memory-only | Server photo/vault/provider tests and browser photo/offline recovery; native picker/secure-storage lifecycle pending |
+| Product trust | Account-scoped data and controls | Slow salted passwords, hashed tokens, server ownership, bounded input, export/deletion, honest provider labels | Integration and cross-account isolation regressions; production operations/security assessment separate |
+| PDF7–9 | Required architecture | React Native + Expo Android/iOS app, web preview from the same source, Node API and persistent SQLite; portable dual-lockfile setup | Types, server integration/process checks and exports recorded separately from native builds |
+| PDF9–10 | Final build and demo | EAS build configuration and release/demo instructions retained | New functional APK, physical-device testing, iOS verification, public HTTPS, real AI and final recording remain deferred release work |
 
-## Ambiguities and additional boundaries
-- PDF9's "follow, post, message" is undefined elsewhere. Social feed/follow was not inferred from this apparent leftover wording; ask organizers.
-- The PDF explicitly says existing wellness examples need not all be copied. The user asked for them, so this implementation includes the discussed categories.
-- "Self-love meter" is delivered as a non-diagnostic self-compassion reflection. XP measures participation, not emotional worth.
-- A custom animated mascot, voice, widgets and dynamic ambient worlds were earlier proposals, not PDF requirements. The approved petal has purposeful breathing animation.
-- Images are visual references with illustrative counts. The implementation calculates counts from actual account records.
-- AI key, public hosting, final native build and device testing remain required for full hackathon delivery.
+## Current exclusions and limits
+
+- No social feeds, public profiles, following, public posting or community messaging. The user's explicit scope resolves the PDF's unexplained social wording.
+- No diagnoses, treatment promises, invented therapist listings/numbers or clinical/compliance certification claims. Human support opens verified external directories rather than claiming an appointment was made.
+- No provider credential is included in public variables, client assets or source. Live chat/Moments/weekly output and voice transcription require private backend configuration and actual subsequent evaluation.
+- New audio/speech/native-material modules require a rebuilt native binary. The old compilation-check APK is unchanged and does not contain these features.
+- Web writing is tab-memory only, native writing is bounded/debounced and cold launch requires API session restoration. Unsynced entries do not earn account milestones.
+- SQL.js remains single-instance with full account snapshots; public HTTPS, backups, real-device performance/accessibility and final-build acceptance are separate from feature implementation.
+
+## Acceptance scenarios and evidence
+
+The current feature checkpoint has **193 passing regressions**; exact commands/results are in VERIFICATION.md. The master brief's 24 checks remain the acceptance checklist. Local browser signup/login/logout/session restoration, mood/history flows, saved Moment completion/feedback, source-memory save/edit, Journey updates, environment switching/ambient playback, goals and earned milestones have actual local evidence. Server integration and pure-state tests cover additional isolation, malformed input, failure, deletion and lifecycle branches. Exact runs and limits belong in VERIFICATION.md.
+
+Fresh native installation, native onboarding/restart, real provider responses, native microphone recording/playback, OS permission denial, scheduled/background notification delivery and notification-tap navigation must be checked on the rebuilt installed app. Android/iOS JavaScript exports do not close the Android/iOS native-build acceptance items. Mac simulator access, physical devices and service setup remain deferred by the user.
+
+## Earlier implementation notes (historical)
+
+The sections below preserve decisions and evidence from earlier 5 November passes. Their five-tab/curated-only/planned-feature descriptions record those earlier states. The current matrix and exclusions above supersede conflicting descriptions; original PDF and reference archives are unchanged.
 
 ## Earlier 5 November refinement review (historical)
 
@@ -74,7 +92,7 @@ Latest user direction: true black dark mode replaces the previous green directio
 
 The grounding sequence follows the five-senses structure described by [Hull University Teaching Hospitals NHS Trust](https://www.hey.nhs.uk/wp/wp-content/uploads/2023/02/HEY1318-2022-5-4-3-2-1-Grounding-Technique.pdf), with original app wording and optional alternatives/skips. It is a self-care option, not a treatment claim.
 
-## Daily pause, simpler navigation and private photos
+## Earlier daily pause, navigation and photos (historical)
 
 | User request | Implementation | Evidence boundary |
 |---|---|---|
@@ -88,9 +106,9 @@ The grounding sequence follows the five-senses structure described by [Hull Univ
 
 Production submission remains gated on real provider configuration, public HTTPS, a rebuilt installable APK, physical-device reminder tests and final demo. UI completion does not satisfy those external gates.
 
-## Current botanical home and matched dark-mode redesign
+## Earlier botanical home and matched dark mode (historical)
 
-This section and DESIGN.md supersede earlier visual descriptions above. The existing accounts, data/privacy controls, five-tab order and wellness capabilities are retained.
+This section records the preceding visual pass. The current matrix above supersedes its five-tab description; the original accounts, data/privacy controls and wellness capabilities remain.
 
 | User request / capability | Current implementation | Evidence boundary |
 |---|---|---|
@@ -108,9 +126,9 @@ The 88-test automated suite, client/server type checks and server build passed f
 
 Submission still requires live AI configuration/evaluation, public HTTPS hosting, a rebuilt installable APK tested on a physical device, verified native reminders and the final demo. Existing toolchain advisories and native navigation limitations remain recorded in VERIFICATION.md.
 
-## Master brief: foundation repair and deferred native checks
+## Authentication repair checkpoint (5 November, historical)
 
-The master brief requests Today, Solace, Moments, Journey, while the later workspace instructions preserve Today, Solace, Journey, Profile. Resolve that difference before a future navigation change. The current five-tab interface remains untouched during authentication repair. The user explicitly deferred Mac simulator access and prioritized authentication before real-provider configuration.
+At this checkpoint navigation was deliberately unchanged while authentication was repaired. The later explicit instruction to implement features with setup deferred supersedes that sequencing constraint. Current navigation is Today, Solace, Journey, Profile; Moments is a detail destination. The Mac/provider checks below remain unverified.
 
 | Requirement | Repair implementation | Verification boundary |
 |---|---|---|
@@ -119,7 +137,7 @@ The master brief requests Today, Solace, Moments, Journey, while the later works
 | Correct client API | Central validated public URL, platform development defaults, actionable dev diagnostics and HTTPS release guard | Pure config and real AppProvider regressions; simulator networking deferred |
 | Startup and persistence | Server-root private env/DB paths, ready signaling after API initialization, clear startup errors | Real child-process auth/history/restart tests; installed-client restart remains separate |
 | Real AI | Existing adapter retained; missing required key fails clearly in live mode | No configured key here; actual provider request deferred |
-| Advanced feature sequencing | Companion, generated Moments, voice/environments/insights/achievements tracked in implementation plan | Planned; no rendering-only or stub success claims |
+| Advanced feature sequencing at that checkpoint | Companion, generated Moments, voice/environments/insights/achievements were tracked as planned | They are now implemented as described in the current matrix; live/device checks remain separate |
 
 See [local repair commands](LOCAL_DEVELOPMENT.md), [milestones](IMPLEMENTATION_PLAN.md) and [executed verification](VERIFICATION.md).
 

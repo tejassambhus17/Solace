@@ -49,3 +49,14 @@ Root and server are separate lockfile installs. `npm run setup` installs both us
 The API anchors private dotenv and database paths to server/. It reserves its listener before opening SQL.js, serves HTTP 503 while initializing, and announces readiness only after the app is attached. Production starts compiled dist/index.js. SQL.js remains a single-instance persistence adapter; the busy-port protection is not a multi-replica design.
 
 `src/api-config.ts` validates explicit public URLs and development platform defaults. Invalid release configuration produces a configuration error before any fetch and is not queued as a transient offline write. Release clients require HTTPS and reject local loopback/emulator addresses. Actual deployment, iOS networking and native credential persistence remain separate verification gates.
+
+
+## Connected activity and voice feature boundary
+
+The browser-safe type contract is server/src/moment-contract.ts. The server validates generated activity structure, bounded prose/duration, breathing rhythm and internally consistent steps before returning it. The client validates navigation payloads again before playback. Only predefined activity types are rendered; model output is never executable UI. A client-stable completion identity and frozen payload allow safe save retries without duplicate achievements.
+
+New private routes are POST /api/moments/generate, POST /api/insights/weekly, GET /api/capabilities and POST /api/voice/transcribe. Voice receives bounded raw audio with an explicit audio Content-Type and sends multipart data only from the API to its configured provider. Source audio is not stored in the database. The client attempts to erase temporary native recordings after extraction; explicit transcription retry uses bounded memory until cancellation or component/account disposal.
+
+Chat/session/memory provenance is imposed by the server. Corrections, removal or consent withdrawal reset the context used for future replies, preserve visible historical messages and reject stale in-flight personalized work. Canonical session conversation links cannot be retargeted. Conversation removal also removes memories derived indirectly through its activities, while preserving actual activity history. Those historical sessions cannot seed a new memory from a deleted source.
+
+Audio components load their native implementations only when the required compiled modules exist; older clients receive text/quiet fallbacks. The Expo plugins are introspected to verify recording is not blocked by photo-picker settings and that background audio services remain disabled. Native hardware behavior is a separate acceptance layer.

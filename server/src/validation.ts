@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { momentSchema, environments } from "./moments.js";
 
 export const collections = [
   "checkins",
@@ -10,6 +11,8 @@ export const collections = [
   "reminders",
   "plans",
   "favorites",
+  "preferences",
+  "goals",
 ] as const;
 export type Collection = (typeof collections)[number];
 export const collectionSchema = z.enum(collections);
@@ -54,6 +57,21 @@ export const registerSchema = z.object({
 });
 export const loginSchema = registerSchema.omit({ name: true });
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
+  preferences: base
+    .extend({
+      id: z.literal("wellness"),
+      environment: z.enum(environments).optional(),
+      ambientEnabled: z.boolean().optional(),
+      streaksEnabled: z.boolean().optional(),
+    })
+    .strict(),
+  goals: base
+    .extend({
+      title: z.string().trim().min(1).max(120),
+      targetMinutesPerWeek: z.number().int().min(5).max(210),
+      active: z.boolean().default(true),
+    })
+    .strict(),
   favorites: base
     .extend({
       kind: z.enum(["resource", "breathing", "reflection", "grounding"]),
@@ -85,6 +103,9 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
     tags: z.array(z.string().max(40)).max(15).optional(),
   }),
   conversations: base.extend({
+    contextResetMessageCount: z.number().int().min(0).max(200).optional(),
+    contextResetAt: isoDate.optional(),
+    contextResetId: idSchema.optional(),
     title: z.string().trim().min(1).max(160).optional(),
     messages: z
       .array(
@@ -108,6 +129,10 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
       .optional(),
   }),
   sessions: base.extend({
+    kind: z.enum(["generated"]).optional(),
+    activity: momentSchema.optional(),
+    environment: z.enum(environments).optional(),
+    provider: z.enum(["live", "offline"]).optional(),
     type: shortText.optional(),
     title: shortText.optional(),
     resourceId: idSchema.optional(),
@@ -147,6 +172,7 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
       .optional(),
   }),
   memories: base.extend({
+    category: z.enum(["preference", "activity", "goal", "context"]).optional(),
     text: text.optional(),
     content: text.optional(),
     value: text.optional(),
@@ -222,6 +248,19 @@ export function parseRecord(collection: Collection, value: unknown) {
         code: "custom",
         path: ["text"],
         message: "Write a reflection before saving.",
+      },
+    ]);
+  }
+  if (
+    collection === "sessions" &&
+    parsed.kind === "generated" &&
+    !parsed.activity
+  ) {
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["activity"],
+        message: "A generated session needs its validated activity snapshot.",
       },
     ]);
   }

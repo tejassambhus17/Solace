@@ -22,10 +22,11 @@ import {
   AuthScreen,
   ChatScreen,
   HistoryScreen,
-  JourneyScreen,
   TodayScreen,
   ExploreScreen,
 } from "./src/screens/Core";
+import { JourneyScreen } from "./src/screens/Journey";
+import { MomentsScreen, MomentPlayerScreen } from "./src/screens/Moments";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
@@ -88,7 +89,7 @@ function Shell() {
     !!app.user &&
     !app.sessionExpired &&
     !keyboardOpen &&
-    !["breathing", "moment", "grounding"].includes(app.route);
+    !["breathing", "moment", "grounding", "moment-player"].includes(app.route);
   useEffect(() => {
     if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
@@ -107,7 +108,7 @@ function Shell() {
       !app.user ||
       app.sessionExpired ||
       !app.canGoBack ||
-      ["breathing", "moment", "grounding"].includes(app.route)
+      ["breathing", "moment", "grounding", "moment-player"].includes(app.route)
     )
       return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -152,6 +153,9 @@ function Shell() {
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey") content = <JourneyScreen />;
   else if (app.route === "explore") content = <ExploreScreen />;
+  else if (app.route === "moments") content = <MomentsScreen />;
+  else if (app.route === "moment-player")
+    content = <MomentPlayerScreen key={app.params?.activity?.id || "player"} />;
   else if (profileScreens.has(app.route))
     content = <ProfileScreen name={app.route} />;
   else if (wellnessScreens.has(app.route))

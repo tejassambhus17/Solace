@@ -1,58 +1,65 @@
-# Solace
+# Solace AI
 
-A warm mobile wellness companion built in React Native + Expo with a Node.js API and a persistent SQLite database. It connects check-ins, conversations, calming activities and reflection, with optional user-approved personalization.
+A personal wellness companion built with React Native + Expo, a Node.js API and persistent SQLite storage. Solace connects a check-in, a conversation, a useful Moment and a gentle reflection, with personalization that the user controls.
 
-## Backend setup and Mac simulator repair
+## Current implementation
 
-The app and server have separate lockfile installs. Run `npm run setup`, then `npm run doctor`; root-only npm ci does not install server/tsx. The setup uses the selected supported Node runtime, installs platform binaries and development tools, and builds the server. See [the Mac/local repair guide](docs/LOCAL_DEVELOPMENT.md) for the simulator URL, two-terminal startup and actual authentication/restart checks. No Docker is required.
+The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The four main tabs are **Today → Solace → Journey → Profile**. Moments opens from Today or the Solace header; its library also keeps the earlier Explore practices and tools available.
 
-The root public URL is for the client; credentials stay in server/.env. Blank public values use local defaults only in development. Release builds require a configured HTTPS API. Use `npm run export:web:preview` for a local static preview. The latest [implementation plan](docs/IMPLEMENTATION_PLAN.md) records the navigation requirements and sequential milestones; advanced work stays behind foundation acceptance. Local signup/login/logout, session restoration and conversation history across a full API/Expo restart now pass in the browser; 125 regressions pass after a clean install. Mac simulator and real-provider verification are deferred, not passed.
+The user explicitly asked to finish implementation while postponing provider, hosting and device setup. Those deferred setups no longer block feature coding. They remain verification and release work: an implemented adapter or a successful JavaScript export does not prove a real provider, installed native build or background reminder works. See [requirements](docs/REQUIREMENTS.md), [the implementation milestones](docs/IMPLEMENTATION_PLAN.md) and [actual verification results](docs/VERIFICATION.md).
 
-## Current status
+**Live AI is not configured in this checkout.** Curated Moments, recorded weekly summaries and built-in companion replies are clearly labeled. Voice transcription reports unavailable when the backend cannot provide it; typing remains available. The older `outputs/solace-build-validation.apk` is a compilation artifact with a development emulator endpoint. It does not contain the current feature implementation and is not a functional submission build.
 
-The app is implemented for Android/iOS through Expo, with a working local web preview of the same React Native source. Light/dark themes, accounts, saved conversations, wellness activities and profile controls are implemented. Native installation and device behavior remain to be verified. See [the requirements matrix](docs/REQUIREMENTS.md) and [verification record](docs/VERIFICATION.md) for exact coverage and evidence.
+## The daily experience
 
-**Live AI is not enabled in this checkout:** provider configuration is deferred while authentication repair is prioritized. The app labels its built-in companion responses. A real Responses API adapter is ready, but live-provider testing remains required. An Android compilation-check APK has been produced, but it is not a functional phone/submission build: it embeds the development emulator endpoint. A hosted HTTPS endpoint, rebuilt APK, device notification test, and submission video remain separate release steps. Hosting is deferred at the user’s request.
+Today keeps the botanical daily pause: a personal greeting, one mood tray, one illustrated next action, conversation continuity and a changing daily affirmation. Its three-step progress comes from saved check-ins, completed practices and reflections. The completed state keeps that progress and offers an optional breathing moment. There is no additional task to unlock and no implied clinical outcome.
 
-## Botanical home and dark-mode refinement
+The loved light theme remains blush-ivory and forest. Dark mode uses a black canvas, neutral graphite, warm ivory text, champagne actions and restrained lilac/peach/sage accents. Welcome, login, signup and Today have no upper-right profile shortcut. Typography and artwork follow [the existing design system](DESIGN.md), including [matched daily-pause artwork](assets/DAILY_PAUSE_ARTWORK.md).
 
-Today now pairs a compact greeting and one mood tray with an illustrated **Your daily pause**. The hero uses a matched botanical composition in each theme, one next-step action, and a quiet three-step path based on actual saved check-ins, completed practices and reflections. When the pause is complete, its action offers an optional three-minute breathing moment. It does not assign more work or reset completed progress.
+The floating navigation respects safe-area and keyboard clearance. Supported iOS uses guarded native Liquid Glass, with blur and Reduce Transparency fallbacks. Android uses an opaque tonal surface, selected indicators and native ripple. Browser rendering does not establish native-material or gesture behavior.
 
-During the practice stage, **Why this pause?** expands the curated suggestion's explanation. A daily affirmation adds a changing editorial note and opens the existing affirmation save flow. Suggestions and kind words are curated; the artwork does not imply live AI or a promised emotional outcome.
+## Solace Moments and the companion
 
-Light mode keeps its blush-ivory and forest identity. Dark mode keeps a black canvas with neutral graphite layers, warm ivory text, champagne actions and quieter lilac/peach/sage accents. The light secondary text was slightly darkened for contrast. Explore uses an illustrated breathing feature followed by clear practice/tool rows, keeping the full library available without repeating a catalogue on Today.
+Describe how you feel, review the suggested Moment and choose **Forest Sanctuary**, **Ocean Calm** or **Twilight Sky**. The generator returns bounded, schema-validated activity data: type, duration, steps, optional breathing rhythm and reflection prompts. It cannot send executable UI instructions. A configured provider uses structured output; the built-in alternative is explicitly curated. Urgent distress takes the human-support route instead of offering a generated activity.
 
-The dark hero is `assets/daily-pause-dark-v2.png`, paired with the original `assets/moment-light.png`; prompts and provenance are in [daily pause artwork](assets/DAILY_PAUSE_ARTWORK.md). Text and controls remain code-rendered. See [the design contract](DESIGN.md), [feature comparison](docs/FEATURE_GAPS.md), and [verification record](docs/VERIFICATION.md) for exact implementation and evidence. The preceding UI verification recorded 88 passing tests; native rendering and installed-device behavior remain separate checks.
+The Make a Moment action in Chat carries the chosen feeling and conversation link into the activity, with an optional return to that conversation afterward. The immersive player has an active-time clock, guidance, progress, pause/resume, exit confirmation, background pause, environment switching and optional bundled ambient sound. Original synthesized sound loops are packaged locally. Playback status and failures are visible. Completion and helpfulness are saved to the authenticated account, with retry behavior that retains the result rather than claiming an unsuccessful save worked.
 
-Welcome, login, signup and Today have no upper-right profile shortcut. Chat retains unsent messages across navigation in memory and distinguishes built-in guidance from live AI. Conversation history supports title/message search, inline renaming and resumption of the most recent conversation. The updated JavaScript exports do **not** update the old APK in `outputs/`.
+The recognizable petal companion has idle, listening, thinking, speaking, celebration and breathing states. Recording, requests, playback, practice timing and earned milestones drive these states. Reduced-motion settings are respected. No expression diagnoses the user's feelings.
 
-## A simpler daily experience
+## Conversation and voice
 
-Five destinations now separate daily care from the activity library: **Today → Solace → Explore → Journey → Profile**. The user explicitly approved adding a tab to reduce clutter. Today shows a mood tray, one illustrated next routine step, a conversation shortcut and the daily affirmation. Explore contains practices, saved toolkit, guides, plans and affirmations. No profile shortcut appears on welcome, login, signup or Today.
+Chat supports new conversations, continuing and deleting old conversations, title/message search, inline renaming and a recent-conversation entry. Replies distinguish live AI from the built-in companion. Unsent text stays in account-scoped memory across navigation; recoverable errors keep the text available.
 
-The daily pause uses real check-in, completed-activity and reflection records. Suggestions are curated locally, with an expandable explanation during the practice stage. Current-day mood can guide the suggestion; approved preferences and prior helpful feedback are considered only with personalization enabled. Completing the routine never implies a clinical outcome.
+Turn-based voice uses Expo Audio for permission-aware recording, a bounded authenticated backend transcription endpoint and an explicit transcript-review step. **A transcript is never automatically sent as a chat message.** The user chooses whether to add it, then sends the message. Typed text remains available if permission, recording or transcription fails. Explicit retry can reuse bounded audio kept in memory; native temporary-file cleanup is attempted after extraction. The server does not persist source audio. Audio is processed by the configured provider, whose service policies remain separate from Solace's storage behavior.
 
-Navigation floats above content with measured safe-area clearance. iOS uses the actual system Liquid Glass material when both Expo capability checks succeed, a native blur fallback on older supported iOS, and an opaque fallback for Reduce Transparency. Android uses a solid tonal navigation surface with clear selected states and native ripple feedback. Web shows the fallback layout, not proof of iOS glass. These new native modules require rebuilding the development/production app.
+Optional reply playback uses Expo Speech with actual start/stop/error callbacks. Leaving the conversation, backgrounding or starting another operation stops the previous interaction. Native microphone behavior, audio routing, interruptions and playback still need installed-device testing. The new audio/speech modules require a fresh native binary. Missing compiled audio modules show text/quiet fallbacks without evaluating those native libraries.
 
-**Profile → Your account** supports choosing, changing and removing a private profile photo. The selected image is prepared as a 256px JPEG, then decoded, re-encoded and stripped of metadata again on the server. Photos remain account-scoped, appear in export and are removed with the account. Solace does not request camera/microphone access for this feature.
+## Memory you can explain and change
 
-Check-in and journal drafts use account-scoped SecureStore on native. Recoverable connection errors queue at most 10 submitted check-ins/reflections for retry. Entries clearly say they are waiting to sync, and Your account offers retry/discard controls. Web writing remains in memory for the open preview only; it is not silently written to unencrypted browser storage. Native draft writes debounce 650ms and attempt protection when leaving the app; abrupt termination before commit can lose recent edits. Cold offline launch still needs API session restoration. Native vault limits, failure recovery and actual OS persistence are documented separately from browser verification. Chat and full account snapshots are never placed in this vault.
+**Profile → What Solace remembers** shows saved preferences, categories, approval state and available source links. Users can add, correct, approve, remove or explicitly clear preferences, or turn personalization off. Activity completion may offer editable wording, but saving always requires an explicit action. Solace does not silently create memories.
 
-## Personal toolkit and weekly review
+Recommendations name the approved memory used when it influences a suggestion. Turning personalization off excludes saved preferences from new personalized suggestions. Editing/removing a memory, deleting a source that supplied one, or revoking personalization resets the older context used for future AI replies. Existing conversation text remains visible and exportable; it is not silently rewritten. Deleting a conversation or source session also removes its derived memories. Pending responses built from invalidated context are rejected rather than committed.
 
-Save breathing, reflection, grounding and resource guides to **Your toolkit**. Favorites persist privately with the account, survive reload, appear in data export and are deleted with the account. Repeated saves are idempotent. Five-senses grounding offers five optional steps, accessible alternatives and an exit; feedback and Journey record actual participation. Skipping every sense does not count as a completed moment.
+## Journey, goals and gentle milestones
 
-Journey now offers a factual seven-day review and an optional weekly reflection prompt. It uses saved records and self-reported feedback, never a wellbeing score or inferred diagnosis. New black-mode petal, stillness and moonlit artwork appears across the app; exact prompts and paths are in [dark artwork provenance](assets/DARK_ARTWORK.md).
+Journey includes a selectable monthly calendar, day-by-day mood/activity history, completed-practice minutes, saved reflections and self-reported helpfulness. The seven-day review uses actual account records. The weekly-reflection adapter can summarize those facts with a configured AI provider; the local recorded summary is labeled when live AI is off. Neither route supplies diagnoses, invented mood patterns or a wellbeing score.
 
-Search data is cached between query edits, history initially renders 30 rows with an explicit show-more control, breathing display updates avoid fractional-second rerenders, and chat preserves reading position when the reader is away from the bottom. These are implementation improvements, not measured device performance guarantees. Account state is still fetched as a full snapshot; large-account pagination and native performance profiling remain future scaling work.
+Personal weekly time goals can be changed, paused and resumed. Check-in streaks are optional. Milestones include a first Moment, three reflections, five mindful pauses and seven distinct check-in days; they come from real saved records. Quiet days never delete achievements. Unsynced writing stays visible with a waiting-to-sync label but does not earn account milestones. Celebrations acknowledge an earned milestone, not a fabricated achievement.
 
-## Requirements
+## Existing foundations retained
 
-- Node **24.3+ LTS** is the tested baseline; the installed Expo toolchain also supports Node 22.13+ and 26+. Windows' default Node 20 is insufficient for the current Expo toolchain. On this machine, package scripts use an ignored local configuration pointing to the bundled Node 24. Other machines should install Node 24 or set SOLACE_NODE.
-- npm; a phone with a matching Expo Go version for early testing, or an Expo development/preview build.
-- An Expo account for cloud APK builds. Public HTTPS hosting for the backend before sharing the final APK.
+- Accounts: signup/login/logout, secure session handling, persisted history and server-enforced account isolation.
+- Practices: timed breathing, optional five-senses grounding, journaling, three reflective assessments, five guidance categories, editable plans, affirmations and small challenges.
+- Toolkit: private saved practices and resources, idempotent saves, export and deletion.
+- Profile photos: system picker, client preparation and independent server JPEG normalization to 256px, input limits and metadata removal; photos remain private to the account.
+- Reminders: private local notification schedules and destination routing. Browser preferences do not pretend to schedule native notifications.
+- Data controls: approved memory, export, logout, account deletion, unsynced-writing retry/discard and theme preferences.
 
-## Quick start
+Native check-in/journal drafts use bounded account-scoped SecureStore. Up to ten submitted check-ins/reflections can wait for retry after recoverable connection errors. Draft writes debounce 650ms and attempt protection when leaving the app; abrupt termination before a successful write can lose recent edits. Web writing is memory-only for the open tab. Cold launch still needs online API session restoration; chat and complete account snapshots are not placed in the protected writing vault.
+
+## Local setup
+
+The app and server have separate lockfiles. Root-only `npm ci` does not install the server's tsx dependency. The tested runtime is Node 24 LTS; the runtime wrapper validates compatible versions and never silently runs Expo on Windows' default Node 20. See [Mac/simulator repair instructions](docs/LOCAL_DEVELOPMENT.md).
 
 ```powershell
 npm run setup
@@ -60,88 +67,65 @@ npm run doctor
 npm run dev
 ```
 
-Setup creates missing environment files from the examples and preserves existing files. Edit private provider configuration only in `server/.env`.
+Setup installs both lockfiles with development/platform packages, compiles the API and creates only missing environment files. Existing environment files and database records are preserved. The dev supervisor verifies its own API child before starting Expo. Private server configuration and relative database paths are anchored to `server/`; a busy-port failure cannot rewrite the running API's database.
 
-Open the Expo web URL printed in the terminal (normally `http://127.0.0.1:8081`). The API runs on port 3001. Create an account; no production user or prefilled history is seeded. Test activity creates actual account data in `server/data/solace.sqlite`.
+The API normally uses port 3001 and Expo web uses 8081. Separate terminals can run `npm run server` and `npm run web`. A packaged local preview uses `npm run export:web:preview`, then `npm run preview` on port 8082. Stop the owned development processes with Ctrl+C.
 
-Alternatively run `npm run server` and `npm run web` in separate terminals. For the local packaged preview run `npm run export:web:preview`, then `npm run preview` (port 8082). `npm start` opens the Expo development server for phone/emulator testing. Stop development processes with Ctrl+C.
+Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. Release clients require an explicit HTTPS API and reject loopback/emulator addresses. Reload Expo after public configuration changes; rebuild installed release binaries.
 
-## Physical Android phone
-
-1. Put phone and computer on the same trusted network.
-2. Set `EXPO_PUBLIC_API_URL=http://YOUR_COMPUTER_LAN_IP:3001` in root `.env` (the emulator default `10.0.2.2` is not a physical-phone address).
-3. Start the backend, run `npm start -- --clear`, and open the project on the phone.
-4. Allow only the needed local-network access if Windows asks. Never expose the development API publicly without deployment configuration.
-
-Reminder delivery, notification taps, background behavior, keyboard/safe-area behavior and Android Back must be checked on the actual installed build. The web preview deliberately saves reminder preferences without pretending to schedule native notifications.
-
-## Live AI
-
-Set `OPENAI_API_KEY` in **server/.env**, never in root public variables. Set `OPENAI_MODEL` to a model available to your account, then restart the API. Use `AI_MODE=live` to require the real provider; `auto` uses the built-in companion when no key exists; `offline` always uses built-in responses. Provider failures produce a recoverable error, not undisclosed fallback. Current-conversation context is sent for chat; recent check-ins and approved preferences are added only when personalization is enabled. See [server documentation](server/README.md).
-
-## Main features
-
-- Today: compact personal greeting, mood tray, illustrated daily pause with real progress, curated explanation, conversation continuity and daily affirmation.
-- Explore: illustrated breathing feature, grounding, writing, private toolkit, guides, plans, challenges and affirmations.
-- Solace: conversation, actionable activity cards, new/reopen/continue/delete history and visible provider mode.
-- Journey: saved check-ins, moments, feedback, reflections, assessments, factual XP/streaks and a seven-day review.
-- Wellness: reflective questionnaires; timed breathing; optional five-senses grounding; journaling; five guides; private saved toolkit; editable plan; affirmations and small challenges.
-- Profile: private profile photo, name, themes, reminders, approved memories, unsynced writing, export, logout and deletion.
-- Notifications: native recurring local schedules with private copy and destination routing; browser limitation is explicit.
+Provider credentials belong only in **server/.env** or the private server environment. Configure the provider model for the account, then restart the API. `AI_MODE=live` requires credentials, `auto` selects live when configured, and `offline` uses the labeled built-in companion. Configured-provider failures produce recoverable errors instead of an undisclosed fallback. See [server configuration](server/README.md). Never commit environment files, keys or local database records.
 
 ## Project map
 
 ```text
-App.tsx                   app shell and five-tab navigation
-src/Navigation.tsx        platform-aware floating navigation
-src/screens/Discover.tsx  Today, daily pause and affirmation entry
-src/screens/Explore.tsx   illustrated practice and resource discovery
-src/routine.ts            curated daily pause selector
-src/offline.ts            bounded account-scoped protected writing vault
-src/theme.tsx             light/dark/system tokens
-src/ui.tsx                shared mobile components
-src/store.tsx             authenticated API state and secure session storage
-src/content.ts            wellness content and pure progress logic
-src/screens/Core.tsx      welcome, accounts, chat, history, Journey
-src/screens/Wellness.tsx  assessments, activities, resources, plans
-src/screens/Profile.tsx   profile, settings, memory, reminders, data controls
-src/notifications.ts      native scheduling and tap handling
-server/src/               API, SQLite persistence, auth, provider integration
-assets/                   generated petal and botanical illustrations
-design/references/        approved light/dark mockups
-docs/                     requirements, verification, architecture and release
+App.tsx                    app shell and four-tab navigation
+src/Navigation.tsx         platform-aware floating navigation
+src/screens/Discover.tsx   Today and the daily pause
+src/screens/Moments.tsx    generation, library and immersive player
+src/Companion.tsx          event-driven petal character
+src/Environment.tsx        forest, ocean and twilight visual environments
+src/moments.ts             activity guards and active-time player helpers
+src/screens/Journey.tsx    calendar, summaries, goals and milestones
+src/progress.ts            recorded participation and calendar helpers
+src/VoiceControls.tsx      recording, transcript review and reply playback
+src/voice-session.ts       cancellable account/conversation-scoped voice turn
+src/screens/Core.tsx       welcome, accounts, chat and history
+src/screens/Wellness.tsx   original activities, resources and reflections
+src/screens/Profile.tsx    account, photos, memory, reminders and data controls
+src/store.tsx              authenticated state, API and protected sessions
+src/offline.ts             bounded protected-writing vault
+src/notifications.ts       native local reminders and tap routing
+server/src/                auth, persistence, AI, Moments, weekly and voice API
+assets/                    original/botanical illustrations and ambient loops
+docs/                      requirements, verification and release guides
 ```
 
-## Checks
+## Checks and release work
 
 ```powershell
 npm run typecheck
-npm run test:tooling
-npm run test:api-config
-npm run test:wellness
-npm run test:reminders
-npm run test:session-state
-npm run test:insights
-npm run test:routine
-npm run test:offline
 npm run server:typecheck
 npm run server:test
+npm run test:tooling
+npm run test:api-config
+npm run test:session-state
+npm run test:moments
+npm run test:progress
+npm run test:voice
+npm run test:native-config
+npm run test:routine
+npm run test:offline
+npm run test:insights
+npm run test:wellness
+npm run test:reminders
 npm run server:build
-npm run export:web
+npm run export:web:preview
 npm run export:android
 npm run export:ios
 ```
 
-Native JS export verifies bundling, not APK installation or device APIs. Backend tests use an isolated test database and mock live-provider requests; they never require a real key. See the verification record before claiming release readiness.
+**193 regressions passed at this feature checkpoint**, including actual Expo native-permission configuration checks. Exact executed results are recorded in [VERIFICATION.md](docs/VERIFICATION.md). Provider adapter tests use controlled responses, and voice lifecycle tests do not prove native microphone recording. Native exports verify JavaScript/Hermes bundling, not installation, permission prompts, device audio or background notifications.
 
-## Build and submit
+Submission still needs a real provider, public HTTPS with a persistent database, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. [Release instructions](docs/RELEASE.md) cover those deferred operations. No new Docker setup or branch is required.
 
-Follow [release instructions](docs/RELEASE.md). `eas.json` includes an APK preview profile. Set a public HTTPS API URL **before** building, sign into Expo, then run `npx eas-cli build --platform android --profile preview`. Fresh-install and verify the exact resulting APK. The PDF calls for an app build and demo video; it does not require source submission. The guide says video is used during initial shortlisting, so record a concise real-product journey plus brief coverage of the remaining sections.
-
-## Privacy and operating limits
-
-The prototype uses salted password hashes, hashed expiring sessions, server-enforced account isolation, explicit personalization, record validation, rate limits, and data export/deletion. SQLite data is not application-encrypted. Production requires HTTPS, a private persistent disk, backups, explicit web origins and trusted reverse-proxy configuration. Run only one API replica with the current SQL.js storage adapter. This is not a clinical or emergency service.
-
-The country support page links to external directories; it does not invent practitioners, locate users automatically, or book appointments. Assessments are reflective check-ins, not validated diagnostic instruments. OAuth, password-reset email, remote push infrastructure and social feeds are not implemented or claimed.
-
-Agent contributors must read [AGENTS.md](AGENTS.md), [project context](PROJECT_CONTEXT.md), and [design rules](DESIGN.md).
+SQL.js currently supports one API instance with a private persistent disk. Use HTTPS, restricted origins/proxy settings and backups in deployment. SQLite is not application-encrypted. Large-account pagination and native performance profiling remain scaling work. Solace is an AI wellness companion, not a licensed therapist, diagnostic tool or emergency service. It makes no clinical, HIPAA or certification claim. Social feeds, public profiles, following, community messages, therapist booking, OAuth, email password reset and remote push infrastructure are outside the implemented scope.

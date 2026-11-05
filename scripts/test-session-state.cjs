@@ -406,9 +406,11 @@ test("details keep their originating tab and main destinations start a stack wit
   assert.equal(app.route, "chat");
   assert.equal(app.activeTab, "chat");
   assert.equal(app.params.id, "legacy-chat");
-  app.setTab("explore");
+  app.setTab("today");
+  h.render().navigate("explore");
+  h.render().navigate("moments");
   h.render().navigate("grounding");
-  assert.equal(h.render().activeTab, "explore");
+  assert.equal(h.render().activeTab, "today");
 });
 
 test("retrying an idempotent toolkit add cannot duplicate a favorite in account state", async () => {
@@ -812,4 +814,128 @@ test("development connection diagnostics expose only the server origin while rel
     },
   );
   release.close();
+});
+
+test("legacy account snapshots receive empty feature collections without losing existing records", async () => {
+  const h = await signedIn();
+  assert.deepEqual(Array.from(h.render().data.preferences), []);
+  assert.deepEqual(Array.from(h.render().data.goals), []);
+  h.close();
+});
+
+test("feature calls use authenticated structured routes and voice preserves its raw audio content type", async () => {
+  const h = await signedIn();
+  const seen = [];
+  h.onRequest = async (route, options) => {
+    seen.push({ route, options });
+    return ok(
+      route === "/voice/transcribe"
+        ? { text: "Reviewed words", provider: "live" }
+        : { provider: "offline", activity: null },
+    );
+  };
+  await h.render().generateMoment("A little distracted", "ocean");
+  await h.render().weeklyReflection("2026-11-05");
+  await h.render().capabilities();
+  const audio = new ArrayBuffer(100);
+  await h.render().transcribeVoice(audio, "audio/mp4");
+  assert.deepEqual(
+    seen.map((x) => x.route),
+    [
+      "/moments/generate",
+      "/insights/weekly",
+      "/capabilities",
+      "/voice/transcribe",
+    ],
+  );
+  assert.deepEqual(JSON.parse(seen[0].options.body), {
+    feeling: "A little distracted",
+    environment: "ocean",
+  });
+  assert.equal(seen[3].options.headers["Content-Type"], "audio/mp4");
+  assert.equal(seen[3].options.headers.Authorization, "Bearer token-account-a");
+  assert.equal(seen[3].options.body, audio);
+  h.close();
+});
+
+test("late generated guidance cannot return into a replacement account", async () => {
+  const h = await signedIn();
+  let finish;
+  h.onRequest = async (route) =>
+    route === "/moments/generate"
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : ok({ ok: true });
+  const waiting = h.render().generateMoment("QA words", "forest");
+  const rejected = assert.rejects(waiting);
+  await h.render().signOut();
+  h.onRequest = accountTransport("account-b", "new-token");
+  await h.render().signIn("new@solace.test", "test-only-password");
+  finish(
+    ok({
+      activity: null,
+      provider: "offline",
+      explanation: "Old account preference",
+      usedMemoryIds: [],
+    }),
+  );
+  await rejected;
+  assert.equal(h.render().user.id, "account-b");
+  assert.equal(h.render().data.sessions.length, 0);
+  h.close();
+});
+
+test("first explicit feature identities create with POST, then known records update without duplicates", async () => {
+  const h = await signedIn();
+  const seen = [];
+  h.onRequest = async (route, options) => {
+    const record = JSON.parse(options.body);
+    seen.push([route, options.method]);
+    return ok({ record });
+  };
+  await h
+    .render()
+    .save("preferences", {
+      id: "wellness",
+      environment: "forest",
+      ambientEnabled: false,
+      streaksEnabled: false,
+    });
+  await h
+    .render()
+    .save("preferences", {
+      id: "wellness",
+      environment: "ocean",
+      ambientEnabled: false,
+      streaksEnabled: false,
+    });
+  await h
+    .render()
+    .save("sessions", {
+      id: "generated-stable",
+      kind: "generated",
+      completed: true,
+    });
+  assert.deepEqual(seen, [
+    ["/records/preferences", "POST"],
+    ["/records/preferences/wellness", "PATCH"],
+    ["/records/sessions", "POST"],
+  ]);
+  assert.equal(h.render().data.preferences.length, 1);
+  assert.equal(h.render().data.preferences[0].environment, "ocean");
+  assert.equal(h.render().data.sessions.length, 1);
+  h.close();
+});
+
+test("voice authorization failures trigger the existing session-expiry recovery", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => ok({ error: "Session expired" }, 401);
+  await assert.rejects(
+    h.render().transcribeVoice(new ArrayBuffer(100), "audio/mp4"),
+    /Session expired/,
+  );
+  assert.equal(h.render().sessionExpired, true);
+  assert.equal(h.render().token, null);
+  h.close();
 });

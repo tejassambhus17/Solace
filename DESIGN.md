@@ -30,7 +30,7 @@ The light secondary-text adjustment to `#626B5D` preserves the visual identity w
 
 Cormorant Garamond headings and Inter body/UI text retain the editorial identity. Reserve the largest headings for arrival and the featured practice. Supporting labels remain compact and readable. Use body text around 14–16 points and touch controls at least 44 points high, with native Android targets sized appropriately.
 
-Keep five main destinations in order: **Today, Solace, Explore, Journey, Profile**. The user explicitly approved Explore to reduce clutter. Detail screens retain clear back actions and their originating context. Auth and immersive activities may suppress tabs. Wide web previews remain a centered mobile column.
+Keep four main destinations in order: **Today, Solace, Journey, Profile**, following the latest workspace instructions. Moments is reached from Today and Solace; its library links to all existing practices and toolkit. Explore remains a detail destination. Detail screens retain clear back actions and their originating context. Auth and immersive activities may suppress tabs. Wide web previews remain a centered mobile column.
 
 ## Today and the daily pause
 
@@ -74,3 +74,12 @@ Breathing motion communicates a named phase/countdown and honors reduced motion.
 Native check-in/journal drafts and bounded unsynced writing use account-scoped SecureStore; chat/feedback drafts remain in memory. Draft writes debounce and can lose recent uncommitted edits under abrupt termination. Web writing is memory-only. See the README and verification record for retry/cleanup/cold-launch limits; do not describe all drafts as durable or synced.
 
 Private profile photos have real choose/save/remove/cancel/error states and remain owner-scoped. Reminder delivery requires device verification. Real provider configuration, a public HTTPS API, a rebuilt installable APK tested on physical hardware, verified reminders and the final demo remain submission gates. UI refinement does not establish production release readiness.
+
+
+## Moments, companion and Journey
+
+Extend the established botanical world with the small petal companion; do not introduce another brand logo beside it in the chat header. Idle, listening, thinking, speaking, celebration and breathing states reflect actual interactions. Respect the OS reduced-motion setting from the first render. The companion does not infer a person's emotions.
+
+Moments uses one feeling field, three quiet environment choices and a validated activity preview with a clear source and optional explanation. The immersive player hides tabs, keeps Begin/Pause and sound controls in a safe-area footer, pauses on app backgrounding and environment changes, and confirms exit after starting. Forest uses the existing botanical image, Ocean uses calm geometric wave layers, and Twilight reuses moonlit art; all three preserve black app chrome in dark mode. Original synthesized ambience is optional and starts off. No therapeutic effect is attributed to art, sound or a completed timer.
+
+Journey combines a real month calendar with selected-day history, a factual weekly review and an optional personal goal. Milestones expand on request and celebrate only earned records. Memory management exposes categories, canonical sources, corrections, individual removal, clear-all and revocable personalization. Voice transcripts stay in a review panel until the user adds them to the composer, with no automatic send or silent truncation. Playback shows waiting/speaking states from actual callbacks and offers a recoverable startup failure.

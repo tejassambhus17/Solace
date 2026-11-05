@@ -29,6 +29,6 @@
 A complete submission requires real provider configuration, a publicly reachable HTTPS API, an installable APK tested on a physical device, verified reminder behavior, and a demo recorded from the final build. Keep these separate from local preview completion.
 
 ## Latest execution priority
-- Repair backend setup and authentication before advanced features. The user deferred Mac simulator access and asked to continue authentication repair first; do not count simulator or real-provider checks as passed.
+- The local backend/authentication repair is verified. The user subsequently directed full feature implementation without questions and deferred external setups. Continue implementation; keep Mac simulator, real-provider, deployment and device checks explicitly separate from local evidence.
 - Follow docs/IMPLEMENTATION_PLAN.md for the six milestones. Keep completed local checks distinct from native/external gates.
 - Do not introduce Docker or unnecessary branches. Commit coherent completed work to the existing branch after review/testing; never commit credentials or local environment files.

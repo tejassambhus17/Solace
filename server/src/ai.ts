@@ -8,6 +8,7 @@ export type Action = { type: "breathing" | "reflection"; label: string };
 export type AIConfig = {
   apiKey?: string;
   model: string;
+  transcriptionModel?: string;
   baseUrl: string;
   mode: "auto" | "live" | "offline";
 };
@@ -20,8 +21,19 @@ export function provider(config: AIConfig): "live" | "offline" {
 }
 const urgentPattern =
   /\b(kill myself|end my life|suicid(?:e|al)|hurt myself|self[- ]harm|don't want to live|do not want to live)\b/i;
+// These explicit phrases select human-support copy, not a clinical risk assessment.
+// Avoid broad words such as "dead" or "tired", which also have ordinary uses.
+const firstPersonDeathWish =
+  /\bi (?:(?:really|just) )?(?:want|wish) to die\b(?! (?:laughing|of laughter)\b)|\bi wish i (?:was|were) dead\b(?! tired\b)/i;
+const firstPersonUnsafe =
+  /\b(?:i (?:can't|cannot|can not)|i(?:'m| am) unable to) (?:keep myself|stay) safe\b|\bi (?:don't|do not) (?:think|feel) (?:that )?i can (?:keep myself|stay) safe\b|\bi (?:don't|do not) feel able to (?:keep myself|stay) safe\b/i;
 export function isUrgent(text: string) {
-  return urgentPattern.test(text);
+  const normalized = text.replace(/[’‘ʼ]/g, "'").replace(/\s+/g, " ");
+  return (
+    urgentPattern.test(normalized) ||
+    firstPersonDeathWish.test(normalized) ||
+    firstPersonUnsafe.test(normalized)
+  );
 }
 function offlineReply(
   text: string,

@@ -10,6 +10,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useApp } from "../store";
+import { Companion } from "../Companion";
+import { VoiceControls } from "../VoiceControls";
 import { useTheme } from "../theme";
 import {
   AppText,
@@ -28,8 +30,6 @@ import {
   SectionTitle,
   useNavigationInset,
 } from "../ui";
-import { recordDay, participationProgress } from "../content";
-import { weeklyReview } from "../insights";
 
 const dateLabel = (value: any) => {
   if (!value) return "";
@@ -47,61 +47,11 @@ function confirmAction(title: string, message: string, action: () => void) {
       { text: "Delete", style: "destructive", onPress: action },
     ]);
 }
-function MenuCard({
-  title,
-  description,
-  icon,
-  onPress,
-}: {
-  title: string;
-  description: string;
-  icon: string;
-  onPress: () => void;
-}) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => ({
-        paddingVertical: 17,
-        borderBottomWidth: 0.75,
-        borderBottomColor: colors.border,
-        opacity: pressed ? 0.65 : 1,
-      })}
-    >
-      <Row>
-        <View
-          style={{
-            height: 42,
-            width: 42,
-            borderRadius: 14,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.surface2,
-          }}
-        >
-          <Icon name={icon} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <AppText variant="heading" style={{ fontSize: 22, lineHeight: 25 }}>
-            {title}
-          </AppText>
-          <AppText variant="caption" color={colors.muted}>
-            {description}
-          </AppText>
-        </View>
-        <Icon name="chevron-forward" size={18} color={colors.muted} />
-      </Row>
-    </Pressable>
-  );
-}
-
 export function AuthScreen() {
   const app = useApp();
   const { colors } = useTheme();
   const { height } = useWindowDimensions();
-  const [page, setPage] = useState<"welcome" | "login" | "signup">(
+  const [page, setPage] = useState<"welcome" | "intro" | "login" | "signup">(
     app.sessionExpired ? "login" : "welcome",
   );
   const [name, setName] = useState("");
@@ -109,7 +59,7 @@ export function AuthScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
-  function changePage(next: "welcome" | "login" | "signup") {
+  function changePage(next: "welcome" | "intro" | "login" | "signup") {
     setPage(next);
     setNotice("");
   }
@@ -178,7 +128,7 @@ export function AuthScreen() {
           <Button
             title="Get started"
             icon="arrow-forward"
-            onPress={() => changePage("signup")}
+            onPress={() => changePage("intro")}
           />
           <Button
             title="Log in"
@@ -193,6 +143,68 @@ export function AuthScreen() {
             Your space, at your pace.
           </AppText>
         </View>
+      </Screen>
+    );
+  if (page === "intro")
+    return (
+      <Screen title="A little space for you" back={() => changePage("welcome")}>
+        <View style={{ alignItems: "center", paddingVertical: 25 }}>
+          <Companion size={145} state="idle" />
+        </View>
+        <AppText variant="display">Care, at your pace.</AppText>
+        <AppText
+          color={colors.muted}
+          style={{ marginTop: 12, marginBottom: 25 }}
+        >
+          A few small ways to make room for yourself. Choose what feels useful
+          and leave the rest.
+        </AppText>
+        {[
+          {
+            icon: "chatbubble-ellipses-outline",
+            title: "Talk things through",
+            text: "Start with your own words. Solace is an AI wellness companion, not a therapist or emergency service.",
+          },
+          {
+            icon: "leaf-outline",
+            title: "Make a Moment",
+            text: "A feeling becomes a short breathing, grounding or reflection practice, in a space you choose.",
+          },
+          {
+            icon: "lock-closed-outline",
+            title: "Keep context on your terms",
+            text: "Personalization starts off. You choose which preferences to save and can edit or remove them whenever you like.",
+          },
+        ].map((item) => (
+          <Row
+            key={item.title}
+            style={{ alignItems: "flex-start", paddingVertical: 16, gap: 15 }}
+          >
+            <Icon name={item.icon} color={colors.accent} />
+            <View style={{ flex: 1 }}>
+              <AppText variant="label">{item.title}</AppText>
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 5 }}
+              >
+                {item.text}
+              </AppText>
+            </View>
+          </Row>
+        ))}
+        <Button
+          title="Create my account"
+          icon="arrow-forward"
+          onPress={() => changePage("signup")}
+          style={{ marginTop: 25 }}
+        />
+        <Button
+          title="I already have an account"
+          variant="ghost"
+          onPress={() => changePage("login")}
+          style={{ marginTop: 8 }}
+        />
       </Screen>
     );
   return (
@@ -358,6 +370,11 @@ export function ChatScreen() {
     app.chatDrafts[draftKey] ?? String(app.params?.context || ""),
   );
   const [pending, setPending] = useState("");
+  const [voiceState, setVoiceState] = useState<
+    "idle" | "listening" | "thinking" | "speaking"
+  >("idle");
+  const inputRef = useRef(input);
+  inputRef.current = input;
   const [failure, setFailure] = useState("");
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const mounted = useRef(true);
@@ -386,6 +403,13 @@ export function ChatScreen() {
   const lastAssistant = [...messages]
     .reverse()
     .find((m: any) => m.role === "assistant");
+  const lastUser = [...messages]
+    .reverse()
+    .find((message: any) => message.role === "user");
+  const momentContext = {
+    feeling: String(lastUser?.content || "").slice(0, 1200),
+    conversationId: id,
+  };
   const action = lastAssistant?.action;
   function writeDraft(text: string) {
     setInput(text);
@@ -393,7 +417,13 @@ export function ChatScreen() {
   }
   async function send() {
     const text = input.trim();
-    if (!text || pending) return;
+    if (
+      !text ||
+      pending ||
+      voiceState === "listening" ||
+      voiceState === "thinking"
+    )
+      return;
     nearBottom.current = true;
     setShowLatest(false);
     app.setChatDraft(draftKey, input);
@@ -437,8 +467,19 @@ export function ChatScreen() {
             justifyContent: "space-between",
           }}
         >
-          <BrandMark />
+          <Row style={{ gap: 8 }}>
+            <Companion size={36} state={pending ? "thinking" : voiceState} />
+            <AppText variant="heading" style={{ fontSize: 31 }}>
+              Solace
+            </AppText>
+          </Row>
           <Row style={{ gap: 0 }}>
+            <IconButton
+              name="sparkles-outline"
+              label="Create a Solace Moment"
+              disabled={!!pending}
+              onPress={() => app.navigate("moments", momentContext)}
+            />
             <IconButton
               name="create-outline"
               label="New conversation"
@@ -621,14 +662,9 @@ export function ChatScreen() {
                   {action.label}
                 </AppText>
                 <Button
-                  title="Start now"
+                  title="Make a Moment"
                   icon="arrow-forward"
-                  onPress={() =>
-                    app.navigate(
-                      action.type === "reflection" ? "reflection" : "breathing",
-                      { source: "chat", conversationId: id },
-                    )
-                  }
+                  onPress={() => app.navigate("moments", momentContext)}
                   style={{ alignSelf: "flex-start", minHeight: 44 }}
                 />
               </Card>
@@ -668,6 +704,25 @@ export function ChatScreen() {
               {failure}
             </AppText>
           )}
+          <VoiceControls
+            key={`${app.user?.id}-${draftKey}`}
+            disabled={!!pending}
+            reply={String(lastAssistant?.content || "")}
+            onState={setVoiceState}
+            onTranscript={(text) => {
+              const before = inputRef.current;
+              const combined = `${before}${before.trim() ? "\n" : ""}${text}`;
+              if (combined.length > 4000) {
+                setFailure(
+                  "Your draft and transcript exceed 4,000 characters. Shorten your draft first; your full transcript is kept above.",
+                );
+                return false;
+              }
+              writeDraft(combined);
+              setFailure("");
+              return true;
+            }}
+          />
           <Row style={{ alignItems: "flex-end", gap: 9 }}>
             <Input
               accessibilityLabel="Message Solace"
@@ -689,13 +744,27 @@ export function ChatScreen() {
               accessibilityRole="button"
               accessibilityLabel={failure ? "Retry message" : "Send message"}
               accessibilityState={{
-                disabled: !input.trim() || !!pending,
+                disabled:
+                  !input.trim() ||
+                  !!pending ||
+                  voiceState === "listening" ||
+                  voiceState === "thinking",
                 busy: !!pending,
               }}
-              aria-disabled={!input.trim() || !!pending}
+              aria-disabled={
+                !input.trim() ||
+                !!pending ||
+                voiceState === "listening" ||
+                voiceState === "thinking"
+              }
               aria-busy={!!pending}
               onPress={send}
-              disabled={!input.trim() || !!pending}
+              disabled={
+                !input.trim() ||
+                !!pending ||
+                voiceState === "listening" ||
+                voiceState === "thinking"
+              }
               style={({ pressed }) => ({
                 height: 50,
                 width: 50,
@@ -1058,266 +1127,6 @@ export function HistoryScreen() {
           />
         </View>
       )}
-    </Screen>
-  );
-}
-
-export function JourneyScreen() {
-  const app = useApp();
-  const [showMilestones, setShowMilestones] = useState(false);
-  const { colors } = useTheme();
-  const progress = useMemo(() => participationProgress(app.data), [app.data]);
-  const week = useMemo(() => weeklyReview(app.data), [app.data]);
-  const checkins = [...app.data.checkins].sort((a, b) =>
-    String(b.createdAt).localeCompare(String(a.createdAt)),
-  );
-  const sessions = [...app.data.sessions].sort((a, b) =>
-    String(b.createdAt).localeCompare(String(a.createdAt)),
-  );
-  const today = new Date();
-  const days = Array.from({ length: 7 }, (_, i) => {
-    let day = new Date(today);
-    day.setDate(today.getDate() - 6 + i);
-    const key = [
-      day.getFullYear(),
-      String(day.getMonth() + 1).padStart(2, "0"),
-      String(day.getDate()).padStart(2, "0"),
-    ].join("-");
-    return {
-      label: day.toLocaleDateString(undefined, { weekday: "short" }),
-      record: checkins.find((x) => recordDay(x) === key),
-    };
-  });
-  return (
-    <Screen>
-      <AppText variant="title">Your journey</AppText>
-      <AppText
-        color={colors.muted}
-        style={{ marginVertical: 8, marginBottom: 20 }}
-      >
-        A gentle look at your check-ins and the moments you've taken for
-        yourself.
-      </AppText>
-      <Card style={{ marginBottom: 22, padding: 16 }}>
-        <AppText variant="heading">Your last 7 days</AppText>
-        <AppText variant="caption" color={colors.muted}>
-          Your check-ins, at a glance.
-        </AppText>
-        <Row style={{ justifyContent: "space-between", gap: 1, marginTop: 14 }}>
-          {days.map((d, i) => (
-            <View key={i} style={{ alignItems: "center", flex: 1 }}>
-              <MoodStone mood={d.record?.mood || ""} size={26} />
-              <AppText variant="caption" style={{ fontSize: 10 }}>
-                {d.label}
-              </AppText>
-              <AppText
-                variant="caption"
-                color={colors.muted}
-                style={{ fontSize: 10 }}
-              >
-                {d.record?.mood || "—"}
-              </AppText>
-            </View>
-          ))}
-        </Row>
-      </Card>
-      <View style={{ marginTop: 4, marginBottom: 28 }}>
-        <SectionTitle
-          title="Your week, gently"
-          subtitle="A small review of the last seven days."
-        />
-        <AppText style={{ lineHeight: 24 }}>
-          {week.daysCheckedIn} {week.daysCheckedIn === 1 ? "day" : "days"}{" "}
-          checked in · {week.completedMoments} completed{" "}
-          {week.completedMoments === 1 ? "moment" : "moments"} ·{" "}
-          {week.reflectionCount}{" "}
-          {week.reflectionCount === 1 ? "reflection" : "reflections"}
-        </AppText>
-        <Row style={{ flexWrap: "wrap", gap: 8, marginTop: 15 }}>
-          {week.moods
-            .filter((mood) => mood.count > 0)
-            .map((mood) => (
-              <Row key={mood.mood} style={{ gap: 5, paddingRight: 8 }}>
-                <MoodStone mood={mood.mood} size={19} />
-                <AppText variant="caption">
-                  {mood.mood} · {mood.count}
-                </AppText>
-              </Row>
-            ))}
-        </Row>
-        <AppText color={colors.muted} style={{ marginTop: 14, fontSize: 14 }}>
-          {week.supportiveMoments
-            ? `You marked ${week.supportiveMoments} completed ${week.supportiveMoments === 1 ? "moment" : "moments"} as helpful or a little helpful.`
-            : "Your feedback can help you notice which moments feel useful."}
-        </AppText>
-        <Button
-          title="Reflect on your week"
-          variant="secondary"
-          icon="create-outline"
-          onPress={() =>
-            app.navigate("reflection", { prompt: week.suggestedPrompt })
-          }
-          style={{ marginTop: 18 }}
-        />
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: showMilestones }}
-        onPress={() => setShowMilestones((value) => !value)}
-        style={{
-          paddingVertical: 16,
-          marginBottom: 20,
-          borderTopWidth: 0.75,
-          borderBottomWidth: 0.75,
-          borderColor: colors.border,
-        }}
-      >
-        <Row style={{ justifyContent: "space-between" }}>
-          <View>
-            <AppText variant="label">Activity milestones</AppText>
-            <AppText variant="caption" color={colors.muted}>
-              Your participation, at your pace.
-            </AppText>
-          </View>
-          <Icon
-            name={showMilestones ? "chevron-up" : "chevron-down"}
-            color={colors.muted}
-            size={19}
-          />
-        </Row>
-      </Pressable>
-      {showMilestones && (
-        <>
-          <SectionTitle title="Small milestones" />
-          <Row style={{ marginBottom: 20, alignItems: "stretch" }}>
-            {[
-              {
-                title: "A small beginning",
-                earned: progress.checkedDays >= 1,
-                detail: "Your first check-in",
-              },
-              {
-                title: "Finding a rhythm",
-                earned: progress.checkedDays >= 3,
-                detail: "Check in on 3 days",
-              },
-            ].map((m) => (
-              <Card key={m.title} style={{ flex: 1, padding: 12 }}>
-                <Icon
-                  name={
-                    m.earned ? "checkmark-circle-outline" : "flower-outline"
-                  }
-                />
-                <AppText variant="label" style={{ marginTop: 6 }}>
-                  {m.title}
-                </AppText>
-                <AppText variant="caption">
-                  {m.earned ? "Earned · " : "Next step · "}
-                  {m.detail}
-                </AppText>
-              </Card>
-            ))}
-          </Row>
-          <Card style={{ marginBottom: 22, backgroundColor: colors.surface2 }}>
-            <Row style={{ justifyContent: "space-between" }}>
-              <View>
-                <AppText variant="heading">Activity progress</AppText>
-                <AppText variant="caption" color={colors.muted}>
-                  A record of the time you made for yourself
-                </AppText>
-              </View>
-              <Icon name="sparkles-outline" />
-            </Row>
-            <Row style={{ justifyContent: "space-between", marginTop: 14 }}>
-              <AppText variant="label">
-                Level {progress.level} · {progress.xp} XP
-              </AppText>
-              <AppText variant="caption">
-                {progress.streak} day check-in streak
-              </AppText>
-            </Row>
-            <View
-              style={{
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: colors.border,
-                marginTop: 12,
-              }}
-            >
-              <View
-                style={{
-                  height: 6,
-                  borderRadius: 3,
-                  width: `${progress.xpInLevel}%`,
-                  backgroundColor: colors.primary,
-                }}
-              />
-            </View>
-          </Card>
-        </>
-      )}
-      <SectionTitle title="Recent moments" />
-      {sessions.length ? (
-        sessions.slice(0, 4).map((s) => (
-          <Card
-            key={s.id}
-            onPress={() => app.navigate("session-detail", { id: s.id })}
-            style={{ marginBottom: 9, padding: 14 }}
-          >
-            <Row>
-              <Petal size={48} />
-              <View style={{ flex: 1 }}>
-                <AppText
-                  variant="heading"
-                  style={{ fontSize: 22, lineHeight: 25 }}
-                >
-                  {s.title || "A moment for you"}
-                </AppText>
-                <AppText variant="caption" color={colors.muted}>
-                  {dateLabel(s.createdAt)}
-                  {s.feedback ? ` · ${s.feedback}` : ""}
-                </AppText>
-              </View>
-            </Row>
-          </Card>
-        ))
-      ) : (
-        <Card style={{ marginBottom: 12 }}>
-          <Petal size={56} />
-          <AppText variant="heading" style={{ marginTop: 8 }}>
-            A little time for yourself
-          </AppText>
-          <AppText
-            color={colors.muted}
-            style={{ marginTop: 5, marginBottom: 16 }}
-          >
-            Your completed moments and reflections will grow here, one small
-            step at a time.
-          </AppText>
-          <Button
-            title="Take your first moment"
-            onPress={() => app.navigate("breathing")}
-          />
-        </Card>
-      )}
-      <MenuCard
-        title="Reflections"
-        description={`${app.data.reflections.length} saved ${app.data.reflections.length === 1 ? "reflection" : "reflections"}`}
-        icon="create-outline"
-        onPress={() => app.navigate("reflections")}
-      />
-      <MenuCard
-        title="Saved affirmations"
-        description="Kind words you've kept."
-        icon="heart-outline"
-        onPress={() => app.navigate("saved-affirmations")}
-      />
-      <MenuCard
-        title="Assessments"
-        description={`${app.data.assessments.length} completed ${app.data.assessments.length === 1 ? "check-in" : "check-ins"}`}
-        icon="clipboard-outline"
-        onPress={() => app.navigate("assessments")}
-      />
     </Screen>
   );
 }

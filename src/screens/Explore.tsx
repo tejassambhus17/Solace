@@ -59,7 +59,7 @@ export function ExploreScreen() {
   const app = useApp();
   const { colors } = useTheme();
   return (
-    <Screen>
+    <Screen title="Practice library" back={app.back}>
       <AppText
         variant="display"
         style={{ marginTop: 8, fontSize: 43, lineHeight: 46 }}

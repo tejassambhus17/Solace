@@ -28,6 +28,9 @@ import {
 } from "./validation.js";
 import { getReply, provider, type AIConfig, type Message } from "./ai.js";
 import { AvatarError, prepareAvatar } from "./avatar.js";
+import { generateMoment, environments, type MomentMemory } from "./moments.js";
+import { calendarDay, weeklyFacts, weeklyReflection } from "./weekly.js";
+import { transcribeAudio, voiceAvailable, audioTypes } from "./voice.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
@@ -143,18 +146,72 @@ export function createApp(config: AppConfig) {
       "INSERT INTO records(id,user_id,collection,json,created_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,collection,id) DO UPDATE SET json=excluded.json",
       [record.id, owner, collection, JSON.stringify(record), record.createdAt],
     );
-  const validMemorySource = (owner: string, record: RecordData) => {
+  const resetConversationContext = (owner: string) => {
+    const resetAt = new Date().toISOString();
+    for (const conversation of list(owner, "conversations"))
+      put(owner, "conversations", {
+        ...conversation,
+        contextResetMessageCount: Array.isArray(conversation.messages)
+          ? conversation.messages.length
+          : 0,
+        contextResetAt: resetAt,
+        contextResetId: randomUUID(),
+      });
+  };
+  const validSessionSource = (owner: string, record: RecordData) => {
     if (
-      record.sourceConversationId &&
-      !get(owner, "conversations", String(record.sourceConversationId))
+      record.sourceConversationId === undefined ||
+      record.sourceConversationId === null
     )
+      return true;
+    const source = idSchema.parse(record.sourceConversationId);
+    return !!get(owner, "conversations", source);
+  };
+  const memoryProvenance = (record: RecordData) =>
+    JSON.stringify([
+      record.sourceType ?? null,
+      record.sourceId ?? null,
+      record.sourceConversationId ?? null,
+    ]);
+  const validMemorySource = (owner: string, record: RecordData) => {
+    const explicitConversation = record.sourceConversationId;
+    if (
+      explicitConversation &&
+      (!idSchema.safeParse(explicitConversation).success ||
+        !get(owner, "conversations", String(explicitConversation)))
+    )
+      return false;
+    // A source label without its identity is not a source-free manual preference.
+    if ((record.sourceType === undefined) !== (record.sourceId === undefined))
       return false;
     if (record.sourceType && record.sourceId) {
       const collection =
         record.sourceType === "session" ? "sessions" : "conversations";
-      if (!get(owner, collection, String(record.sourceId))) return false;
-      if (record.sourceType === "conversation")
-        record.sourceConversationId = record.sourceId;
+      const source = get(owner, collection, String(record.sourceId));
+      if (!source) return false;
+      const canonicalConversation =
+        record.sourceType === "conversation"
+          ? source.id
+          : source.sourceConversationId;
+      if (
+        canonicalConversation !== undefined &&
+        canonicalConversation !== null
+      ) {
+        if (
+          !idSchema.safeParse(canonicalConversation).success ||
+          !get(owner, "conversations", String(canonicalConversation))
+        )
+          return false;
+        if (
+          explicitConversation &&
+          explicitConversation !== canonicalConversation
+        )
+          return false;
+        record.sourceConversationId = canonicalConversation;
+      } else if (explicitConversation) {
+        // A session cannot be relabeled as originating in an unrelated chat.
+        return false;
+      }
     }
     return true;
   };
@@ -308,7 +365,9 @@ export function createApp(config: AppConfig) {
             "Your profile photo changed while this upload was processing. Please choose the photo again.",
             "AVATAR_CHANGED",
           );
-        store.transaction(() =>
+        store.transaction(() => {
+          if (input.personalization === false && current.personalization)
+            resetConversationContext(owner);
           store.run(
             "UPDATE users SET name=?,personalization=?,avatar=? WHERE id=?",
             [
@@ -319,8 +378,8 @@ export function createApp(config: AppConfig) {
               avatar === undefined ? current.avatar : avatar,
               owner,
             ],
-          ),
-        );
+          );
+        });
         return res.json({
           user: publicUser(
             store.one<UserRow>("SELECT * FROM users WHERE id=?", [owner])!,
@@ -366,6 +425,11 @@ export function createApp(config: AppConfig) {
   app.post("/api/records/:collection", (req: AuthRequest, res) => {
     const collection = collectionSchema.parse(req.params.collection);
     const parsed = parseRecord(collection, req.body);
+    if (collection === "conversations") {
+      delete parsed.contextResetMessageCount;
+      delete parsed.contextResetAt;
+      delete parsed.contextResetId;
+    }
     const record: RecordData = {
       ...parsed,
       id:
@@ -375,11 +439,36 @@ export function createApp(config: AppConfig) {
       createdAt:
         (parsed.createdAt as string | undefined) ?? new Date().toISOString(),
     };
+    if (collection === "sessions" && !validSessionSource(user(req).id, record))
+      return apiError(
+        res,
+        404,
+        "The source conversation was not found.",
+        "NOT_FOUND",
+      );
     const existing = get(user(req).id, collection, record.id);
     // Adding a saved practice is idempotent, including rapid taps or retries
     // after a response was lost. Identity is scoped by the authenticated owner.
     if (collection === "favorites" && existing)
       return res.json({ record: existing });
+    if (
+      existing &&
+      (collection === "preferences" ||
+        collection === "goals" ||
+        (collection === "sessions" &&
+          parsed.kind === "generated" &&
+          existing.kind === "generated"))
+    ) {
+      // Stable client IDs reconcile a lost response without recording another completion.
+      // Supplied timestamps and every supplied field must match; changed payloads conflict.
+      if (
+        Object.entries(parsed).every(
+          ([key, value]) =>
+            JSON.stringify(value) === JSON.stringify(existing[key]),
+        )
+      )
+        return res.json({ record: existing });
+    }
     if (existing)
       return apiError(
         res,
@@ -411,6 +500,13 @@ export function createApp(config: AppConfig) {
       ...req.body,
       id: existing.id,
       createdAt: existing.createdAt,
+      ...(collection === "conversations"
+        ? {
+            contextResetMessageCount: existing.contextResetMessageCount,
+            contextResetAt: existing.contextResetAt,
+            contextResetId: existing.contextResetId,
+          }
+        : {}),
     });
     const record: RecordData = {
       ...merged,
@@ -428,14 +524,49 @@ export function createApp(config: AppConfig) {
         "Remove this saved practice before choosing a different one.",
         "FAVORITE_TARGET_LOCKED",
       );
-    if (collection === "memories" && !validMemorySource(user(req).id, record))
-      return apiError(
-        res,
-        404,
-        "The source activity or conversation was not found.",
-        "NOT_FOUND",
-      );
-    store.transaction(() => put(user(req).id, collection, record));
+    if (collection === "sessions") {
+      if (!validSessionSource(user(req).id, record))
+        return apiError(
+          res,
+          404,
+          "The source conversation was not found.",
+          "NOT_FOUND",
+        );
+      if (
+        (record.sourceConversationId ?? null) !==
+        (existing.sourceConversationId ?? null)
+      )
+        return apiError(
+          res,
+          409,
+          "An activity's source conversation cannot be changed after it is saved.",
+          "SOURCE_LOCKED",
+        );
+    }
+    if (collection === "memories") {
+      const canonicalExisting = { ...existing };
+      if (
+        !validMemorySource(user(req).id, canonicalExisting) ||
+        !validMemorySource(user(req).id, record)
+      )
+        return apiError(
+          res,
+          404,
+          "The source activity or conversation was not found.",
+          "NOT_FOUND",
+        );
+      if (memoryProvenance(record) !== memoryProvenance(canonicalExisting))
+        return apiError(
+          res,
+          409,
+          "A saved preference's source cannot be changed. You can add a separate manual preference instead.",
+          "SOURCE_LOCKED",
+        );
+    }
+    store.transaction(() => {
+      put(user(req).id, collection, record);
+      if (collection === "memories") resetConversationContext(user(req).id);
+    });
     return res.json({ record });
   });
   app.delete("/api/records/:collection/:id", (req: AuthRequest, res) => {
@@ -444,6 +575,7 @@ export function createApp(config: AppConfig) {
     if (!get(user(req).id, collection, id))
       return apiError(res, 404, "This item was not found.", "NOT_FOUND");
     store.transaction(() => {
+      let memoryRemoved = collection === "memories";
       store.run(
         "DELETE FROM records WHERE user_id=? AND collection=? AND id=?",
         [user(req).id, collection, id],
@@ -453,17 +585,255 @@ export function createApp(config: AppConfig) {
           const linked =
             collection === "conversations"
               ? memory.sourceConversationId === id ||
-                (memory.sourceType === "conversation" && memory.sourceId === id)
+                (memory.sourceType === "conversation" &&
+                  memory.sourceId === id) ||
+                (memory.sourceType === "session" &&
+                  typeof memory.sourceId === "string" &&
+                  get(user(req).id, "sessions", memory.sourceId)
+                    ?.sourceConversationId === id)
               : memory.sourceType === "session" && memory.sourceId === id;
-          if (linked)
+          if (linked) {
+            memoryRemoved = true;
             store.run(
               "DELETE FROM records WHERE user_id=? AND collection=? AND id=?",
               [user(req).id, "memories", memory.id],
             );
+          }
         }
+      if (memoryRemoved) resetConversationContext(user(req).id);
     });
     return res.status(204).end();
   });
+  const currentAccount = (req: AuthRequest) =>
+    store.one<UserRow>(
+      "SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE u.id=? AND t.hash=? AND t.expires_at>?",
+      [user(req).id, tokenHash(req.token!), Date.now()],
+    );
+  const approvedMemories = (owner: string, enabled: boolean): MomentMemory[] =>
+    enabled
+      ? list(owner, "memories")
+          .filter(
+            (memory) =>
+              memory.approved !== false &&
+              Date.parse(memory.createdAt) <= Date.now() &&
+              validMemorySource(owner, memory),
+          )
+          .map((memory) => ({
+            id: memory.id,
+            text: String(
+              memory.text ?? memory.content ?? memory.value ?? "",
+            ).slice(0, 1000),
+          }))
+          .filter((memory) => !!memory.text.trim())
+          .slice(0, 10)
+      : [];
+  app.get("/api/capabilities", (_req, res) =>
+    res.json({
+      voiceTranscription: voiceAvailable(config.ai),
+      aiProvider: provider(config.ai),
+    }),
+  );
+  const generationLocks = new Set<string>();
+  app.post(
+    "/api/moments/generate",
+    asyncRoute(async (req, res) => {
+      const input = z
+        .object({
+          feeling: z.string().trim().min(1).max(2000),
+          environment: z.enum(environments).optional(),
+        })
+        .strict()
+        .parse(req.body);
+      const owner = user(req).id;
+      if (generationLocks.has(owner))
+        return apiError(
+          res,
+          409,
+          "Your moment is still being prepared. Please wait before trying again.",
+          "MOMENT_BUSY",
+        );
+      const memories = approvedMemories(owner, !!user(req).personalization);
+      const savedEnvironment = z
+        .enum(environments)
+        .safeParse(get(owner, "preferences", "wellness")?.environment);
+      generationLocks.add(owner);
+      try {
+        const result = await generateMoment(config.ai, {
+          ...input,
+          environment:
+            input.environment ??
+            (savedEnvironment.success ? savedEnvironment.data : undefined),
+          memories,
+        });
+        const current = currentAccount(req);
+        if (!current)
+          return apiError(
+            res,
+            401,
+            "Your session has expired. Please log in again.",
+            "UNAUTHORIZED",
+          );
+        if (result.usedMemoryIds.length) {
+          const active = approvedMemories(owner, !!current.personalization);
+          if (
+            result.usedMemoryIds.some(
+              (id) =>
+                !active.some(
+                  (memory) =>
+                    memory.id === id &&
+                    memory.text ===
+                      memories.find((previous) => previous.id === id)?.text,
+                ),
+            )
+          )
+            return apiError(
+              res,
+              409,
+              "Your personalization changed while this moment was being prepared. Please try again.",
+              "PERSONALIZATION_CHANGED",
+            );
+        }
+        return res.json(result);
+      } finally {
+        generationLocks.delete(owner);
+      }
+    }),
+  );
+  const weeklyLocks = new Set<string>();
+  app.post(
+    "/api/insights/weekly",
+    asyncRoute(async (req, res) => {
+      const input = z
+        .object({ endDate: calendarDay.optional() })
+        .strict()
+        .parse(req.body ?? {});
+      const owner = user(req).id;
+      const endDate = input.endDate || new Date().toISOString().slice(0, 10);
+      const tomorrow = new Date();
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+      if (endDate > tomorrow.toISOString().slice(0, 10))
+        return apiError(
+          res,
+          400,
+          "Choose this week or an earlier week.",
+          "VALIDATION_ERROR",
+        );
+      if (weeklyLocks.has(owner))
+        return apiError(
+          res,
+          409,
+          "Your weekly reflection is still being prepared.",
+          "WEEKLY_BUSY",
+        );
+      const summary = () =>
+        weeklyFacts(
+          {
+            checkins: list(owner, "checkins"),
+            sessions: list(owner, "sessions"),
+            reflections: list(owner, "reflections"),
+          },
+          endDate,
+        );
+      const initial = summary();
+      weeklyLocks.add(owner);
+      try {
+        const result = await weeklyReflection(config.ai, initial);
+        if (!currentAccount(req))
+          return apiError(
+            res,
+            401,
+            "Your session has expired. Please log in again.",
+            "UNAUTHORIZED",
+          );
+        if (JSON.stringify(summary()) !== JSON.stringify(initial))
+          return apiError(
+            res,
+            409,
+            "Your recorded week changed while this reflection was being prepared. Please try again.",
+            "WEEKLY_CHANGED",
+          );
+        return res.json(result);
+      } finally {
+        weeklyLocks.delete(owner);
+      }
+    }),
+  );
+  const voiceLimit =
+    config.rateLimits === false
+      ? (_req: Request, _res: Response, next: NextFunction) => next()
+      : rateLimit({
+          windowMs: 60000,
+          limit: 12,
+          standardHeaders: "draft-7",
+          legacyHeaders: false,
+          keyGenerator: (req) => user(req).id,
+          message: {
+            error: "Please wait a moment before recording again.",
+            code: "VOICE_RATE_LIMITED",
+          },
+        });
+  const voiceLocks = new Set<string>();
+  app.post(
+    "/api/voice/transcribe",
+    voiceLimit,
+    (req, res, next) => {
+      if (!voiceAvailable(config.ai))
+        return apiError(
+          res,
+          503,
+          "Voice transcription is not configured yet. You can keep talking with text.",
+          "VOICE_NOT_CONFIGURED",
+        );
+      const type = String(req.headers["content-type"] || "")
+        .split(";")[0]
+        .trim()
+        .toLowerCase();
+      if (!audioTypes[type])
+        return apiError(
+          res,
+          415,
+          "Choose a supported audio recording.",
+          "VOICE_INVALID_AUDIO",
+        );
+      next();
+    },
+    express.raw({ type: () => true, limit: "8mb" }),
+    asyncRoute(async (req, res) => {
+      const owner = user(req).id;
+      if (voiceLocks.has(owner))
+        return apiError(
+          res,
+          409,
+          "Your recording is still being transcribed.",
+          "VOICE_BUSY",
+        );
+      if (!Buffer.isBuffer(req.body))
+        return apiError(
+          res,
+          400,
+          "This recording could not be read. Please record again or use text.",
+          "VOICE_INVALID_AUDIO",
+        );
+      voiceLocks.add(owner);
+      try {
+        const result = await transcribeAudio(
+          config.ai,
+          req.body,
+          String(req.headers["content-type"]),
+        );
+        if (!currentAccount(req))
+          return apiError(
+            res,
+            401,
+            "Your session has expired. Please log in again.",
+            "UNAUTHORIZED",
+          );
+        return res.json(result);
+      } finally {
+        voiceLocks.delete(owner);
+      }
+    }),
+  );
   const chatLocks = new Set<string>();
   app.post(
     "/api/chat",
@@ -493,6 +863,10 @@ export function createApp(config: AppConfig) {
           "NOT_FOUND",
         );
       const history = (previous?.messages ?? []) as Message[];
+      const resetCount = Number(previous?.contextResetMessageCount) || 0;
+      const providerHistory = history.slice(
+        Math.max(0, Math.min(history.length, resetCount)),
+      );
       if (
         history.length >= 199 ||
         history.reduce(
@@ -508,15 +882,23 @@ export function createApp(config: AppConfig) {
         );
       chatLocks.add(owner);
       try {
-        const memories = user(req).personalization
-          ? list(owner, "memories")
-              .filter((m) => m.approved !== false)
-              .slice(0, 10)
-              .map((m) =>
-                String(m.text ?? m.content ?? m.value ?? "").slice(0, 1000),
-              )
-              .filter(Boolean)
-          : [];
+        const chatPersonalization = (account: UserRow) =>
+          account.personalization
+            ? {
+                memories: approvedMemories(owner, true),
+                context: list(owner, "checkins")
+                  .slice(0, 3)
+                  .map((record) => ({
+                    id: record.id,
+                    mood: record.mood,
+                    tags: record.tags,
+                    date: record.createdAt,
+                  })),
+              }
+            : null;
+        const personalization = chatPersonalization(user(req));
+        const memories =
+          personalization?.memories.map((memory) => memory.text) || [];
         const context = user(req).personalization
           ? list(owner, "checkins")
               .slice(0, 3)
@@ -525,17 +907,31 @@ export function createApp(config: AppConfig) {
         const reply = await getReply(config.ai, {
           text: input.text,
           name: user(req).name,
-          history,
+          history: providerHistory,
           memories,
           context,
         });
-        // If the account or conversation was removed while the provider was working, never recreate it.
-        if (!store.one("SELECT id FROM users WHERE id=?", [owner]))
+        // A revoked session or deleted account cannot receive/persist a late reply.
+        const currentUser = currentAccount(req);
+        if (!currentUser)
           return apiError(
             res,
             401,
             "Your account is no longer available.",
             "UNAUTHORIZED",
+          );
+        // Deleted/corrected memories and revoked consent take effect before a
+        // pending personalized response can become another active source.
+        if (
+          personalization &&
+          JSON.stringify(chatPersonalization(currentUser)) !==
+            JSON.stringify(personalization)
+        )
+          return apiError(
+            res,
+            409,
+            "Your personalization changed while this reply was being prepared. Please send your message again.",
+            "PERSONALIZATION_CHANGED",
           );
         // Metadata can change while the provider is working (for example a
         // history rename). Re-read it so this reply cannot restore an old title.
@@ -548,6 +944,18 @@ export function createApp(config: AppConfig) {
             404,
             "This conversation was deleted.",
             "NOT_FOUND",
+          );
+        if (
+          current &&
+          (current.contextResetId !== previous?.contextResetId ||
+            current.contextResetMessageCount !==
+              previous?.contextResetMessageCount)
+        )
+          return apiError(
+            res,
+            409,
+            "Your conversation context was reset for privacy while this reply was being prepared. Please send your message again.",
+            "CONTEXT_CHANGED",
           );
         const now = new Date().toISOString();
         const conversation = {
@@ -607,6 +1015,27 @@ export function createApp(config: AppConfig) {
           error.code,
         );
       const message = error instanceof Error ? error.message : "";
+      if (message === "VOICE_NOT_CONFIGURED")
+        return apiError(
+          res,
+          503,
+          "Voice transcription is not configured yet. You can keep talking with text.",
+          "VOICE_NOT_CONFIGURED",
+        );
+      if (message === "VOICE_INVALID_AUDIO")
+        return apiError(
+          res,
+          400,
+          "This recording could not be read. Please record again or use text.",
+          "VOICE_INVALID_AUDIO",
+        );
+      if (message.startsWith("VOICE_"))
+        return apiError(
+          res,
+          502,
+          "This recording could not be transcribed. Please try again or use text.",
+          "VOICE_UNAVAILABLE",
+        );
       if (message === "AI_NOT_CONFIGURED")
         return apiError(
           res,

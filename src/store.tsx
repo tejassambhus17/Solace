@@ -19,6 +19,31 @@ import {
   type WritingCollection,
 } from "./offline";
 
+import type { SolaceMoment } from "../server/src/moment-contract";
+
+export type MomentResult = {
+  activity: SolaceMoment | null;
+  provider: "live" | "offline";
+  explanation: string;
+  usedMemoryIds: string[];
+  support?: boolean;
+  message?: string;
+};
+export type WeeklyReflectionResult = {
+  provider: "live" | "offline";
+  reflection: string;
+  facts: {
+    checkins: number;
+    completedSessions: number;
+    minutes: number;
+    reflections: number;
+    helpfulSessions: number;
+    days: string[];
+  };
+  period: { start: string; end: string };
+  explanation: string;
+};
+
 export type Item = Record<string, any> & { id?: string };
 export type Collection =
   | "checkins"
@@ -29,10 +54,12 @@ export type Collection =
   | "memories"
   | "reminders"
   | "plans"
-  | "favorites";
+  | "favorites"
+  | "preferences"
+  | "goals";
 export type Data = Record<Collection, Item[]>;
 export type EditorDraft = Record<string, string>;
-const mainTabs = new Set(["today", "chat", "explore", "journey", "profile"]);
+const mainTabs = new Set(["today", "chat", "journey", "profile"]);
 const mainTabFor = (name: string) =>
   name === "solace" ? "chat" : mainTabs.has(name) ? name : null;
 const emptyData = (): Data => ({
@@ -45,6 +72,8 @@ const emptyData = (): Data => ({
   reminders: [],
   plans: [],
   favorites: [],
+  preferences: [],
+  goals: [],
 });
 const apiConfiguration = resolveApiConfiguration({
   configuredUrl: process.env.EXPO_PUBLIC_API_URL,
@@ -110,6 +139,19 @@ export type AppState = {
   back: () => void;
   setTab: (name: string) => void;
   chat: (text: string, conversationId?: string) => Promise<any>;
+  generateMoment: (
+    feeling: string,
+    environment?: "forest" | "ocean" | "twilight",
+  ) => Promise<MomentResult>;
+  weeklyReflection: (endDate?: string) => Promise<WeeklyReflectionResult>;
+  capabilities: () => Promise<{
+    voiceTranscription: boolean;
+    aiProvider: "live" | "offline";
+  }>;
+  transcribeVoice: (
+    audio: ArrayBuffer,
+    contentType: string,
+  ) => Promise<{ text: string; provider: "live" }>;
   updateUser: (changes: Item) => Promise<void>;
   deleteAccount: () => Promise<void>;
   exportData: () => Promise<any>;
@@ -127,7 +169,14 @@ async function request(
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
-    path === "/chat" ? 45000 : 15000,
+    [
+      "/chat",
+      "/moments/generate",
+      "/insights/weekly",
+      "/voice/transcribe",
+    ].includes(path)
+      ? 45000
+      : 15000,
   );
   try {
     let response: Response;
@@ -384,7 +433,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertSession(version);
     // A snapshot requested before a local save must not erase that newer save.
     if (startedAt === revision.current) {
-      setData(mergePending(result.data));
+      setData(mergePending({ ...emptyData(), ...result.data }));
       setUser(result.user);
     }
   };
@@ -750,9 +799,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }));
       return saved;
     }
+    const createWithId =
+      !!id &&
+      ["sessions", "preferences", "goals"].includes(collection) &&
+      !data[collection].some((item) => item.id === id);
+    const updating = !!id && !createWithId;
     const result = await authenticatedRequest(
-      `/records/${collection}${id ? "/" + encodeURIComponent(id) : ""}`,
-      { method: id ? "PATCH" : "POST", body: JSON.stringify(record) },
+      `/records/${collection}${updating ? "/" + encodeURIComponent(id!) : ""}`,
+      { method: updating ? "PATCH" : "POST", body: JSON.stringify(record) },
       version,
     );
     assertSession(version);
@@ -760,7 +814,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     revision.current += 1;
     setData((prev) => ({
       ...prev,
-      [collection]: id
+      [collection]: updating
         ? prev[collection].map((x) => (x.id === id ? saved : x))
         : [saved, ...prev[collection].filter((item) => item.id !== saved.id)],
     }));
@@ -831,6 +885,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     return result;
   };
+  const featureRequest = async (path: string, options: RequestInit = {}) => {
+    const version = draftGeneration;
+    const result = await authenticatedRequest(path, options, version);
+    assertSession(version);
+    return result;
+  };
+  const generateMoment = (
+    feeling: string,
+    environment?: "forest" | "ocean" | "twilight",
+  ): Promise<MomentResult> =>
+    featureRequest("/moments/generate", {
+      method: "POST",
+      body: JSON.stringify({ feeling, environment }),
+    });
+  const weeklyReflection = (
+    endDate?: string,
+  ): Promise<WeeklyReflectionResult> =>
+    featureRequest("/insights/weekly", {
+      method: "POST",
+      body: JSON.stringify({ endDate }),
+    });
+  const capabilities = () => featureRequest("/capabilities");
+  const transcribeVoice = (audio: ArrayBuffer, contentType: string) =>
+    featureRequest("/voice/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body: audio,
+    });
   const updateUser = async (changes: Item) => {
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
@@ -1036,6 +1118,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         back,
         setTab,
         chat,
+        generateMoment,
+        weeklyReflection,
+        capabilities,
+        transcribeVoice,
         updateUser,
         deleteAccount,
         exportData,

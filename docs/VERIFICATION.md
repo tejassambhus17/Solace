@@ -248,3 +248,62 @@ This proves local browser signup/login/logout, browser session restoration and c
 Mac/iPhone simulator signup and native restart are deferred by the user. Real-provider credentials and a successful real AI response are also deferred while authentication repair is prioritized. Use docs/LOCAL_DEVELOPMENT.md for the Mac handoff and exact acceptance steps. Live-provider adapter stubs and built-in responses are not substitutes for that evidence.
 
 Public HTTPS hosting, final installable APK tested on a physical device, native permissions/reminder delivery/tap behavior, iOS build verification, device performance and the final demo remain release work. No new Docker setup or branch was introduced. Existing root install audit still reports five moderate toolchain findings; the server install reports zero. No forced Expo downgrade was applied. The older compilation-check APK remains unchanged.
+
+
+## Connected feature implementation — 6 November 2026
+
+The user explicitly requested implementation without questions and deferred provider, hosting and device setup. Feature development proceeded on the repaired local foundation. This checkpoint implements the master feature flows; it does not mark deferred external acceptance as passed.
+
+### Implementation and files
+
+- Four tabs in workspace order: Today, Solace, Journey, Profile. App.tsx, Navigation.tsx and store.tsx preserve the existing account/session lifecycle. Today and chat reach Moments; the practice library retains all previous tools and now has an explicit Back action.
+- Moments.tsx, moments.ts and the pure server moment-contract.ts connect a feeling to a bounded activity preview, accurate provider/memory explanation, timed player, background pause, environment selection, exit guard, feedback and retry-safe persisted completion. Chat carries its latest message and owned conversation ID through the activity and back to the conversation.
+- Companion.tsx and Environment.tsx provide the six interaction states, reduced motion and forest/ocean/twilight scenes. Original optional WAV ambience is documented in assets/AMBIENT_AUDIO.md. Asset-backed views and code geometry extend the existing botanical identity.
+- Journey.tsx/progress.ts add month/day history, actual completed minutes/helpfulness, factual weekly reflections, editable/pauseable goals, optional streaks and record-derived milestones. Profile memory controls add category, correction, source navigation, approval and explicit clear-all. No automatic memory save is claimed.
+- VoiceControls/VoiceControlsImpl, AmbientSound/AmbientSoundImpl, native-features.ts and voice-session.ts provide capability-aware recording, bounded authenticated transcription, explicit transcript review, manual send, optional device TTS, cancellation and safe older-build fallbacks. Native imports are gated before evaluation. A transcript that exceeds the composer's remaining capacity stays reviewable rather than being silently truncated.
+- Server moments.ts/weekly.ts/voice.ts, app.ts and validation.ts add the private feature routes and preferences/goals/generated-session persistence. Approved-memory changes reset future provider history without erasing visible chats; late stale replies are rejected. Conversation deletion cascades through direct and indirect session-derived memories, including legacy records. Source ownership and immutable provenance are enforced.
+- Urgent-language routing includes explicit first-person death wishes and inability to stay safe, including typographic apostrophes. Both chat and Moments prioritize the existing human-support response without a generated activity or provider call. Ordinary tiredness, idioms and negation have regressions. This is bounded keyword routing, not clinically validated detection. Human-support priority is consistent with [NHS urgent-help guidance](https://www.nhs.uk/nhs-services/mental-health-services/where-to-get-urgent-help-for-mental-health/).
+
+### Automated checks actually run
+
+**193 tests passed on selected Node 24.22.1:**
+
+| Suite | Passed | Main evidence |
+|---|---:|---|
+| Server integration/process | 61 | Auth/isolation/persistence, structured/provider failures, memory consent/provenance/deletion races, weekly facts, bounded voice transports, restart/startup safety |
+| Development tooling | 18 | Lockfiles/runtime/readiness, private Metro environment, source API authentication and process cleanup |
+| Provider/session state | 28 | Account-generation guards, raw authenticated voice, new collection creation, drafts/offline/session recovery |
+| API configuration | 10 | Platform defaults, URL safety, production HTTPS and Expo URL implementation |
+| Moment clock | 7 | Real active time, pause gaps, completion/phase/step bounds, safe input |
+| Journey progress | 9 | Calendar boundaries, actual records, goals, completion/helpfulness and empty states |
+| Voice turn lifecycle | 14 | Permission denial, failures/retry, byte/text bounds, cancellation/start/stop races and late-account protection |
+| Native config/compatibility | 6 | Actual Expo plugin introspection plus controlled missing-module fallbacks |
+| Routine / vault / weekly helpers | 27 | 10 routine, 8 protected-writing, 9 weekly-data regressions |
+| Wellness / reminders | 13 | 7 wellness facts, 6 mocked notification coordination regressions |
+
+Client/server TypeScript, production API compilation, formatting and final web, Android/Hermes and iOS/Hermes exports passed. Exports are JavaScript/bundle checks, not installed native builds. The production native exports lack a deployed HTTPS API and are not functional release artifacts. The old compilation-only APK remains unchanged.
+
+Expo configuration introspection caught and verified the fix for a real cross-plugin conflict: the old photo-picker microphonePermission:false blocked Android RECORD_AUDIO. Both plugins now use the voice purpose string. The resulting configuration permits recording, leaves the unused iOS camera permission absent, and enables neither background audio recording nor playback services. Older binaries without new audio modules render honest text/quiet fallbacks; that path is tested with controlled registry fixtures, not an actual old device binary.
+
+A relocated ambient implementation initially retained its former relative WAV paths, causing export/HMR failures. Those paths were corrected. A fresh Metro cache/reload, all three final exports and actual browser audio controls then passed. The failed attempts are not counted as successful verification. One earlier locator timed out while cold Metro was compiling alongside exports; the app loaded successfully afterward. No startup/device performance guarantee is inferred from this development run.
+
+### Browser journeys actually observed
+
+Using the synthetic Avery QA account against the real local API, with live AI off:
+
+1. Reviewed the four-tab shell, Moments builder/player, Journey, memory and onboarding at effective 390×845 CSS phone width in dark/light themes. Reviewed the centered layout at 1281×900; document scrollWidth equaled viewport width. A final compact-preset adjustment left Create my Moment ending near 713px and navigation starting near 769px.
+2. Generated a built-in 60-second breathing Moment from a selected feeling. The preview accurately labeled live AI off and explained the directly supplied feeling. Saved Ocean as the preferred environment; it survived reauthentication/restart.
+3. Started the actual timer and optional ambience. At 0:48, paused, switched Ocean → Twilight → Forest and opened exit confirmation. Time remained 0:48 while paused; Keep going resumed it. Browser playback status changed between playing and paused. Completed the full active minute, selected Helped, added a synthetic QA note and saved the session.
+4. Followed Remember what helped. Its source-linked text was only prefilled. Explicitly saved an Activities preference, corrected its wording, and enabled personalization. A later generated suggestion named that exact approved preference in its explanation. Native privacy/consent prompts were not exercised.
+5. Journey showed the actual saved session, one minute and self-reported helpfulness. Created a factual recorded weekly reflection, saved a five-minute goal, paused/resumed it, and expanded the earned first-Moment milestone. Other milestones stayed unearned. Streaks were off by default.
+6. Opened the microphone control with transcription unconfigured; it offered a clear text fallback and availability retry, without requesting microphone permission or inventing a transcript. Text chat remained functional. Device/browser TTS emitted a speaking event, changed the companion and Stop reading reply control, and stopped on request. This verifies browser playback state, not native hardware routing or perceived sound.
+7. Logged out, reviewed the new onboarding introduction, opened signup, returned to login and reauthenticated. Session, goal, environment and approved memory persisted. Restarted the entire API/Expo stack and reloaded; account state returned.
+8. Followed chat's Make a Moment action; the latest message prefilled the feeling field. Completed and saved a second actual 60-second Moment in Ocean without helpfulness feedback. Continue your conversation reopened the retained chat. Journey's goal progress reported 120 of 300 seconds / 2 of 5 minutes. The two completions straddle the local midnight boundary; daily and weekly history retained their real dates.
+9. Verified final lazy audio imports with a clean bundle: read-aloud start/stop, a brief ambient practice, and leaving without saving. Brief verification practices were not recorded as completions. Final Moment progress exposed actual 0/60-second ARIA values; goal progress exposed actual 120/300-second values. The full library remained reachable with Back navigation.
+10. Final post-fix browser error-level log list was empty. Restored the normal viewport and left the local Moments preview available. Screenshots are in docs/screenshots/features-*.png. Earlier raw captures contain browser-renderer padding; final phone captures use the browser's screenshot clip API without retouching UI.
+
+### Deferred acceptance and known limits
+
+Live AI generation/conversation/weekly reflection and real transcription require private provider configuration and actual provider evaluation. Mock transport tests and built-in activities do not prove those services. Native recording/permission denial, audio routing, app lifecycle, OS accessibility, glass materials, reminder/background/tap behavior, physical-device performance and native installable builds remain unverified. New audio/speech modules require a rebuilt native binary for those features; the guarded fallback is not native voice verification.
+
+Public HTTPS deployment, a final APK tested on physical hardware, Mac/iOS simulator acceptance and final demo/submission remain deliberately deferred. The existing SQL.js adapter is single-instance, full account state is still loaded as a snapshot, cold offline launch still requires session restoration, and prior root toolchain audit findings remain documented above. No Docker, public social features, extra branch or real credential was introduced.

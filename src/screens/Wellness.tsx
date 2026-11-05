@@ -2213,7 +2213,37 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                 ? "A completed practice"
                 : "The time you made for yourself"}
             </Heading>
-            {record.type === "breathing" && (
+            {record.kind === "generated" && record.activity && (
+              <View style={{ gap: 12, marginTop: 14 }}>
+                <Copy>
+                  {clock(record.durationSec || 0)} of active time ·{" "}
+                  {record.environment === "ocean"
+                    ? "Ocean Calm"
+                    : record.environment === "twilight"
+                      ? "Twilight Sky"
+                      : "Forest Sanctuary"}
+                </Copy>
+                <Copy>{record.activity.description}</Copy>
+                <Hint>
+                  {record.provider === "live"
+                    ? "Created with AI for this saved Moment."
+                    : "Built-in Moment · Live AI was off."}
+                </Hint>
+                <Button
+                  title="Try this Moment again"
+                  variant="secondary"
+                  onPress={() =>
+                    app.navigate("moment-player", {
+                      activity: record.activity,
+                      provider: record.provider || "offline",
+                      explanation: "A Moment you previously saved.",
+                      usedMemoryIds: [],
+                    })
+                  }
+                />
+              </View>
+            )}
+            {record.type === "breathing" && record.kind !== "generated" && (
               <Copy style={{ marginTop: 12 }}>
                 {clock(record.durationSec ?? record.duration ?? 0)} of{" "}
                 {clock(

@@ -24,7 +24,7 @@
         {
           "photosPermission": "Choose a profile photo for your Solace account.",
           "cameraPermission": false,
-          "microphonePermission": false,
+          "microphonePermission": "Record a voice message for Solace. Audio is sent for transcription only when you stop recording.",
           "colors": {
             "cropToolbarColor": "#FBF0E8",
             "cropToolbarIconColor": "#183A2B",
@@ -37,6 +37,15 @@
               "cropBackgroundColor": "#000000"
             }
           }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Record a voice message for Solace. Audio is sent for transcription only when you stop recording.",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
         }
       ]
     ],

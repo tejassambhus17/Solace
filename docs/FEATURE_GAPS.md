@@ -1,58 +1,49 @@
-# Feature comparison and release priorities
+# Feature implementation and remaining release work
 
-Reviewed 5 November 2026 against the original 11-page hackathon brief, approved design sheets, current application source, and local checks. Implemented means present in source; verified means an actual check recorded in VERIFICATION.md.
+Compared against the original hackathon brief, approved Solace design references and the user's master implementation prompt. This is the current checkpoint; earlier five-tab and planned-only feature comparisons are historical. The user explicitly asked to implement features now and perform service/device setups later. No setup question is needed to continue implementation.
 
-## Existing experience retained and refined
+## Master feature coverage
 
-| Journey | Current implementation | Work in this pass |
+| Requested experience | Implemented code | Evidence and practical limit |
 |---|---|---|
-| Start your space | Welcome, signup, login, secure sessions | More faithful botanical layout, explicit AI role, form labels, password visibility, session-load recovery; removed upper-right profile shortcut |
-| Daily arrival | Greeting, check-in, featured activity, affirmation, tools | Time-aware greeting, same-day saved mood, organic mood stones, dedicated light/dark artwork; no duplicate profile control |
-| Talk and act | Saved conversations, history, breathing/journal actions | Fixed composer, draft continuity, visible provider mode, activity metadata retained, latest-active history order |
-| Reflect and return | Three reflective assessments, journal, breathing, optional feedback | Consistent type/spacing, selected semantics and larger controls; browser timer-to-feedback-to-conversation checked |
-| Learn and practice | Five resource categories, sleep tools, plan, affirmations, challenge | More consistent headers and interaction states; saved resource progress can be cleared |
-| See participation | Mood week, moments, reflections, factual XP/streak/milestones | Theme-consistent mood stones, improved empty state, compact visual hierarchy |
-| Control your space | Profile, themes, optional memories, reminders, export/deletion | Botanical profile, clearer settings, reminder edits preserve scheduling coordination, external-link errors |
+| A recognizable companion | Lightweight reusable petal with actual-event idle/listening/thinking/speaking/celebration/breathing states and reduced motion | Browser activity/earned-milestone states and lifecycle regressions; native microphone/TTS state correspondence still needs a device |
+| AI-generated Moments | Authenticated schema-validated structured activity generation, relevant curated alternative with accurate provider labels, memory explanation and urgent-support routing | Server/provider-adapter tests and actual curated browser flow; no real-provider response is claimed |
+| Complete activity player | Guidance, active-time progress, pause/resume, background pause, exit confirmation, environment/ambience, completion/helpfulness persistence and retry | Actual local 60-second completion and paused-clock/environment/audio checks; native interruption/performance/audio pending |
+| Explainable memory | Explicit save/approval, categories, source links, edit/delete/clear-all, global consent and editable completion suggestions without autosave | Actual browser save/edit/consent plus server ownership/consent/deletion/race coverage |
+| Effective memory deletion | Source deletion cascades derived memories; edit/delete/consent-off resets future provider chat context and rejects stale-context pending replies while preserving visible/exportable history | Server regressions; previously transmitted data remains subject to the configured provider's policies |
+| Mood/activity insights | Selectable monthly calendar, daily history, actual completed minutes, optional helpfulness, truthful weekly summaries and bounded AI reflection adapter | Pure facts/date tests and actual browser Journey/recorded-summary flow; real AI quality evaluation deferred |
+| Turn-based voice | Expo Audio permission/start/stop, bounded authenticated transcription transport, explicit transcript review, manual send, retry/text fallback and Expo Speech callbacks | Controlled lifecycle/transport and actual Expo permission-configuration tests; real microphone, OS permission denial, transcription and native playback unverified |
+| Three environments | Forest Sanctuary, Ocean Calm and Twilight Sky with lightweight scenes, reduced motion, original bundled ambient loops and persisted preferences | Browser environment switching and playback status observed; installed native sound/background behavior pending |
+| Gentle gamification | Personal weekly time goals with pause/resume, optional streaks and milestones from persisted records; no wellbeing/competitive score | Progress tests and actual saved goal/earned-milestone browser evidence; no fabricated unlock data |
+| Premium coherent navigation | Four tabs Today, Solace, Journey, Profile; Moments from Today/Solace and full earlier library preserved under Moments | Botanical light/black design tokens retained; current browser inspection recorded separately from native glass/accessibility |
 
-## Must finish before submission
+## Foundations preserved
 
-| Priority | Gap | Concrete completion evidence |
+Signup/login/logout and account-specific persistence, saved/continued/deleted conversations, mood check-ins, existing breathing/grounding/reflection flows, assessments, guides, toolkit, plans, affirmations, private photos, reminder preferences/scheduling/tap routes, writing protection and export/deletion remain implemented. No social/community scope was added.
+
+The foundation repair includes dual-lockfile installs, selected supported Node, diagnostic checks, server-root private configuration, truthful startup readiness and port-before-database safety. Local authentication and chat storage across actual process restarts have evidence. The Windows checkout does not prove that the deferred Mac simulator can connect or that native SecureStore survives an actual installed-app restart.
+
+## Deferred release gates
+
+| Priority | Remaining work | Required completion evidence |
 |---|---|---|
-| P0 | Real AI is unconfigured | Configure provider privately in server/.env; exercise contextual multi-turn replies, consent behavior, errors and activity suggestions against the actual provider |
-| P0 | No public HTTPS API | Deploy the server with a persistent database disk, production origins/proxy configuration and HTTPS; verify account-scoped persistence after restart |
-| P0 | No usable final phone build | Build a fresh installable APK against that HTTPS URL; fresh-install and test the exact artifact on a physical Android phone |
-| P0 | Reminder delivery unverified | On that build, test permission denial, edits, foreground/background/closed delivery, logout cleanup and destination taps |
-| P0 | Final demo missing | Record the final installed build, showing check-in → conversation → suggested activity → feedback → Journey, plus history and controls |
-| P1 | Native UX evidence incomplete | Check keyboard, safe areas, Android Back, reduced motion, large text, system theme, interruptions and offline recovery on device |
+| P0 | Real provider configuration/evaluation | Privately configure the backend; run actual contextual chat, structured Moment, weekly reflection and speech transcription; evaluate consent, failures and safety with real responses |
+| P0 | Public HTTPS API | Reachable deployment with persistent database, production origins/proxy settings, restart persistence and cross-account checks |
+| P0 | Final Android artifact | New installable APK with the new native modules and HTTPS endpoint; fresh-install and test the exact artifact on a physical phone |
+| P0 | Native reminders | Verify permission denial, schedule/edit/cancel, foreground/background/closed delivery, logout cleanup and notification taps on that installed build |
+| P0 | iOS verification | Build/run the actual simulator/native app; verify signup, native session restart, microphone/TTS, safe areas, keyboard, accessibility, materials and interruptions |
+| P0 | Final demo/submission | Record the final installed build's real end-to-end journey and verify the submitted artifacts before 10 November 2026, 11:59 AM IST |
+| P1 | Device quality/performance | Measure startup, responsiveness, memory/GPU use, reduced motion, large text, VoiceOver/TalkBack, gestures and network recovery on target hardware |
 
-The existing `outputs/solace-build-validation.apk` remains a compilation artifact with the development emulator endpoint. It has not been replaced or relabeled as a functional release. Prior decisions to defer hosting/provider configuration remain respected.
+The user deferred these setups; that is not a passed test. The existing `outputs/solace-build-validation.apk` is still a compilation artifact with an emulator development endpoint. It does not contain the current feature source and has not been relabeled as a release. JavaScript/Hermes exports do not update or validate an installed native app.
 
-## Optional enhancements after those gates
+## Engineering limits kept explicit
 
-- Expand real AI action routing beyond breathing and reflection to plans, affirmations and challenges, with explicit structured actions and tests.
-- Add consent-controlled assessment context when it is useful and clearly explained.
-- Consider restrained native haptic feedback after physical-device evaluation.
-- Password reset needs real email delivery and recovery verification before a reset control can claim success. OAuth, remote push and social feeds are not implemented.
+- Full account snapshots and SQL.js's single-instance storage remain scaling limits. Public operation needs HTTPS, private persistent disk, backups and a controlled proxy/origin configuration; SQLite is not application-encrypted.
+- Native writing protection is bounded and debounced. Abrupt termination can lose uncommitted edits; cold launch needs API session restoration. Web writing is tab-memory only. Unsynced entries do not earn account achievements, and chat is not offline-queued.
+- Built-in replies, curated daily content and the local recorded weekly summary are not presented as live AI. Provider transport/schema failures remain recoverable rather than silently fabricating success.
+- Native audio and system-material additions require rebuilding the app. Existing Expo Go/development binaries may need the text fallback until the new native modules are present.
+- Current toolchain audit findings are recorded in VERIFICATION.md; no forced Expo downgrade or unverified cross-major patch was applied.
+- Email password reset, OAuth, remote push, therapist booking and social feeds are not implemented. Do not add controls that claim those external operations succeeded.
 
-Home affirmations, the featured reset and resource content are curated, not dynamically generated AI recommendations. Voice, widgets, therapist booking and a social network are not established requirements. The brief's isolated “follow, post, message” line still needs organizer clarification.
-
-## Follow-up improvements
-
-The subsequent user-requested pass replaces the dark palette with true black/neutral charcoal, adds title/message search, inline conversation renaming and a latest-conversation resume entry. Check-in/journal/feedback drafts stay account-scoped in memory; session expiry supports same-account resumption. Concurrency fixes cover renamed chats during pending replies, stale credentials/snapshots and late reminder work after logout. These additions improve continuity and recovery, without changing the external release gates above.
-
-## Added in the dark-artwork pass
-
-- Account-persistent saved toolkit for known resources, breathing, reflection and grounding, including idempotent retry behavior and full export/deletion/isolation coverage.
-- Optional five-senses grounding connected to feedback and Journey, with accessible alternatives, skipped-sense handling and honest incomplete-session counts.
-- Seven-day factual review with a weekly reflection prompt, based entirely on stored records rather than invented AI insight.
-- Three new production dark assets, cached history search data, bounded initial row rendering, fewer timer display renders and reader-aware chat scrolling.
-
-These do not replace the existing live-provider/HTTPS/final-APK/device/demo gates. Full state snapshots and a single-replica SQLite adapter remain scaling limits; this pass does not claim native performance benchmarks or full offline persistence.
-
-## Latest simplicity and native-material pass
-
-Implemented the recommended curated daily pause and protected writing, then separated discovery into Explore under the user's explicit new-tab authorization. Today now offers one next step; Journey hides optional milestones until expanded. Added private profile photos with image validation, metadata stripping and account isolation. The black base now has restrained lilac/peach/sage semantic activity surfaces. Navigation uses guarded native Liquid Glass on supported iOS, native blur/opaque accessibility fallbacks and an Android tonal indicator/ripple treatment.
-
-Native draft protection uses debounced SecureStore writes and a bounded retry queue; actual device force-quit/restore and keychain behavior still require verification. Web is intentionally memory-only. A cold offline launch still needs successful API session restoration before the private vault opens; this is protected writing during an authenticated session, not a complete offline account cache. Chat is not offline-queued.
-
-The external release gates above remain. New native libraries require a rebuilt app. Native iOS glass, accessibility, photo permissions/cropping, large text, Android keyboard/gestures, reminders and final performance must be checked on installed hardware.
+The current feature implementation is reviewable locally, with 193 regressions passing at this checkpoint. Production/submission readiness remains a separate outcome governed by the deferred live, deployment, installed-build and demonstration checks above. Exact test counts and actual browser evidence belong in [VERIFICATION.md](VERIFICATION.md).

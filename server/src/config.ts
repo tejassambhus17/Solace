@@ -34,6 +34,8 @@ export function readServerConfig(
     mode: mode as AIConfig["mode"],
     apiKey,
     model: environment.OPENAI_MODEL ?? "gpt-4.1-mini",
+    transcriptionModel:
+      environment.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-transcribe",
     baseUrl: environment.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
   };
   return {

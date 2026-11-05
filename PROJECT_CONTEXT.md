@@ -34,3 +34,10 @@ The user found the simplified home generic and the dark mode visually weak. The 
 
 ## Master implementation brief and authentication priority
 The master brief requests Today, Solace, Moments, Journey; the subsequently supplied workspace instructions preserve Today, Solace, Journey, Profile. Resolve the navigation difference before a future navigation change. Do not migrate the current five-tab interface during backend repair. Preserve the current working app while fixing separate root/server installation and simulator API configuration. On 5 November the user explicitly deferred Mac access and selected authentication repair before provider configuration. Actual local process/auth tests, Mac simulator checks and real-provider evaluation must be reported separately. Follow docs/IMPLEMENTATION_PLAN.md; do not introduce Docker or unrelated branch work.
+
+
+## Latest execution direction — features before external setup
+
+The user explicitly asked to implement the full app now without questions and defer setups. The locally verified authentication repair is no longer a blocker for feature implementation. Follow the supplied workspace's four-tab order (Today, Solace, Journey, Profile); Moments is a first-class detail experience from Today/chat, and it retains access to Explore's complete library. This resolves the earlier navigation difference for the current implementation.
+
+The code now includes structured Moments/player, six-state petal companion, three ambient environments, explainable editable memories, calendar/time/helpfulness/weekly Journey, personal goals/optional streaks/actual-data milestones, turn-based recording/transcription/review and device TTS. Preserve the original design and working privacy/reminder/account flows. Live-provider configuration/evaluation, public hosting, native installs/device QA and demo are deliberately separate deferred work; never mark them verified from mocks or exports.
