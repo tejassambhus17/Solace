@@ -36,16 +36,15 @@ Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled E
 
 Today is a welcoming daily arrival, not a feature catalogue:
 
-1. Compact brand/date and personal greeting.
-2. One cohesive mood tray with five named moods and an explicit saved-mood state.
+1. Compact brand and personal greeting framed by corner foliage.
+2. One cohesive mood tray with five watercolor petal illustrations and a checked label for the saved mood.
 3. An illustrated **Your daily pause** hero with one primary action and a quiet factual three-step path.
-4. Conversation continuation and a short daily affirmation footer.
 
 The hero changes its title and action for check-in, curated practice, reflection and completed states. Always use `pickDailyRoutine`'s actual next route/parameters. Completing the pause keeps the recorded progress and offers an optional three-minute breathing moment; it must not manufacture completion, assign another goal, or imply clinical benefit.
 
 During the practice stage, **Why this pause?** expands the curated reason. Historical preferences/helpful feedback require personalization consent; directly supplied current-day mood can guide a local curated option. Keep these facts understandable without placing a paragraph of explanation in the default hero.
 
-The three-step path is supported by actual saved account/device records. Its accessible progress value reports the real count out of three. The daily affirmation is stable for the device day and opens the existing affirmation screen/save flow; do not claim it is dynamically generated AI or automatically saved.
+The three-step path is supported by actual saved account and device records. Its accessible progress value reports the real count out of three. The daily affirmation is available in Explore.
 
 ## Explore and supporting screens
 
@@ -55,7 +54,7 @@ Journey emphasizes factual weekly history and reflection. Participation mileston
 
 ## Artwork and implementation
 
-`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with generated `assets/daily-pause-dark-v2.png`. A shared readability scrim uses React Native 0.88's supported `backgroundImage` property, with no new gradient dependency. Text, progress and controls are rendered separately in code. Keep the left reading zone clear and crop decorative petals/leaves around it. The same component supports Today and Explore.
+`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with `assets/daily-pause-dark-v2.png` for shared practice artwork. Today uses `assets/today-pause-light.jpg` in light appearance to match the selected card. Text, progress, and controls are rendered separately. Keep the left reading zone clear and frame it with decorative petals and leaves.
 
 Artwork and decorative icons are hidden from assistive technology and cannot intercept controls. Keep explicit accessible names, expanded/selected states, and progress values on meaningful UI. Bundling and browser rendering do not establish native scrim projection, VoiceOver/TalkBack behavior or device contrast.
 
@@ -79,6 +78,8 @@ Private profile photos have real choose/save/remove/cancel/error states and rema
 ## Moments, companion and Journey
 
 Extend the established botanical world with the small petal companion; do not introduce another brand logo beside it in the chat header. Idle, listening, thinking, speaking, celebration and breathing states reflect actual interactions. Respect the OS reduced-motion setting from the first render. The companion does not infer a person's emotions.
+
+Solace chat uses warm rounded bubbles, two contextual quick replies, and a reset card with artwork for each theme. The microphone and paper plane belong to the composer row. Voice Talk opens from the headset and centers the companion, recording control, editable draft, and spoken reply. The reply itself identifies its source. Urgent replies surface the support action alongside the response.
 
 Moments uses one feeling field, three quiet environment choices and a validated activity preview with a clear source and optional explanation. The immersive player hides tabs, keeps Begin/Pause and sound controls in a safe-area footer, pauses on app backgrounding and environment changes, and confirms exit after starting. Forest uses the existing botanical image, Ocean uses calm geometric wave layers, and Twilight reuses moonlit art; all three preserve black app chrome in dark mode. Original synthesized ambience is optional and starts off. No therapeutic effect is attributed to art, sound or a completed timer.
 

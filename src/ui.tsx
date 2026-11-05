@@ -11,6 +11,7 @@ import {
   StyleProp,
   TextStyle,
   Image,
+  ImageSourcePropType,
   ImageStyle,
   ActivityIndicator,
   ScrollViewProps,
@@ -588,5 +589,32 @@ export function MoodStone({
         }}
       />
     </View>
+  );
+}
+
+export const moodPetals = [
+  { mood: "Okay", image: require("../assets/mood-okay.png") },
+  { mood: "Calm", image: require("../assets/mood-calm.png") },
+  { mood: "Low", image: require("../assets/mood-low.png") },
+  { mood: "Stressed", image: require("../assets/mood-stressed.png") },
+  { mood: "Great", image: require("../assets/mood-great.png") },
+] as const;
+
+export function MoodPetal({
+  source,
+  style,
+}: {
+  source: ImageSourcePropType;
+  style: StyleProp<ImageStyle>;
+}) {
+  return (
+    <Image
+      source={source}
+      accessible={false}
+      accessibilityIgnoresInvertColors
+      resizeMode="contain"
+      fadeDuration={0}
+      style={style}
+    />
   );
 }

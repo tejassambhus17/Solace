@@ -1,5 +1,9 @@
 # Artwork provenance
 
+## Today and Solace reference update
+
+The built-in ImageGen tool recreated the five watercolor petals from the supplied mood strip and the botanical card art from the supplied Today and Solace mockup. The transparent strip was cropped into `mood-okay.png`, `mood-calm.png`, `mood-low.png`, `mood-stressed.png`, and `mood-great.png`. The reference's light pause illustration was recreated as `today-pause-light.jpg`. The reset artwork was packaged as `chat-reset-light.jpg` and `chat-reset-dark.jpg`, with the pale peach and muted charcoal backgrounds leaving room for live type. The app renders its text and controls as React Native elements.
+
 The existing petal.png and botanical.png remain from the initial app build. This pass added moment-light.png and moment-dark.png using the built-in ImageGen tool, not a provider key from the application. No reference mockup was used as a screenshot background. Both assets are 1536×1024 PNGs; UI copy and controls are rendered in React Native. The original outputs are retained in Codex generated_images; project copies live here.
 
 ## Light prompt

@@ -113,7 +113,9 @@ test("an older native binary renders text fallbacks without evaluating missing a
       if (name === "react")
         return {
           __esModule: true,
+          useState: (initial) => [initial, () => {}],
           default: {
+            Fragment: "Fragment",
             createElement: (type, props, ...children) => ({
               type,
               props,
@@ -123,15 +125,25 @@ test("an older native binary renders text fallbacks without evaluating missing a
         };
       if (name === "react-native") return { Platform: { OS: platform } };
       if (name === "expo") return { requireOptionalNativeModule: () => null };
-      if (name === "./ui") return { AppText: "AppText" };
+      if (name === "./ui")
+        return { AppText: "AppText", IconButton: "IconButton" };
       if (name === "./theme")
         return { useTheme: () => ({ colors: { muted: "#aaa" } }) };
       if (name === "./native-features") return featureGuard;
       throw Error(`A missing native implementation was evaluated: ${name}`);
     };
+    const { VoiceControls } = loadSource("VoiceControls.tsx", requireMock);
+    const fallback = VoiceControls({
+      variant: "talk",
+      renderComposer: (microphone) => ({ type: "Composer", microphone }),
+    });
+    const rendered = fallback.type(fallback.props);
+    assert.equal(rendered.children[0].type, "AppText");
+    assert.match(rendered.children[0].children[0], /still type your message/);
+    assert.equal(rendered.children[1].type, "Composer");
     assert.equal(
-      loadSource("VoiceControls.tsx", requireMock).VoiceControls({}).type,
-      "AppText",
+      rendered.children[1].microphone.props.label,
+      "Voice availability",
     );
     assert.equal(
       loadSource("AmbientSound.tsx", requireMock).AmbientSound({}).type,

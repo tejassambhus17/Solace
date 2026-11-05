@@ -27,6 +27,7 @@ import {
 } from "./src/screens/Core";
 import { JourneyScreen } from "./src/screens/Journey";
 import { MomentsScreen, MomentPlayerScreen } from "./src/screens/Moments";
+import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
@@ -42,6 +43,13 @@ const profileScreens = new Set([
   "memory",
   "account",
   "support",
+]);
+const immersiveScreens = new Set([
+  "breathing",
+  "moment",
+  "grounding",
+  "moment-player",
+  "voice-talk",
 ]);
 const wellnessScreens = new Set([
   "checkin",
@@ -91,7 +99,7 @@ function Shell() {
     !!app.user &&
     !app.sessionExpired &&
     !keyboardOpen &&
-    !["breathing", "moment", "grounding", "moment-player"].includes(app.route);
+    !immersiveScreens.has(app.route);
   useEffect(() => {
     if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
@@ -110,7 +118,7 @@ function Shell() {
       !app.user ||
       app.sessionExpired ||
       !app.canGoBack ||
-      ["breathing", "moment", "grounding", "moment-player"].includes(app.route)
+      immersiveScreens.has(app.route)
     )
       return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -153,6 +161,7 @@ function Shell() {
   else if (app.route === "today") content = <TodayScreen />;
   else if (app.route === "chat" || app.route === "solace")
     content = <ChatScreen />;
+  else if (app.route === "voice-talk") content = <VoiceTalkScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey") content = <JourneyScreen />;
   else if (app.route === "explore") content = <ExploreScreen />;

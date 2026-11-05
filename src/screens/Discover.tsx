@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AppState, Pressable, View } from "react-native";
+import { AppState, Image, Pressable, View } from "react-native";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import { pickDailyRoutine } from "../routine";
-import { recordDay, todayAffirmation } from "../content";
+import { recordDay } from "../content";
 import {
   AppText,
   BrandMark,
   Button,
   Icon,
-  MoodStone,
+  MoodPetal,
+  moodPetals,
   PauseArtwork,
   Row,
   Screen,
@@ -32,8 +33,8 @@ function useToday() {
 
 const pauseCopy = {
   breathing: {
-    title: "A little\nbreathing room.",
-    detail: "Find a slower rhythm, one breath at a time.",
+    title: "Take a\nmoment",
+    detail: "A short, calming reset to find a little more ease.",
   },
   grounding: {
     title: "Come back\nto this moment.",
@@ -65,15 +66,6 @@ export function TodayScreen() {
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .find((item) => recordDay(item) === day),
     [app.data.checkins, day],
-  );
-  const recent = useMemo(
-    () =>
-      [...app.data.conversations].sort((a, b) =>
-        String(b.updatedAt || b.createdAt).localeCompare(
-          String(a.updatedAt || a.createdAt),
-        ),
-      )[0],
-    [app.data.conversations],
   );
   const first = String(app.user?.name || "there")
     .trim()
@@ -120,31 +112,43 @@ export function TodayScreen() {
     [day, routine.suggestion.activity, next?.id],
   );
   return (
-    <Screen style={{ paddingTop: 14 }}>
-      <Row style={{ justifyContent: "space-between", marginBottom: 18 }}>
-        <BrandMark size={30} />
-        <AppText variant="caption" color={colors.muted}>
-          {now.toLocaleDateString(undefined, {
-            weekday: "short",
-            day: "numeric",
-            month: "short",
-          })}
+    <Screen
+      style={{ paddingTop: 14, paddingHorizontal: 20, overflow: "hidden" }}
+    >
+      <View style={{ paddingHorizontal: 8, paddingBottom: 24 }}>
+        <Image
+          source={require("../../assets/botanical.png")}
+          accessible={false}
+          accessibilityIgnoresInvertColors
+          pointerEvents="none"
+          resizeMode="contain"
+          resizeMethod="resize"
+          fadeDuration={0}
+          style={{
+            position: "absolute",
+            top: -32,
+            right: -102,
+            width: 272,
+            height: 221,
+            opacity: resolved === "dark" ? 0.25 : 0.68,
+            transform: [{ rotate: "24deg" }],
+          }}
+        />
+        <BrandMark size={39} />
+        <AppText
+          variant="display"
+          accessibilityRole="header"
+          style={{ fontSize: 42, lineHeight: 43, marginTop: 35 }}
+        >
+          {greeting}, {first}.
         </AppText>
-      </Row>
-      <AppText
-        variant="display"
-        accessibilityRole="header"
-        style={{ fontSize: 37, lineHeight: 40 }}
-      >
-        {greeting},{"\n"}
-        {first}.
-      </AppText>
-      <AppText
-        color={colors.muted}
-        style={{ marginTop: 7, marginBottom: 23, fontSize: 14 }}
-      >
-        A little space to come back to yourself.
-      </AppText>
+        <AppText
+          color={colors.muted}
+          style={{ maxWidth: 252, marginTop: 9, fontSize: 16, lineHeight: 22 }}
+        >
+          A quieter, kinder space for your mind.
+        </AppText>
+      </View>
       {!!app.pendingWrites.length && (
         <Pressable
           accessibilityRole="button"
@@ -179,24 +183,31 @@ export function TodayScreen() {
           <Icon name="chevron-forward" color={colors.peachText} size={16} />
         </Pressable>
       )}
-      <AppText
-        variant="heading"
-        accessibilityRole="header"
-        style={{ fontSize: 25, lineHeight: 29, marginBottom: 11 }}
-      >
-        How are you feeling?
-      </AppText>
       <View
         style={{
-          padding: 5,
-          borderRadius: 23,
+          paddingHorizontal: 13,
+          paddingTop: 12,
+          paddingBottom: 9,
+          borderRadius: 28,
           backgroundColor: colors.surface,
-          borderWidth: resolved === "dark" ? 1 : 0,
-          borderColor: colors.border,
+          borderWidth: 1,
+          borderColor: resolved === "dark" ? colors.border : colors.primaryText,
         }}
       >
-        <Row style={{ gap: 2 }}>
-          {["Okay", "Calm", "Low", "Stressed", "Great"].map((mood) => {
+        <AppText
+          variant="heading"
+          accessibilityRole="header"
+          style={{
+            fontSize: 29,
+            lineHeight: 32,
+            marginLeft: 3,
+            marginBottom: 8,
+          }}
+        >
+          How are you feeling?
+        </AppText>
+        <Row style={{ gap: 0 }}>
+          {moodPetals.map(({ mood, image }) => {
             const selected = latest?.mood === mood;
             return (
               <Pressable
@@ -206,57 +217,62 @@ export function TodayScreen() {
                 onPress={() => app.navigate("checkin", { mood })}
                 style={({ pressed }) => ({
                   flex: 1,
-                  minHeight: 75,
-                  gap: 5,
-                  paddingVertical: 9,
+                  minWidth: 0,
+                  minHeight: 69,
+                  gap: 3,
+                  paddingVertical: 4,
                   alignItems: "center",
                   justifyContent: "center",
-                  borderRadius: 18,
-                  backgroundColor: selected
-                    ? colors.peachSurface
-                    : pressed
-                      ? colors.surface2
-                      : "transparent",
                   opacity: pressed ? 0.7 : 1,
                 })}
               >
-                <MoodStone mood={mood} size={31} />
-                <AppText
-                  variant="caption"
-                  color={selected ? colors.peachText : colors.muted}
-                  style={{ fontSize: 11 }}
+                <MoodPetal
+                  source={image}
+                  style={{ width: "90%", height: 43, maxWidth: 49 }}
+                />
+                <Row
+                  style={{
+                    gap: 2,
+                    borderRadius: 14,
+                    minHeight: 24,
+                    maxWidth: "100%",
+                    paddingHorizontal: selected ? 4 : 0,
+                    backgroundColor: selected
+                      ? colors.lavenderSurface
+                      : "transparent",
+                  }}
                 >
-                  {mood}
-                </AppText>
-                {selected && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: 7,
-                      right: 7,
-                      width: 4,
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: colors.peachText,
-                    }}
-                  />
-                )}
+                  <AppText
+                    variant={selected ? "label" : "caption"}
+                    color={selected ? colors.lavenderText : colors.text}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                    style={{ fontSize: 11.5, lineHeight: 18, flexShrink: 1 }}
+                  >
+                    {mood}
+                  </AppText>
+                  {selected && (
+                    <Icon
+                      name="checkmark"
+                      color={colors.lavenderText}
+                      size={11}
+                    />
+                  )}
+                </Row>
               </Pressable>
             );
           })}
         </Row>
       </View>
-      <AppText
-        variant="caption"
-        color={colors.muted}
-        style={{ fontSize: 11, marginTop: 8, marginBottom: 23 }}
-      >
-        {latest
-          ? `Today: ${latest.mood}. It’s okay if that changes.`
-          : "Whatever you’re feeling, there’s room for it here."}
-      </AppText>
       <Row
-        style={{ justifyContent: "space-between", marginBottom: 12, gap: 8 }}
+        style={{
+          justifyContent: "space-between",
+          marginTop: 9,
+          marginBottom: 4,
+          paddingHorizontal: 4,
+          gap: 8,
+        }}
       >
         <AppText
           variant="heading"
@@ -282,35 +298,53 @@ export function TodayScreen() {
       <View
         style={{
           backgroundColor: colors.heroSurface,
-          borderRadius: 27,
+          borderRadius: 28,
           overflow: "hidden",
-          borderWidth: resolved === "dark" ? 1 : 0,
-          borderColor: colors.heroBorder,
-          ...(resolved === "light"
-            ? { boxShadow: "0 9px 25px rgba(76,48,28,0.08)" }
-            : {}),
+          borderWidth: 1,
+          borderColor:
+            resolved === "dark" ? colors.heroBorder : colors.primaryText,
         }}
       >
         <View
           style={{
-            minHeight: 264,
-            padding: 22,
+            minHeight: 220,
+            paddingHorizontal: 23,
+            paddingVertical: 18,
             justifyContent: "center",
             alignItems: "flex-start",
           }}
         >
-          <PauseArtwork />
-          <View style={{ width: "60%", alignItems: "flex-start" }}>
+          {resolved === "dark" ? (
+            <PauseArtwork />
+          ) : (
+            <Image
+              source={require("../../assets/today-pause-light.jpg")}
+              accessible={false}
+              accessibilityIgnoresInvertColors
+              pointerEvents="none"
+              resizeMode="cover"
+              resizeMethod="resize"
+              fadeDuration={0}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+              }}
+            />
+          )}
+          <View style={{ width: "66%", alignItems: "flex-start" }}>
             <AppText
               variant="title"
-              style={{ fontSize: 34, lineHeight: 35, letterSpacing: -0.6 }}
+              style={{ fontSize: 38, lineHeight: 37, letterSpacing: -0.8 }}
             >
               {copy.title}
             </AppText>
             <AppText
-              color={colors.heroMuted}
+              color={resolved === "dark" ? colors.heroMuted : colors.text}
               style={{
-                fontSize: 14,
+                fontSize: 15,
                 lineHeight: 21,
                 marginTop: 10,
                 marginBottom: 16,
@@ -331,7 +365,7 @@ export function TodayScreen() {
                   : app.navigate("breathing", { durationSec: 180 })
               }
               style={{
-                minHeight: 46,
+                minHeight: 44,
                 paddingHorizontal: 17,
                 alignSelf: "flex-start",
               }}
@@ -363,7 +397,7 @@ export function TodayScreen() {
           aria-valuetext={`${routine.completedCount} of 3 steps recorded today`}
           style={{
             paddingHorizontal: 20,
-            paddingVertical: 15,
+            paddingVertical: 11,
             backgroundColor: colors.surface,
           }}
         >
@@ -472,73 +506,6 @@ export function TodayScreen() {
           )}
         </View>
       )}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={
-          recent
-            ? `Continue your conversation: ${recent.title || "Solace"}`
-            : "Talk with Solace"
-        }
-        onPress={() => app.navigate("chat", recent ? { id: recent.id } : {})}
-        style={({ pressed }) => ({
-          paddingVertical: 24,
-          marginTop: 1,
-          minHeight: 80,
-          opacity: pressed ? 0.65 : 1,
-        })}
-      >
-        <Row style={{ gap: 13 }}>
-          <View
-            style={{
-              width: 43,
-              height: 43,
-              borderRadius: 16,
-              backgroundColor: colors.sageSurface,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Icon name="chatbubble-ellipses-outline" color={colors.sageText} />
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <AppText variant="label">A little space to talk</AppText>
-            <AppText variant="caption" color={colors.muted} numberOfLines={1}>
-              {recent
-                ? `Continue: ${recent.title || "your conversation"}`
-                : "Start wherever you are."}
-            </AppText>
-          </View>
-          <Icon name="arrow-forward" size={19} color={colors.muted} />
-        </Row>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open today’s affirmation"
-        onPress={() => app.navigate("affirmation")}
-        style={({ pressed }) => ({
-          paddingTop: 22,
-          paddingBottom: 5,
-          borderTopWidth: 0.75,
-          borderTopColor: colors.border,
-          opacity: pressed ? 0.7 : 1,
-        })}
-      >
-        <Row style={{ alignItems: "flex-start", gap: 16 }}>
-          <Icon name="flower-outline" color={colors.accent} size={25} />
-          <View style={{ flex: 1 }}>
-            <AppText variant="heading" style={{ fontSize: 27, lineHeight: 32 }}>
-              {todayAffirmation(now)}
-            </AppText>
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={{ fontSize: 11, marginTop: 11 }}
-            >
-              A kind thought for today
-            </AppText>
-          </View>
-        </Row>
-      </Pressable>
     </Screen>
   );
 }

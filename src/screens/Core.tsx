@@ -6,28 +6,35 @@ import {
   Pressable,
   View,
   ScrollView,
+  StyleSheet,
+  TextInput,
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useApp } from "../store";
 import { Companion } from "../Companion";
+import { localDay, recordDay } from "../content";
 import { VoiceControls } from "../VoiceControls";
 import { useTheme } from "../theme";
+import {
+  ChatBubble,
+  ChatHeaderButton,
+  ChatQuickReplies,
+  ChatResetCard,
+  ChatWelcome,
+} from "./ChatDetails";
 import {
   AppText,
   Artwork,
   BrandMark,
   BotanicalBackdrop,
   IconButton,
-  MoodStone,
   Button,
   Card,
   Icon,
   Input,
-  Petal,
   Row,
   Screen,
-  SectionTitle,
   useNavigationInset,
 } from "../ui";
 
@@ -373,12 +380,14 @@ export { TodayScreen, ExploreScreen } from "./Discover";
 export function ChatScreen() {
   const app = useApp();
   const navigationInset = useNavigationInset();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const [id, setId] = useState<string | undefined>(app.params?.id);
   const draftKey = id || "new";
   const [input, setInput] = useState(
     app.chatDrafts[draftKey] ?? String(app.params?.context || ""),
   );
+  const [inputFocused, setInputFocused] = useState(false);
+  const composerInput = useRef<React.ElementRef<typeof TextInput>>(null);
   const [pending, setPending] = useState("");
   const [voiceState, setVoiceState] = useState<
     "idle" | "listening" | "thinking" | "speaking"
@@ -424,11 +433,33 @@ export function ChatScreen() {
   const action = lastAssistant?.action;
   const showSupport =
     lastAssistant?.support === true || lastAssistant?.safety === true;
-  const sendDisabled =
-    !input.trim() ||
-    !!pending ||
-    voiceState === "listening" ||
-    voiceState === "thinking";
+  const voiceBusy = voiceState === "listening" || voiceState === "thinking";
+  const activityDisabled = !!pending || voiceBusy;
+  const sendDisabled = !input.trim() || activityDisabled;
+  const fresh = messages.length === 0 && !pending;
+  const reflection = action?.type === "reflection";
+  const offerReset =
+    !pending && !showSupport && (fresh || action?.type === "breathing");
+  const today = localDay();
+  const mood = useMemo(
+    () =>
+      app.data.checkins
+        .filter((record) => recordDay(record) === today)
+        .sort((left, right) =>
+          String(right.createdAt).localeCompare(String(left.createdAt)),
+        )[0]?.mood,
+    [app.data.checkins, today],
+  );
+  function startReset() {
+    app.navigate("breathing", {
+      durationSec: 60,
+      source: "solace-chat",
+      conversationId: id,
+    });
+  }
+  function startReflection() {
+    app.navigate("reflection", { source: "solace-chat", conversationId: id });
+  }
   function writeDraft(text: string) {
     inputRef.current = text;
     setInput(text);
@@ -473,48 +504,46 @@ export function ChatScreen() {
         edges={["top"]}
         style={{ flex: 1, backgroundColor: colors.bg }}
       >
-        <Row
-          style={{
-            paddingHorizontal: 24,
-            paddingTop: 12,
-            paddingBottom: 14,
-            borderBottomWidth: 0.75,
-            borderBottomColor: colors.border,
-            justifyContent: "space-between",
-          }}
-        >
-          <Row style={{ gap: 8, flex: 1, minWidth: 0 }}>
-            <Companion size={36} state={pending ? "thinking" : voiceState} />
-            <AppText
-              variant="heading"
-              accessibilityRole="header"
-              style={{ fontSize: 31, flexShrink: 1 }}
-            >
-              Solace
-            </AppText>
-          </Row>
+        <Row style={chatStyles.header}>
           <Row style={{ gap: 0 }}>
-            <IconButton
-              name="sparkles-outline"
+            <ChatHeaderButton
+              icon="headset-outline"
+              label="Start a voice conversation"
+              disabled={activityDisabled}
+              featured
+              onPress={() => app.navigate("voice-talk", { id })}
+            />
+            <ChatHeaderButton
+              icon="sparkles-outline"
               label="Create a Solace Moment"
-              disabled={!!pending}
+              disabled={activityDisabled}
               onPress={() => app.navigate("moments", momentContext)}
             />
-            <IconButton
-              name="create-outline"
+          </Row>
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={chatStyles.title}
+          >
+            Solace
+          </AppText>
+          <Row style={{ gap: 0 }}>
+            <ChatHeaderButton
+              icon="create-outline"
               label="New conversation"
-              disabled={!!pending}
+              disabled={activityDisabled}
               onPress={() => {
                 setId(undefined);
                 app.setParams({ id: undefined, context: "" });
-                setInput(app.chatDrafts.new || "");
+                inputRef.current = app.chatDrafts.new || "";
+                setInput(inputRef.current);
                 setFailure("");
               }}
             />
-            <IconButton
-              name="time-outline"
+            <ChatHeaderButton
+              icon="time-outline"
               label="Conversation history"
-              disabled={!!pending}
+              disabled={activityDisabled}
               onPress={() => app.navigate("history")}
             />
           </Row>
@@ -538,103 +567,35 @@ export function ChatScreen() {
                 scroll.current?.scrollToEnd({ animated: false });
               else if (messages.length) setShowLatest(true);
             }}
-            contentContainerStyle={{
-              paddingHorizontal: 24,
-              paddingTop: 24,
-              paddingBottom: 16,
-              flexGrow: 1,
-            }}
+            contentContainerStyle={chatStyles.conversation}
           >
-            {messages.length === 0 && !pending && (
-              <>
-                <View style={{ paddingTop: 14, paddingBottom: 24 }}>
-                  <AppText variant="title" accessibilityRole="header">
-                    Start where you are.
-                  </AppText>
-                  <AppText
-                    color={colors.muted}
-                    style={{ maxWidth: 290, marginTop: 9 }}
-                  >
-                    Share what’s on your mind, or use a prompt to begin.
-                  </AppText>
-                </View>
-                {!input && (
-                  <View style={{ gap: 9 }}>
-                    {[
-                      "I've been feeling overwhelmed",
-                      "I'd like to reflect on my day",
-                    ].map((text) => (
-                      <Pressable
-                        key={text}
-                        accessibilityRole="button"
-                        onPress={() => {
-                          if (!inputRef.current) writeDraft(text);
-                        }}
-                        style={({ pressed }) => ({
-                          paddingVertical: 13,
-                          paddingHorizontal: 17,
-                          borderWidth: 0.75,
-                          borderColor: colors.border,
-                          borderRadius: 22,
-                          alignSelf: "flex-start",
-                          backgroundColor: pressed
-                            ? colors.surface2
-                            : colors.surface,
-                        })}
-                      >
-                        <Row style={{ gap: 9 }}>
-                          <Icon name="leaf-outline" size={16} />
-                          <AppText variant="caption" style={{ flexShrink: 1 }}>
-                            {text}
-                          </AppText>
-                        </Row>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-              </>
-            )}
-            {messages.map((m: any, index: number) => (
-              <View
-                key={m.id || index}
-                style={{
-                  alignItems: m.role === "user" ? "flex-end" : "flex-start",
-                  marginBottom: 14,
-                }}
-              >
-                <View
-                  style={{
-                    maxWidth: "92%",
-                    backgroundColor:
-                      m.role === "user" ? colors.surface2 : colors.surface,
-                    borderRadius: 24,
-                    borderBottomRightRadius: m.role === "user" ? 6 : 24,
-                    borderBottomLeftRadius: m.role === "assistant" ? 6 : 24,
-                    padding: 17,
-                    borderWidth: 0.5,
-                    borderColor: colors.border,
-                  }}
+            {fresh && <ChatWelcome mood={mood} state={voiceState} />}
+            {messages.map((message: any, index: number) => {
+              const source =
+                message.support || message.safety
+                  ? "Support guidance"
+                  : message.provider === "offline"
+                    ? "Built-in reply"
+                    : message.provider === "live"
+                      ? "Live AI reply"
+                      : undefined;
+              return (
+                <ChatBubble
+                  key={message.id || index}
+                  user={message.role === "user"}
+                  label={source}
                 >
-                  <AppText selectable>{m.content}</AppText>
-                </View>
-              </View>
-            ))}
+                  <AppText selectable>{message.content}</AppText>
+                </ChatBubble>
+              );
+            })}
             {!!pending && (
               <>
-                <View
-                  style={{
-                    alignSelf: "flex-end",
-                    maxWidth: "92%",
-                    backgroundColor: colors.surface2,
-                    padding: 17,
-                    borderRadius: 24,
-                    borderBottomRightRadius: 6,
-                  }}
-                >
+                <ChatBubble user>
                   <AppText>{pending}</AppText>
-                </View>
-                <Row style={{ marginTop: 16, marginBottom: 10 }}>
-                  <Petal size={26} />
+                </ChatBubble>
+                <Row>
+                  <Companion size={33} state="thinking" />
                   <AppText
                     accessibilityLiveRegion="polite"
                     variant="caption"
@@ -654,20 +615,21 @@ export function ChatScreen() {
                 style={{ alignSelf: "flex-start", marginBottom: 12 }}
               />
             )}
-            {!!action && !showSupport && !pending && (
-              <Card
-                style={{
-                  marginTop: 8,
-                  overflow: "hidden",
-                  padding: 20,
-                  backgroundColor: colors.surface2,
-                }}
-              >
-                <BotanicalBackdrop
-                  style={{ right: -80, top: -45, opacity: 0.2 }}
-                />
+            {!pending && !showSupport && (offerReset || reflection) && (
+              <ChatQuickReplies
+                reflection={reflection}
+                disabled={activityDisabled}
+                onActivity={reflection ? startReflection : startReset}
+                onTalk={() => composerInput.current?.focus()}
+              />
+            )}
+            {offerReset && (
+              <ChatResetCard onPress={startReset} disabled={activityDisabled} />
+            )}
+            {reflection && !showSupport && !pending && (
+              <Card style={{ backgroundColor: colors.surface2 }}>
                 <Row style={{ gap: 7, marginBottom: 7 }}>
-                  <Icon name="leaf-outline" size={16} />
+                  <Icon name="book-outline" size={16} />
                   <AppText variant="caption">Suggested activity</AppText>
                 </Row>
                 <AppText
@@ -677,9 +639,10 @@ export function ChatScreen() {
                   {action.label}
                 </AppText>
                 <Button
-                  title="Make a Moment"
+                  title="Start writing"
                   icon="arrow-forward"
-                  onPress={() => app.navigate("moments", momentContext)}
+                  onPress={startReflection}
+                  disabled={activityDisabled}
                   style={{ alignSelf: "flex-start", minHeight: 44 }}
                 />
               </Card>
@@ -701,14 +664,10 @@ export function ChatScreen() {
           )}
         </View>
         <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 12,
-            paddingBottom: 4 + navigationInset,
-            borderTopWidth: 0.75,
-            borderTopColor: colors.border,
-            backgroundColor: colors.bg,
-          }}
+          style={[
+            chatStyles.composer,
+            { paddingBottom: 10 + navigationInset, backgroundColor: colors.bg },
+          ]}
         >
           {!!failure && (
             <AppText
@@ -737,85 +696,113 @@ export function ChatScreen() {
               setFailure("");
               return true;
             }}
+            renderComposer={(microphone) => (
+              <Row style={chatStyles.composerRow}>
+                <TextInput
+                  ref={composerInput}
+                  accessibilityLabel="Message Solace"
+                  placeholder="Message Solace…"
+                  placeholderTextColor={colors.muted}
+                  selectionColor={colors.accent}
+                  value={input}
+                  onChangeText={writeDraft}
+                  onFocus={() => setInputFocused(true)}
+                  onBlur={() => setInputFocused(false)}
+                  multiline
+                  editable={!pending}
+                  maxLength={4000}
+                  style={[
+                    chatStyles.messageInput,
+                    {
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                      borderColor: inputFocused
+                        ? colors.primary
+                        : colors.border,
+                    },
+                  ]}
+                />
+                {microphone}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    failure ? "Retry message" : "Send message"
+                  }
+                  accessibilityState={{
+                    disabled: sendDisabled,
+                    busy: !!pending,
+                  }}
+                  aria-disabled={sendDisabled}
+                  aria-busy={!!pending}
+                  onPress={send}
+                  disabled={sendDisabled}
+                  style={({ pressed }) => [
+                    chatStyles.sendButton,
+                    {
+                      backgroundColor:
+                        resolved === "dark"
+                          ? colors.primary
+                          : colors.sageSurface,
+                      opacity: sendDisabled ? 0.55 : pressed ? 0.75 : 1,
+                    },
+                  ]}
+                >
+                  <Icon
+                    name={failure ? "refresh-outline" : "paper-plane-outline"}
+                    color={
+                      resolved === "dark" ? colors.primaryText : colors.primary
+                    }
+                    size={22}
+                  />
+                </Pressable>
+              </Row>
+            )}
           />
-          <Row style={{ alignItems: "flex-end", gap: 9 }}>
-            <Input
-              accessibilityLabel="Message Solace"
-              placeholder="Message Solace…"
-              value={input}
-              onChangeText={writeDraft}
-              multiline
-              editable={!pending}
-              maxLength={4000}
-              style={{
-                flex: 1,
-                minHeight: 50,
-                maxHeight: 120,
-                borderRadius: 25,
-                paddingTop: 14,
-              }}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={failure ? "Retry message" : "Send message"}
-              accessibilityState={{
-                disabled: sendDisabled,
-                busy: !!pending,
-              }}
-              aria-disabled={sendDisabled}
-              aria-busy={!!pending}
-              onPress={send}
-              disabled={sendDisabled}
-              style={({ pressed }) => ({
-                height: 50,
-                width: 50,
-                borderRadius: 25,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.primary,
-                opacity: sendDisabled ? 0.45 : pressed ? 0.75 : 1,
-              })}
-            >
-              <Icon
-                name={failure ? "refresh-outline" : "arrow-up"}
-                color={colors.primaryText}
-                size={23}
-              />
-            </Pressable>
-          </Row>
-          <Row style={{ justifyContent: "space-between", gap: 3 }}>
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={{ fontSize: 10 }}
-            >
-              {showSupport
-                ? "Support guidance"
-                : lastAssistant?.provider === "offline"
-                  ? "Built-in reply"
-                  : lastAssistant?.provider === "live"
-                    ? "Live AI reply"
-                    : "AI wellness companion"}
-            </AppText>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => app.navigate("support")}
-              style={{ minHeight: 40, justifyContent: "center" }}
-            >
-              <AppText
-                variant="caption"
-                color={colors.muted}
-                style={{ fontSize: 11 }}
-              >
-                Human support
-              </AppText>
-            </Pressable>
-          </Row>
         </View>
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
 }
+
+const chatStyles = StyleSheet.create({
+  header: { paddingHorizontal: 14, paddingTop: 9, paddingBottom: 7, gap: 2 },
+  title: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "center",
+    fontSize: 32,
+    lineHeight: 36,
+  },
+  conversation: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 17,
+    gap: 12,
+  },
+  composer: { paddingHorizontal: 16, paddingTop: 7 },
+  composerRow: { alignItems: "flex-end", gap: 7 },
+  messageInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 46,
+    maxHeight: 116,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderRadius: 23,
+    fontFamily: "Inter_400Regular",
+    fontSize: 15,
+    lineHeight: 22,
+    textAlignVertical: "top",
+  },
+  sendButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});
 
 export function HistoryScreen() {
   const app = useApp();

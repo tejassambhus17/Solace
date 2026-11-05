@@ -347,3 +347,16 @@ Live provider calls, public HTTPS deployment, installed Android and iOS verifica
 - Verified that returning to Explore from a library detail restores the library, and that Back from the library returns to Today. The session-state regression also covers an origin on the Solace history screen, repeated Explore selection, and switching to a main tab.
 - The light preview measured 390, 358 and 851 CSS pixels without horizontal overflow. The Explore target measured 64 pixels wide in the narrow view. The final browser error log was empty. The final screen is captured in [Explore on a phone](screenshots/explore-restored-phone.png).
 - TypeScript, formatting, 34 session-state tests, seven wellness tests and 64 server integration tests passed. Expo exports passed for web, Android and iOS. Installed-device navigation and assistive technology remain separate.
+
+## Today, Solace chat, and Voice Talk — 6 November 2026
+
+Compared the two supplied references with the app at 390 × 845 CSS pixels. Checked the light and dark Today and chat layouts, with an additional 480-pixel check and no horizontal overflow in the measured views.
+
+- Today showed the watercolor mood images, the selected label, and the daily pause progress. Tapping Okay opened the check-in with Okay selected. The home conversation continuation and quote were absent.
+- Chat showed both contextual quick replies, the illustrated reset, the paper plane, and the microphone beside it. The talk action focused an empty composer without sending, and both reset actions opened the timer with one minute selected. Verified the built-in label in the transcript and the human support action for synthetic urgent text.
+- The inline mic and Voice Talk showed the unconfigured transcription state. Sent a typed test message in Voice Talk, observed the reply start reading, and verified the turn in regular chat and conversation history after returning. The browser log contained zero errors at the end of the run.
+- Web, Android, and iOS exports, client type checking, formatting, 64 server integration tests, 34 session-state tests, 15 voice lifecycle tests, six native configuration tests, ten routine tests, and seven wellness tests passed.
+
+The preview used the built-in companion and browser speech. Live transcription, live agent replies, and installed-device microphone and audio behavior remain pending. The provider key belongs in the private server configuration.
+
+See the [Today capture](screenshots/reference-today-phone.png), [Solace capture](screenshots/reference-chat-phone.png), and [Voice Talk capture](screenshots/reference-voice-phone.png).

@@ -12,6 +12,7 @@ const types = {
   ".css": "text/css",
   ".json": "application/json",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
   ".ico": "image/x-icon",
   ".ttf": "font/ttf",
   ".woff2": "font/woff2",

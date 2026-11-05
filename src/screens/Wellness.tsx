@@ -21,7 +21,8 @@ import {
   Button,
   Petal,
   IconButton,
-  MoodStone,
+  MoodPetal,
+  moodPetals,
   BotanicalBackdrop,
   Artwork,
 } from "../ui";
@@ -843,7 +844,6 @@ function Checkin() {
       note: nextNote,
     });
   }
-  const choices = ["Okay", "Calm", "Low", "Stressed", "Great"];
   const tagChoices = more
     ? [
         "Rested",
@@ -944,7 +944,7 @@ function Checkin() {
           Your mood today
         </Heading>
         <View accessibilityRole="radiogroup" style={styles.moodRow}>
-          {choices.map((label) => (
+          {moodPetals.map(({ mood: label, image }) => (
             <Pressable
               key={label}
               accessibilityRole="radio"
@@ -974,7 +974,7 @@ function Checkin() {
                 },
               ]}
             >
-              <MoodStone mood={label} size={31} />
+              <MoodPetal source={image} style={{ width: 35, height: 34 }} />
               <Copy
                 style={{
                   fontSize: 12,

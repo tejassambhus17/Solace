@@ -2,6 +2,17 @@
 
 final result: passed
 
+## Supplied Today and chat references — 6 November 2026
+
+Reviewed the supplied left and right app frames and the separate watercolor mood strip against the app at 390 × 845 CSS pixels. The app captures are cropped only to remove browser renderer padding. The supplied device frame and status area are outside the comparison.
+
+- **Typography and spacing.** The serif greeting, compact composer, two equal quick replies, and reset title preserve the reference hierarchy. The daily pause progress fits above navigation at the checked viewport. A two-line personal greeting is expected for the sample name.
+- **Color and imagery.** The light view matches the cream, forest, and mauve palette. The five watercolor icons and right-aligned petals in the pause and reset artwork are raster assets with live text above them. The dark view uses black and graphite with matching reset art.
+- **Controls and copy.** The mockup's sample mood and daily activity are replaced by the account's actual records. The paper plane and adjacent microphone fit in one composer row. The four chat header actions and bottom navigation are intentional additions for the working app.
+- **Verified interactions.** Tested the mood control, both reset paths, focus from the talk quick reply, the voice availability state, text fallback, and saved chat history. Browser speech entered its speaking state. Live microphone and provider behavior still need a configured service and device test.
+
+No unresolved priority layout issue was observed at the checked viewport. [Today](docs/screenshots/reference-today-phone.png), [Solace](docs/screenshots/reference-chat-phone.png), and [Voice Talk](docs/screenshots/reference-voice-phone.png) show the tested preview.
+
 Scope: browser rendering of the React Native app, not native-device certification or APK release acceptance.
 
 ## Evidence
