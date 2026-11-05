@@ -67,11 +67,21 @@ const commands = {
     ],
     cwd: path.join(root, "server"),
   },
+  insights: {
+    args: ["--test", path.join(root, "scripts/test-insights.mjs"), ...rest],
+  },
   wellness: {
     args: ["--test", path.join(root, "scripts/test-wellness.mjs"), ...rest],
   },
   reminders: {
     args: ["--test", path.join(root, "scripts/test-reminders.cjs"), ...rest],
+  },
+  "session-state": {
+    args: [
+      "--test",
+      path.join(root, "scripts/test-session-state.cjs"),
+      ...rest,
+    ],
   },
 };
 const job = commands[command];

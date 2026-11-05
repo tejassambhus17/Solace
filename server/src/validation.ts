@@ -9,6 +9,7 @@ export const collections = [
   "memories",
   "reminders",
   "plans",
+  "favorites",
 ] as const;
 export type Collection = (typeof collections)[number];
 export const collectionSchema = z.enum(collections);
@@ -53,6 +54,31 @@ export const registerSchema = z.object({
 });
 export const loginSchema = registerSchema.omit({ name: true });
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
+  favorites: base
+    .extend({
+      kind: z.enum(["resource", "breathing", "reflection", "grounding"]),
+      targetId: z.string().trim().min(1).max(80),
+      title: z.string().trim().min(1).max(120),
+    })
+    .strict()
+    .superRefine((record, context) => {
+      const valid =
+        record.kind === "resource"
+          ? [
+              "mindfulness",
+              "anxiety",
+              "low-mood",
+              "self-esteem",
+              "sleep",
+            ].includes(record.targetId)
+          : record.targetId === record.kind;
+      if (!valid)
+        context.addIssue({
+          code: "custom",
+          path: ["targetId"],
+          message: "Choose an available toolkit practice.",
+        });
+    }),
   checkins: base.extend({
     mood: z.union([z.string().min(1).max(40), z.number().min(1).max(5)]),
     note: text.optional(),

@@ -309,6 +309,42 @@ test("explicit live mode without provider key does not pretend to be live", asyn
     /AI_NOT_CONFIGURED/,
   );
 });
+
+test("built-in guidance honors reflection starters and keeps urgent support first", async () => {
+  const input = { name: "Alex", history: [], memories: [], context: [] };
+  for (const text of [
+    "I'd like to reflect on my day",
+    "I want to reflect on my quiet evening walk",
+    "Can I write about feeling stressed?",
+    "I'd like to journal",
+  ]) {
+    const result = await getReply(ai, { ...input, text });
+    assert.equal(result.provider, "offline");
+    assert.equal(result.action?.type, "reflection", text);
+    assert.match(result.reply, /space to write/);
+  }
+  // "Interested" contains "rest", but does not express sleep or rest intent.
+  const unrelated = await getReply(ai, {
+    ...input,
+    text: "I am interested in a quiet walk.",
+  });
+  assert.equal(unrelated.action?.type, "breathing");
+  assert.doesNotMatch(unrelated.reply, /rest is on your mind/);
+  const tired = await getReply(ai, {
+    ...input,
+    text: "I feel tired before bedtime.",
+  });
+  assert.equal(tired.action?.type, "reflection");
+  assert.match(tired.reply, /rest is on your mind/);
+  const urgent = await getReply(ai, {
+    ...input,
+    text: "I want to journal because I want to hurt myself.",
+  });
+  assert.equal(urgent.provider, "offline");
+  assert.equal(urgent.support, true);
+  assert.equal(urgent.safety, true);
+  assert.equal(urgent.action, undefined);
+});
 test("live provider sends bounded context with store:false and extracts output blocks", async () => {
   const original = globalThis.fetch;
   let captured: Record<string, any> | undefined;
@@ -737,13 +773,21 @@ test("continued conversations remain recent after refresh and keep assistant met
       await request(app)
         .post("/api/records/conversations")
         .set(auth)
-        .send({ title: "An earlier conversation", createdAt: "2026-01-01T12:00:00Z", messages: [] })
+        .send({
+          title: "An earlier conversation",
+          createdAt: "2026-01-01T12:00:00Z",
+          messages: [],
+        })
         .expect(201)
     ).body.record;
     await request(app)
       .post("/api/records/conversations")
       .set(auth)
-      .send({ title: "A newer conversation", createdAt: "2026-02-01T12:00:00Z", messages: [] })
+      .send({
+        title: "A newer conversation",
+        createdAt: "2026-02-01T12:00:00Z",
+        messages: [],
+      })
       .expect(201);
     const continued = (
       await request(app)
@@ -762,10 +806,17 @@ test("continued conversations remain recent after refresh and keep assistant met
     assert.deepEqual(edited.messages, continued.messages);
     assert.equal(edited.messages[1].provider, "offline");
     assert.equal(edited.messages[1].action.type, "breathing");
-    const refreshed = (await request(app).get("/api/state").set(auth).expect(200)).body;
+    const refreshed = (
+      await request(app).get("/api/state").set(auth).expect(200)
+    ).body;
     assert.equal(refreshed.data.conversations[0].id, older.id);
     assert.equal(
-      (await request(app).get("/api/state").set("Authorization", `Bearer ${other.token}`).expect(200)).body.data.conversations.length,
+      (
+        await request(app)
+          .get("/api/state")
+          .set("Authorization", `Bearer ${other.token}`)
+          .expect(200)
+      ).body.data.conversations.length,
       0,
     );
   } finally {
@@ -778,13 +829,80 @@ test("human support flags persist when an urgent conversation is reopened", asyn
   try {
     const account = await create("support-reopen@example.com");
     const auth = { Authorization: `Bearer ${account.token}` };
-    await request(app).post("/api/chat").set(auth).send({ text: "I want to hurt myself" }).expect(200);
-    const message = (await request(app).get("/api/state").set(auth).expect(200)).body.data.conversations[0].messages[1];
+    await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "I want to hurt myself" })
+      .expect(200);
+    const message = (await request(app).get("/api/state").set(auth).expect(200))
+      .body.data.conversations[0].messages[1];
     assert.equal(message.support, true);
     assert.equal(message.safety, true);
     assert.equal(message.provider, "offline");
     assert.equal(message.action, undefined);
   } finally {
+    store.close();
+  }
+});
+
+test("renaming a conversation while a reply is pending survives the reply commit", async () => {
+  const { store, create } = await fixture();
+  const originalFetch = globalThis.fetch;
+  let release!: () => void;
+  let started!: () => void;
+  const providerStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const providerRelease = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async () => {
+    started();
+    await providerRelease;
+    return new Response(
+      JSON.stringify({ output_text: "We can take it slowly." }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+  try {
+    const account = await create("rename-pending@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    const app = createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
+    const conversation = (
+      await request(app)
+        .post("/api/records/conversations")
+        .set(auth)
+        .send({ title: "Original name", messages: [] })
+        .expect(201)
+    ).body.record;
+    const pending = request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "A question", conversationId: conversation.id })
+      .then((response) => response);
+    await providerStarted;
+    await request(app)
+      .patch(`/api/records/conversations/${conversation.id}`)
+      .set(auth)
+      .send({ title: "A name I chose" })
+      .expect(200);
+    release();
+    const completed = await pending;
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.conversation.title, "A name I chose");
+    assert.equal(completed.body.conversation.messages.length, 2);
+    assert.equal(completed.body.conversation.messages[1].provider, "live");
+    const reopened = (
+      await request(app).get("/api/state").set(auth).expect(200)
+    ).body;
+    assert.equal(reopened.data.conversations[0].title, "A name I chose");
+  } finally {
+    release();
+    globalThis.fetch = originalFetch;
     store.close();
   }
 });
@@ -795,24 +913,207 @@ test("provider transport and malformed responses are recoverable and do not save
   try {
     const account = await create("provider-failure@example.com");
     const auth = { Authorization: `Bearer ${account.token}` };
-    const app = createApp({ store, ai: { ...ai, mode: "live", apiKey: "test-only" }, rateLimits: false });
+    const app = createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
     for (const failure of ["transport", "json", "shape"]) {
       globalThis.fetch = (async () => {
         if (failure === "transport") throw new TypeError("fetch failed");
-        return new Response(failure === "json" ? "not JSON" : JSON.stringify({ output: [{ content: [{ type: "output_text", text: 7 }] }] }), { status: 200 });
+        return new Response(
+          failure === "json"
+            ? "not JSON"
+            : JSON.stringify({
+                output: [{ content: [{ type: "output_text", text: 7 }] }],
+              }),
+          { status: 200 },
+        );
       }) as typeof fetch;
-      const failed = await request(app).post("/api/chat").set(auth).send({ text: "A question worth keeping" }).expect(502);
+      const failed = await request(app)
+        .post("/api/chat")
+        .set(auth)
+        .send({ text: "A question worth keeping" })
+        .expect(502);
       assert.equal(failed.body.code, "AI_UNAVAILABLE");
       assert.match(failed.body.error, /try again/);
-      assert.equal((await request(app).get("/api/state").set(auth).expect(200)).body.data.conversations.length, 0);
+      assert.equal(
+        (await request(app).get("/api/state").set(auth).expect(200)).body.data
+          .conversations.length,
+        0,
+      );
     }
-    globalThis.fetch = (async () => new Response(JSON.stringify({ output_text: "We can take a pause." }), { status: 200 })) as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ output_text: "We can take a pause." }), {
+        status: 200,
+      })) as typeof fetch;
     // Every failure releases the chat lock, and a retry commits exactly one turn.
-    const retried = await request(app).post("/api/chat").set(auth).send({ text: "A question worth keeping" }).expect(200);
+    const retried = await request(app)
+      .post("/api/chat")
+      .set(auth)
+      .send({ text: "A question worth keeping" })
+      .expect(200);
     assert.equal(retried.body.conversation.messages.length, 2);
     assert.equal(retried.body.provider, "live");
   } finally {
     globalThis.fetch = originalFetch;
     store.close();
+  }
+});
+
+test("saved toolkit practices are validated, idempotent and private to each account", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const a = await create("toolkit-a@example.com");
+    const b = await create("toolkit-b@example.com");
+    const authA = { Authorization: `Bearer ${a.token}` };
+    const authB = { Authorization: `Bearer ${b.token}` };
+    const practice = {
+      kind: "resource",
+      targetId: "sleep",
+      title: "Sleep & rest",
+    };
+    const saves = await Promise.all([
+      request(app).post("/api/records/favorites").set(authA).send(practice),
+      request(app).post("/api/records/favorites").set(authA).send(practice),
+    ]);
+    assert.deepEqual(
+      saves.map((response) => response.status).sort(),
+      [200, 201],
+    );
+    const favorite = saves[0].body.record;
+    assert.equal(favorite.id, "favorite-resource-sleep");
+    assert.equal(saves[1].body.record.id, favorite.id);
+    const listed = (
+      await request(app).get("/api/records/favorites").set(authA).expect(200)
+    ).body.records;
+    assert.equal(listed.length, 1);
+    assert.equal(
+      (await request(app).get("/api/records/favorites").set(authB).expect(200))
+        .body.records.length,
+      0,
+    );
+    await request(app)
+      .patch(`/api/records/favorites/${favorite.id}`)
+      .set(authB)
+      .send({ title: "Someone else's" })
+      .expect(404);
+    await request(app)
+      .delete(`/api/records/favorites/${favorite.id}`)
+      .set(authB)
+      .expect(404);
+    const independent = (
+      await request(app)
+        .post("/api/records/favorites")
+        .set(authB)
+        .send({ ...practice, title: "My sleep practice" })
+        .expect(201)
+    ).body.record;
+    assert.equal(independent.id, favorite.id);
+    await request(app)
+      .patch(`/api/records/favorites/${favorite.id}`)
+      .set(authA)
+      .send({ title: "Wind down" })
+      .expect(200);
+    assert.equal(
+      (await request(app).get("/api/records/favorites").set(authB).expect(200))
+        .body.records[0].title,
+      "My sleep practice",
+    );
+    await request(app)
+      .patch(`/api/records/favorites/${favorite.id}`)
+      .set(authA)
+      .send({ targetId: "anxiety" })
+      .expect(409);
+    for (const invalid of [
+      { kind: "resource", targetId: "invented-resource", title: "Unknown" },
+      { kind: "grounding", targetId: "breathing", title: "Wrong target" },
+      { kind: "therapist", targetId: "someone", title: "Unknown kind" },
+      { kind: "breathing", targetId: "breathing", title: "" },
+      { kind: "breathing", targetId: "breathing", title: "x".repeat(121) },
+      { ...practice, ownerId: b.user.id },
+    ])
+      await request(app)
+        .post("/api/records/favorites")
+        .set(authA)
+        .send(invalid)
+        .expect(400);
+    await request(app)
+      .delete(`/api/records/favorites/${favorite.id}`)
+      .set(authA)
+      .expect(204);
+    assert.equal(
+      (await request(app).get("/api/records/favorites").set(authA).expect(200))
+        .body.records.length,
+      0,
+    );
+    assert.equal(
+      (await request(app).get("/api/records/favorites").set(authB).expect(200))
+        .body.records.length,
+      1,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("toolkit favorites and grounding sessions persist, export and cascade with account deletion", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "solace-toolkit-"));
+  const file = join(directory, "app.sqlite");
+  try {
+    const first = await fixture(file);
+    const account = await first.create("toolkit-persist@example.com");
+    const auth = { Authorization: `Bearer ${account.token}` };
+    for (const kind of ["breathing", "reflection", "grounding"])
+      await request(first.app)
+        .post("/api/records/favorites")
+        .set(auth)
+        .send({ kind, targetId: kind, title: `${kind} practice` })
+        .expect(201);
+    const session = (
+      await request(first.app)
+        .post("/api/records/sessions")
+        .set(auth)
+        .send({
+          type: "grounding",
+          title: "Five-senses grounding",
+          completed: true,
+          durationSec: 96,
+          feedback: "Helped",
+          steps: [0, 1, 2, 3, 4],
+        })
+        .expect(201)
+    ).body.record;
+    first.store.close();
+    const second = await fixture(file);
+    try {
+      const state = (
+        await request(second.app).get("/api/state").set(auth).expect(200)
+      ).body.data;
+      assert.equal(state.favorites.length, 3);
+      assert.equal(state.sessions[0].type, "grounding");
+      assert.equal(state.sessions[0].id, session.id);
+      const exported = (
+        await request(second.app).get("/api/export").set(auth).expect(200)
+      ).body;
+      assert.equal(exported.data.favorites.length, 3);
+      assert.equal(exported.data.sessions[0].durationSec, 96);
+      await request(second.app).delete("/api/account").set(auth).expect(204);
+      assert.equal(
+        second.store.one<{ count: number }>(
+          "SELECT COUNT(*) count FROM records WHERE user_id=?",
+          [account.user.id],
+        )!.count,
+        0,
+      );
+      await request(second.app)
+        .get("/api/records/favorites")
+        .set(auth)
+        .expect(401);
+    } finally {
+      second.store.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

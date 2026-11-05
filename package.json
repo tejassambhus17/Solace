@@ -12,10 +12,12 @@
     "typecheck": "node scripts/runtime.cjs tsc --noEmit",
     "test:wellness": "node scripts/runtime.cjs wellness",
     "test:reminders": "node scripts/runtime.cjs reminders",
+    "test:session-state": "node scripts/runtime.cjs session-state",
     "export:web": "node scripts/runtime.cjs expo export --platform web --output-dir dist/web",
     "export:android": "node scripts/runtime.cjs expo export --platform android --output-dir dist/android",
     "preview": "node scripts/preview.mjs",
-    "format:check": "prettier --check App.tsx index.ts \"src/**/*.{ts,tsx}\" \"server/src/*.ts\" \"server/tests/*.ts\""
+    "format:check": "prettier --check App.tsx index.ts \"src/**/*.{ts,tsx}\" \"server/src/*.ts\" \"server/tests/*.ts\"",
+    "test:insights": "node scripts/runtime.cjs insights"
   },
   "dependencies": {
     "@expo-google-fonts/cormorant-garamond": "^0.4.1",

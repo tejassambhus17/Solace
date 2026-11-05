@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Switch,
@@ -6,7 +6,6 @@ import {
   Platform,
   Linking,
   Share,
-  Image,
 } from "react-native";
 import { useTheme } from "../theme";
 import { useApp } from "../store";
@@ -20,6 +19,9 @@ import {
   Icon,
   Petal,
   SectionTitle,
+  BrandMark,
+  BotanicalBackdrop,
+  Artwork,
 } from "../ui";
 import {
   scheduleReminder,
@@ -53,12 +55,31 @@ function MenuRow({
   return (
     <Card onPress={onPress} style={{ marginBottom: 12, padding: 18 }}>
       <Row>
-        <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: colors.surface2, alignItems: "center", justifyContent: "center" }}>
+        <View
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: 23,
+            backgroundColor: colors.surface2,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
           <Icon name={icon} size={23} />
         </View>
         <View style={{ flex: 1 }}>
-          <AppText variant="heading" style={{ fontSize: 25, lineHeight: 28 }}>{title}</AppText>
-          {subtitle && <AppText variant="caption" color={colors.muted} style={{ marginTop: 4, fontSize: 13, lineHeight: 19 }}>{subtitle}</AppText>}
+          <AppText variant="heading" style={{ fontSize: 25, lineHeight: 28 }}>
+            {title}
+          </AppText>
+          {subtitle && (
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={{ marginTop: 4, fontSize: 13, lineHeight: 19 }}
+            >
+              {subtitle}
+            </AppText>
+          )}
         </View>
         <Icon name="chevron-forward" size={18} color={colors.muted} />
       </Row>
@@ -81,8 +102,18 @@ function Notice({ text, error = false }: { text: string; error?: boolean }) {
 export default function ProfileScreen({ name }: { name: string }) {
   const app = useApp();
   const { colors, mode, setMode } = useTheme();
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessageState] = useState("");
+  const [error, setErrorState] = useState("");
+  const currentRoute = useRef(name);
+  currentRoute.current = name;
+  const operationLock = useRef(false);
+  // Late responses from a screen we left must not announce success on another screen.
+  const setMessage = (value: string) => {
+    if (currentRoute.current === name) setMessageState(value);
+  };
+  const setError = (value: string) => {
+    if (currentRoute.current === name) setErrorState(value);
+  };
   const [pending, setPending] = useState(false);
   const [preference, setPreference] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
@@ -103,6 +134,8 @@ export default function ProfileScreen({ name }: { name: string }) {
     setDeleteAccount(false);
   }, [name]);
   async function perform(work: () => Promise<void>) {
+    if (operationLock.current) return;
+    operationLock.current = true;
     setPending(true);
     setError("");
     setMessage("");
@@ -113,6 +146,7 @@ export default function ProfileScreen({ name }: { name: string }) {
         e instanceof Error ? e.message : "Could not save. Please try again.",
       );
     } finally {
+      operationLock.current = false;
       setPending(false);
     }
   }
@@ -136,30 +170,54 @@ export default function ProfileScreen({ name }: { name: string }) {
   if (name === "profile")
     return (
       <Screen>
-        <Row style={{ marginBottom: 30 }}>
-          <Row>
-            <Petal size={36} />
-            <AppText variant="heading">Solace</AppText>
+        <View>
+          <BotanicalBackdrop style={{ right: -90, top: -60, opacity: 0.23 }} />
+          <Row style={{ marginBottom: 30 }}>
+            <BrandMark />
           </Row>
-        </Row>
-        <Row style={{ marginBottom: 32, gap: 18 }}>
-          <View style={{ width: 96, height: 112, borderRadius: 48, overflow: "hidden", backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.border }}>
-            <Image source={require("../../assets/botanical.png")} resizeMode="cover" accessible={false} style={{ width: 150, height: 150, position: "absolute", left: -30, top: -8 }} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <AppText variant="display">
-              {app.user?.name || "Your space"}
-            </AppText>
-            <AppText color={colors.muted} style={{ marginTop: 7, fontSize: 14, lineHeight: 22 }}>
-              A space for your preferences, reminders, and your Solace experience.
-            </AppText>
-          </View>
-        </Row>
+          <Row style={{ marginBottom: 32, gap: 18 }}>
+            <View
+              style={{
+                width: 96,
+                height: 112,
+                borderRadius: 48,
+                overflow: "hidden",
+                backgroundColor: colors.surface2,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Artwork
+                kind="petal"
+                size={130}
+                style={{ position: "absolute", left: -17, top: -4 }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="display">
+                {app.user?.name || "Your space"}
+              </AppText>
+              <AppText
+                color={colors.muted}
+                style={{ marginTop: 7, fontSize: 14, lineHeight: 22 }}
+              >
+                A space for your preferences, reminders, and your Solace
+                experience.
+              </AppText>
+            </View>
+          </Row>
+        </View>
         <MenuRow
           title="Your account"
           subtitle={app.user?.email}
           icon="person-outline"
           onPress={() => app.navigate("account")}
+        />
+        <MenuRow
+          title="Your toolkit"
+          subtitle={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
+          icon="bookmark-outline"
+          onPress={() => app.navigate("toolkit")}
         />
         <MenuRow
           title="Gentle reminders"
@@ -185,9 +243,23 @@ export default function ProfileScreen({ name }: { name: string }) {
           icon="heart-outline"
           onPress={() => app.navigate("support")}
         />
-        <View style={{ marginTop: 20, paddingTop: 22, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <Row><Petal size={42} /><AppText variant="heading">Your pace is enough.</AppText></Row>
-          <AppText variant="caption" color={colors.muted} style={{ marginTop: 10, lineHeight: 20 }}>
+        <View
+          style={{
+            marginTop: 20,
+            paddingTop: 22,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+          }}
+        >
+          <Row>
+            <Petal size={42} />
+            <AppText variant="heading">Your pace is enough.</AppText>
+          </Row>
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={{ marginTop: 10, lineHeight: 20 }}
+          >
             Solace is an AI wellness companion. It is not a medical or emergency
             service.
           </AppText>
@@ -205,14 +277,46 @@ export default function ProfileScreen({ name }: { name: string }) {
         <SectionTitle title="Appearance" />
         <Row style={{ marginBottom: 25 }}>
           {(["light", "dark", "system"] as const).map((v) => (
-            <Button
+            <Pressable
               key={v}
-              title={v.charAt(0).toUpperCase() + v.slice(1)}
-              icon={v === "light" ? "sunny-outline" : v === "dark" ? "moon-outline" : "phone-portrait-outline"}
-              variant={mode === v ? "primary" : "secondary"}
+              accessibilityRole="radio"
+              accessibilityLabel={`${v.charAt(0).toUpperCase() + v.slice(1)} appearance`}
+              accessibilityState={{ checked: mode === v }}
+              aria-checked={mode === v}
               onPress={() => setMode(v)}
-              style={{ flex: 1, paddingHorizontal: 12 }}
-            />
+              style={({ pressed }) => ({
+                flex: 1,
+                minHeight: 70,
+                paddingHorizontal: 8,
+                paddingVertical: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 7,
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: mode === v ? colors.primary : colors.border,
+                backgroundColor: mode === v ? colors.primary : colors.surface,
+                opacity: pressed ? 0.75 : 1,
+              })}
+            >
+              <Icon
+                name={
+                  v === "light"
+                    ? "sunny-outline"
+                    : v === "dark"
+                      ? "moon-outline"
+                      : "phone-portrait-outline"
+                }
+                size={21}
+                color={mode === v ? colors.primaryText : colors.text}
+              />
+              <AppText
+                variant="label"
+                color={mode === v ? colors.primaryText : colors.text}
+              >
+                {v.charAt(0).toUpperCase() + v.slice(1)}
+              </AppText>
+            </Pressable>
           ))}
         </Row>
         <Card style={{ marginBottom: 16 }}>
@@ -238,7 +342,11 @@ export default function ProfileScreen({ name }: { name: string }) {
                   );
                 })
               }
-              trackColor={{ true: colors.primary }}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={
+                app.user?.personalization ? colors.primaryText : colors.muted
+              }
+              ios_backgroundColor={colors.surface2}
             />
           </Row>
         </Card>
@@ -296,6 +404,10 @@ export default function ProfileScreen({ name }: { name: string }) {
               accessibilityLabel="Personalization"
               disabled={pending}
               trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={
+                app.user?.personalization ? colors.primaryText : colors.muted
+              }
+              ios_backgroundColor={colors.surface2}
               onValueChange={(v) =>
                 perform(async () => {
                   await app.updateUser({ personalization: v });
@@ -320,6 +432,7 @@ export default function ProfileScreen({ name }: { name: string }) {
               <Button
                 title="Edit"
                 variant="ghost"
+                disabled={pending}
                 onPress={() => {
                   setEditing(item.id!);
                   setPreference(item.text);
@@ -328,6 +441,7 @@ export default function ProfileScreen({ name }: { name: string }) {
               <Button
                 title="Delete"
                 variant="ghost"
+                disabled={pending}
                 onPress={() => setDeleteId(item.id!)}
               />
             </Row>
@@ -340,6 +454,7 @@ export default function ProfileScreen({ name }: { name: string }) {
                   <Button
                     title="Keep"
                     variant="secondary"
+                    disabled={pending}
                     onPress={() => setDeleteId(null)}
                   />
                   <Button
@@ -418,8 +533,11 @@ export default function ProfileScreen({ name }: { name: string }) {
             <Switch
               accessibilityLabel="Enable reminder"
               value={enabled}
+              disabled={pending}
               onValueChange={setEnabled}
               trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={enabled ? colors.primaryText : colors.muted}
+              ios_backgroundColor={colors.surface2}
             />
           </Row>
         </Card>
@@ -437,6 +555,7 @@ export default function ProfileScreen({ name }: { name: string }) {
               key={key}
               title={label}
               variant={reminderType === key ? "primary" : "secondary"}
+              disabled={pending}
               onPress={() => setReminderType(key)}
             />
           ))}
@@ -446,6 +565,7 @@ export default function ProfileScreen({ name }: { name: string }) {
             accessibilityLabel="Custom reminder title"
             placeholder="What would you like to remember?"
             value={reminderTitle}
+            editable={!pending}
             onChangeText={setReminderTitle}
             maxLength={100}
             style={{ marginBottom: 15 }}
@@ -456,6 +576,7 @@ export default function ProfileScreen({ name }: { name: string }) {
           accessibilityLabel="Reminder time HH colon MM"
           placeholder="20:00"
           value={time}
+          editable={!pending}
           onChangeText={setTime}
           keyboardType="numbers-and-punctuation"
           maxLength={5}
@@ -475,7 +596,9 @@ export default function ProfileScreen({ name }: { name: string }) {
               key={d}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: selectedDays.includes(i) }}
+              aria-checked={selectedDays.includes(i)}
               accessibilityLabel={d}
+              disabled={pending}
               onPress={() =>
                 setDays((previous) =>
                   previous.includes(i)
@@ -535,9 +658,10 @@ export default function ProfileScreen({ name }: { name: string }) {
               const [hour, minute] = time.split(":").map(Number);
               const record = {
                 type: reminderType,
-                title: reminderType === "custom"
-                  ? reminderTitle.trim()
-                  : kinds.find((k) => k[0] === reminderType)![1],
+                title:
+                  reminderType === "custom"
+                    ? reminderTitle.trim()
+                    : kinds.find((k) => k[0] === reminderType)![1],
                 hour,
                 minute,
                 days: selectedDays,
@@ -609,6 +733,7 @@ export default function ProfileScreen({ name }: { name: string }) {
                 <Button
                   title="Edit"
                   variant="ghost"
+                  disabled={pending}
                   onPress={() => {
                     setReminderId(r.id!);
                     setReminderType(r.type);
@@ -636,6 +761,7 @@ export default function ProfileScreen({ name }: { name: string }) {
                         ),
                       );
                       await app.remove("reminders", r.id!);
+                      if (reminderId === r.id) setReminderId(null);
                       setMessage("Reminder removed.");
                     })
                   }
@@ -776,14 +902,22 @@ export default function ProfileScreen({ name }: { name: string }) {
         title="Find local support resources"
         subtitle="Choose your country on Find A Helpline"
         icon="globe-outline"
-        onPress={() => perform(async () => { await Linking.openURL("https://findahelpline.com/"); })}
+        onPress={() =>
+          perform(async () => {
+            await Linking.openURL("https://findahelpline.com/");
+          })
+        }
       />
       <MenuRow
         title="Find professional care"
         subtitle="Open a professional directory and select your country; coverage varies"
         icon="people-outline"
         onPress={() =>
-          perform(async () => { await Linking.openURL("https://www.psychologytoday.com/country-selector"); })
+          perform(async () => {
+            await Linking.openURL(
+              "https://www.psychologytoday.com/country-selector",
+            );
+          })
         }
       />
       <Card>

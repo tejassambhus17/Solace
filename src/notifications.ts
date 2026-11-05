@@ -25,6 +25,16 @@ export async function scheduleReminder(
 ): Promise<{ ids: string[]; permission: string }> {
   if (Platform.OS === "web") return { ids: [], permission: "web-preview" };
   if (!reminder.enabled) return { ids: [], permission: "disabled" };
+  const generation = reminderGeneration;
+  const assertCurrent = () => {
+    if (generation !== reminderGeneration)
+      throw new Error(
+        "Your session changed. Save the reminder again in the current account.",
+      );
+  };
+  // A prior account's bulk cancellation must settle before new schedules begin.
+  await cancellationTail;
+  assertCurrent();
   if (Platform.OS === "android")
     await Notifications.setNotificationChannelAsync("wellness", {
       name: "Gentle reminders",
@@ -32,16 +42,20 @@ export async function scheduleReminder(
       sound: "default",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
     });
+  assertCurrent();
   let permission = await Notifications.getPermissionsAsync();
+  assertCurrent();
   if (!permission.granted)
     permission = await Notifications.requestPermissionsAsync();
+  assertCurrent();
   if (!permission.granted)
     throw new Error(
       "Notifications are not allowed. Enable them in your phone settings, then try again.",
     );
   const ids: string[] = [];
   try {
-    for (const day of reminder.days)
+    for (const day of reminder.days) {
+      assertCurrent();
       ids.push(
         await Notifications.scheduleNotificationAsync({
           content: {
@@ -59,6 +73,10 @@ export async function scheduleReminder(
           },
         }),
       );
+      // Native calls may finish after logout's cancel-all call. Remove their
+      // late IDs instead of returning a successful save to a stale editor.
+      assertCurrent();
+    }
     return { ids, permission: "granted" };
   } catch (error) {
     await cancelReminders(ids);
@@ -163,15 +181,26 @@ export async function testNotification() {
     throw new Error(
       "Reminder delivery needs the Android or iOS app. The browser can preview preferences only.",
     );
+  const generation = reminderGeneration;
+  const assertCurrent = () => {
+    if (generation !== reminderGeneration)
+      throw new Error(
+        "Your session changed. Try the test again in the current account.",
+      );
+  };
+  await cancellationTail;
+  assertCurrent();
   if (Platform.OS === "android")
     await Notifications.setNotificationChannelAsync("wellness", {
       name: "Gentle reminders",
       importance: Notifications.AndroidImportance.DEFAULT,
     });
+  assertCurrent();
   const permission = await Notifications.requestPermissionsAsync();
+  assertCurrent();
   if (!permission.granted)
     throw new Error("Please allow notifications in your phone settings.");
-  await Notifications.scheduleNotificationAsync({
+  const id = await Notifications.scheduleNotificationAsync({
     content: {
       title: "A moment for yourself",
       body: "Tap to open your check-in.",
@@ -183,12 +212,18 @@ export async function testNotification() {
       channelId: "wellness",
     },
   });
+  if (generation !== reminderGeneration) {
+    await cancelReminders([id]);
+    assertCurrent();
+  }
 }
 export function subscribeNotificationNavigation(
   navigate: (route: string) => void,
 ) {
   if (Platform.OS === "web") return () => {};
+  let active = true;
   const handler = (response: Notifications.NotificationResponse) => {
+    if (!active) return;
     const screen = response.notification.request.content.data?.screen;
     if (
       typeof screen === "string" &&
@@ -211,5 +246,8 @@ export function subscribeNotificationNavigation(
       if (response) handler(response);
     })
     .catch(() => {});
-  return () => listener.remove();
+  return () => {
+    active = false;
+    listener.remove();
+  };
 }

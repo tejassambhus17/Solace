@@ -14,7 +14,16 @@ import {
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
-import { Screen, Card, Button, Petal } from "../ui";
+import {
+  Screen,
+  Card,
+  Button,
+  Petal,
+  IconButton,
+  MoodStone,
+  BotanicalBackdrop,
+  Artwork,
+} from "../ui";
 import {
   ASSESSMENTS,
   ASSESSMENT_OPTIONS,
@@ -115,19 +124,17 @@ function Header({
   return (
     <View style={styles.header}>
       {back ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
+        <IconButton
+          name="arrow-back"
+          label="Go back"
           onPress={onBack || app.back}
-          style={styles.back}
-        >
-          <Mark name="arrow-back" />
-        </Pressable>
+          size={48}
+        />
       ) : (
         <Petal size={38} />
       )}
       <Text style={[styles.brand, { color: colors.text }]}>{title}</Text>
-      <View style={{ width: 40 }} />
+      <View style={{ width: 48 }} />
     </View>
   );
 }
@@ -158,30 +165,37 @@ function Field({
   placeholder,
   minHeight = 100,
   label,
+  editable = true,
 }: {
   value: string;
   onChangeText: (v: string) => void;
   placeholder: string;
   minHeight?: number;
   label?: string;
+  editable?: boolean;
 }) {
   const { colors } = useTheme();
+  const [focused, setFocused] = useState(false);
   return (
     <TextInput
       accessibilityLabel={label || placeholder}
       value={value}
+      editable={editable}
       onChangeText={onChangeText}
       multiline
       textAlignVertical="top"
       maxLength={3000}
       placeholder={placeholder}
       placeholderTextColor={colors.muted}
+      selectionColor={colors.primary}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       style={[
         styles.field,
         {
           color: colors.text,
           backgroundColor: colors.surface,
-          borderColor: colors.border,
+          borderColor: focused ? colors.primary : colors.border,
           minHeight,
         },
       ]}
@@ -204,13 +218,15 @@ function Choice({
     <Pressable
       accessibilityRole="radio"
       accessibilityState={{ checked: selected }}
+      aria-checked={selected}
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.choice,
         {
           backgroundColor: selected ? colors.surface2 : colors.surface,
           borderColor: selected ? colors.primary : colors.border,
-          borderWidth: selected ? 1.7 : 1,
+          borderWidth: 1,
+          opacity: pressed ? 0.72 : 1,
         },
       ]}
     >
@@ -260,35 +276,534 @@ function PageIntro({
   children?: React.ReactNode;
 }) {
   return (
-    <View style={{ marginBottom: 22 }}>
-      <Heading>{title}</Heading>
-      {children && <Copy style={{ marginTop: 10 }}>{children}</Copy>}
+    <View style={{ marginBottom: 28 }}>
+      <BotanicalBackdrop
+        style={{
+          width: 190,
+          height: 190,
+          right: -105,
+          top: -92,
+          opacity: 0.23,
+        }}
+      />
+      <Heading style={{ maxWidth: "92%" }}>{title}</Heading>
+      {children && (
+        <Copy muted style={{ marginTop: 12 }}>
+          {children}
+        </Copy>
+      )}
     </View>
+  );
+}
+
+type ToolkitKind = "resource" | "breathing" | "reflection" | "grounding";
+function SaveToToolkit({
+  kind,
+  targetId,
+  title,
+}: {
+  kind: ToolkitKind;
+  targetId: string;
+  title: string;
+}) {
+  const app = useApp();
+  const { colors } = useTheme();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const lock = useRef(false);
+  const favorite = app.data.favorites.find(
+    (item) => item.kind === kind && item.targetId === targetId,
+  );
+  async function toggle() {
+    if (lock.current) return;
+    lock.current = true;
+    setPending(true);
+    setError("");
+    try {
+      if (favorite?.id) await app.remove("favorites", String(favorite.id));
+      else
+        await app.save("favorites", {
+          kind,
+          targetId,
+          title,
+          createdAt: stamp(),
+        });
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      lock.current = false;
+      setPending(false);
+    }
+  }
+  return (
+    <View style={{ marginBottom: 18 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${favorite ? "Remove" : "Save"} ${title} ${favorite ? "from" : "to"} toolkit`}
+        accessibilityState={{ disabled: pending, busy: pending }}
+        aria-disabled={pending}
+        aria-busy={pending}
+        disabled={pending}
+        onPress={toggle}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          alignSelf: "flex-start",
+          gap: 8,
+          minHeight: 44,
+          paddingVertical: 10,
+          paddingHorizontal: 14,
+          borderRadius: 22,
+          borderWidth: 0.75,
+          borderColor: favorite ? colors.primary : colors.border,
+          backgroundColor: pressed ? colors.surface2 : colors.surface,
+          opacity: pending ? 0.6 : 1,
+        })}
+      >
+        <Mark name={favorite ? "bookmark" : "bookmark-outline"} size={17} />
+        <Copy style={{ fontSize: 13, fontFamily: F.strong }}>
+          {pending
+            ? "Updating toolkit…"
+            : favorite
+              ? "Saved to toolkit"
+              : "Save to toolkit"}
+        </Copy>
+      </Pressable>
+      <ErrorNote error={error} />
+    </View>
+  );
+}
+
+function Toolkit() {
+  const app = useApp();
+  const { colors } = useTheme();
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const removeLock = useRef(false);
+  const favorites = [...app.data.favorites].sort((a, b) =>
+    String(b.createdAt).localeCompare(String(a.createdAt)),
+  );
+  function open(item: AnyRecord) {
+    app.navigate(
+      item.kind === "resource" ? "resource" : item.kind,
+      item.kind === "resource" ? { id: item.targetId } : {},
+    );
+  }
+  async function remove(id: string) {
+    if (removeLock.current) return;
+    removeLock.current = true;
+    setRemoving(id);
+    setError("");
+    try {
+      await app.remove("favorites", id);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      removeLock.current = false;
+      setRemoving(null);
+    }
+  }
+  return (
+    <Screen>
+      <Header />
+      <PageIntro title="Your toolkit">
+        The practices you choose to keep close. Saved privately to your account.
+      </PageIntro>
+      <ErrorNote error={error} />
+      {!favorites.length ? (
+        <View
+          style={{
+            alignItems: "center",
+            paddingVertical: 20,
+            marginBottom: 28,
+          }}
+        >
+          <Artwork
+            kind="stillness"
+            style={{
+              width: "100%",
+              height: 148,
+              borderRadius: 20,
+              marginBottom: 8,
+            }}
+          />
+          <Heading small style={{ marginTop: 18, textAlign: "center" }}>
+            A little support, collected
+          </Heading>
+          <Copy
+            muted
+            style={{ textAlign: "center", marginTop: 10, maxWidth: 285 }}
+          >
+            Save a practice or guide when it feels useful. It will be here
+            whenever you want to return.
+          </Copy>
+        </View>
+      ) : (
+        <View style={{ marginBottom: 28 }}>
+          {favorites.map((item) => (
+            <View
+              key={item.id}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                borderBottomWidth: 0.75,
+                borderBottomColor: colors.border,
+                paddingVertical: 17,
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${item.title}`}
+                onPress={() => open(item)}
+                style={{ flex: 1, minHeight: 52, justifyContent: "center" }}
+              >
+                <Heading small style={{ fontSize: 26, lineHeight: 29 }}>
+                  {item.title}
+                </Heading>
+                <Copy muted style={{ fontSize: 13, marginTop: 5 }}>
+                  {item.kind === "resource"
+                    ? "Resource guide"
+                    : item.kind === "breathing"
+                      ? "A paced breathing practice"
+                      : item.kind === "grounding"
+                        ? "A five-senses practice"
+                        : "A space to write"}
+                </Copy>
+              </Pressable>
+              <IconButton
+                name={removing === item.id ? "hourglass-outline" : "bookmark"}
+                label={`Remove ${item.title} from toolkit`}
+                disabled={!!removing}
+                onPress={() => remove(String(item.id))}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+      <Heading small style={{ marginBottom: 14 }}>
+        Make room for a pause
+      </Heading>
+      <Action
+        title="Five-senses grounding"
+        description="A gentle practice to notice your surroundings."
+        icon="hand-left-outline"
+        onPress={() => app.navigate("grounding")}
+      />
+      <Action
+        title="A breathing moment"
+        description="One to three minutes, at your pace."
+        icon="leaf-outline"
+        onPress={() => app.navigate("breathing")}
+      />
+      <Action
+        title="A moment to reflect"
+        description="Notice what is on your mind."
+        icon="create-outline"
+        onPress={() => app.navigate("reflection")}
+      />
+      <Button
+        title="Explore resource guides"
+        variant="secondary"
+        onPress={() => app.navigate("resources")}
+        style={{ marginTop: 8 }}
+      />
+    </Screen>
+  );
+}
+
+const GROUNDING_STEPS = [
+  {
+    count: 5,
+    title: "Things you can see",
+    icon: "eye-outline",
+    prompt:
+      "Let your eyes settle on five details around you. A shape, a colour, a small patch of light. There is no need to look far.",
+    alternative:
+      "If sight is not available or helpful, imagine five familiar details instead.",
+  },
+  {
+    count: 4,
+    title: "Things you can feel",
+    icon: "hand-left-outline",
+    prompt:
+      "Notice four comfortable points of contact. Perhaps your feet on the floor, your hands together, or the texture of your sleeve.",
+    alternative:
+      "Choose only sensations that feel comfortable. You can leave any part out.",
+  },
+  {
+    count: 3,
+    title: "Things you can hear",
+    icon: "ear-outline",
+    prompt:
+      "Notice three sounds, near or far. You do not need to name them perfectly. Give each a little space.",
+    alternative:
+      "If sound is not available or helpful, picture three familiar sounds, or stay with a comfortable texture.",
+  },
+  {
+    count: 2,
+    title: "Things you can smell",
+    icon: "flower-outline",
+    prompt:
+      "Notice two scents, or remember two familiar scents you enjoy. Nothing needs to be found or changed.",
+    alternative: "A remembered scent is enough. You can also skip this sense.",
+  },
+  {
+    count: 1,
+    title: "Thing you can taste",
+    icon: "water-outline",
+    prompt:
+      "Notice one taste, or imagine a familiar taste. Let this be a small, unhurried moment.",
+    alternative:
+      "There is no need to eat or drink anything. Choose a comfortable memory, or skip.",
+  },
+];
+function Grounding({ params }: { params: AnyRecord }) {
+  const app = useApp();
+  const { colors } = useTheme();
+  const [started, setStarted] = useState(false);
+  const [index, setIndex] = useState(0);
+  const [tried, setTried] = useState<number[]>([]);
+  const [ending, setEnding] = useState(false);
+  const accumulated = useRef(0);
+  const since = useRef(0);
+  const finished = useRef(false);
+  const startedAt = useRef(stamp());
+  const stopClock = () => {
+    if (since.current)
+      accumulated.current += (Date.now() - since.current) / 1000;
+    since.current = 0;
+  };
+  useEffect(() => {
+    if (started && !ending && AppState.currentState === "active")
+      since.current = Date.now();
+    const listener = AppState.addEventListener("change", (state) => {
+      if (state !== "active") stopClock();
+      else if (started && !ending && !finished.current)
+        since.current = Date.now();
+    });
+    return () => {
+      stopClock();
+      listener.remove();
+    };
+  }, [started, ending]);
+  function leave() {
+    if (started) {
+      stopClock();
+      setEnding(true);
+    } else app.back();
+  }
+  useEffect(() => {
+    const listener = BackHandler.addEventListener("hardwareBackPress", () => {
+      leave();
+      return true;
+    });
+    return () => listener.remove();
+  }, [started]);
+  function finish(nextTried: number[]) {
+    if (finished.current) return;
+    finished.current = true;
+    stopClock();
+    app.navigate("feedback", {
+      session: {
+        type: "grounding",
+        title: "Five-senses grounding",
+        durationSec: Math.min(
+          1800,
+          Math.max(0, Math.floor(accumulated.current)),
+        ),
+        completed: nextTried.length > 0,
+        steps: nextTried,
+        source: params.source || "wellness",
+        ...(params.conversationId || params.sourceConversationId
+          ? {
+              sourceConversationId:
+                params.conversationId || params.sourceConversationId,
+            }
+          : {}),
+        createdAt: startedAt.current,
+      },
+    });
+  }
+  function next(skip: boolean) {
+    const nextTried = skip
+      ? tried.filter((n) => n !== index)
+      : [...new Set([...tried, index])];
+    setTried(nextTried);
+    if (index === GROUNDING_STEPS.length - 1) finish(nextTried);
+    else setIndex(index + 1);
+  }
+  const step = GROUNDING_STEPS[index];
+  if (ending)
+    return (
+      <Screen>
+        <Header title="Grounding" onBack={() => setEnding(false)} />
+        <PageIntro title="Take your time">
+          Your practice is paused. You can continue, or leave without saving a
+          completed activity.
+        </PageIntro>
+        <Button title="Keep going" onPress={() => setEnding(false)} />
+        <Button
+          title="Leave practice"
+          variant="secondary"
+          onPress={app.back}
+          style={{ marginTop: 12 }}
+        />
+      </Screen>
+    );
+  return (
+    <Screen>
+      <Header title="Grounding" onBack={leave} />
+      {!started ? (
+        <>
+          <PageIntro title="Come back to here">
+            A five-senses practice to notice the space around you, one small
+            detail at a time.
+          </PageIntro>
+          <View
+            style={{
+              alignItems: "center",
+              paddingVertical: 22,
+              marginBottom: 24,
+            }}
+          >
+            <Artwork
+              kind="stillness"
+              style={{ width: "100%", height: 174, borderRadius: 22 }}
+            />
+          </View>
+          <SaveToToolkit
+            kind="grounding"
+            targetId="grounding"
+            title="Five-senses grounding"
+          />
+          <Hint>
+            Use only what feels accessible and comfortable. You can imagine a
+            familiar sensation, skip a sense, or stop at any point.
+          </Hint>
+          <Button
+            title="Begin grounding"
+            onPress={() => {
+              startedAt.current = stamp();
+              setStarted(true);
+              since.current = Date.now();
+            }}
+            style={{ marginTop: 20 }}
+          />
+        </>
+      ) : (
+        <>
+          <Copy muted style={{ marginBottom: 16 }}>
+            Step {index + 1} of {GROUNDING_STEPS.length}
+          </Copy>
+          <View style={{ flexDirection: "row", gap: 6, marginBottom: 28 }}>
+            {GROUNDING_STEPS.map((_, n) => (
+              <View
+                key={n}
+                style={{
+                  flex: 1,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: n <= index ? colors.primary : colors.border,
+                }}
+              />
+            ))}
+          </View>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 15,
+              marginBottom: 18,
+            }}
+          >
+            <Text
+              accessible={false}
+              style={{
+                fontFamily: F.heading,
+                fontSize: 88,
+                lineHeight: 92,
+                color: colors.primary,
+              }}
+            >
+              {step.count}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Mark name={step.icon} size={25} color={colors.primary} />
+              <Heading style={{ fontSize: 35, lineHeight: 37, marginTop: 9 }}>
+                {step.title}
+              </Heading>
+            </View>
+          </View>
+          <Copy
+            accessibilityLiveRegion="polite"
+            aria-live="polite"
+            style={{ fontSize: 17, lineHeight: 27 }}
+          >
+            {step.prompt}
+          </Copy>
+          <Copy muted style={{ marginTop: 18, marginBottom: 32 }}>
+            {step.alternative}
+          </Copy>
+          <Button
+            title={index === 4 ? "Finish practice" : "Continue"}
+            onPress={() => next(false)}
+          />
+          <Button
+            title="Skip this sense"
+            variant="ghost"
+            onPress={() => next(true)}
+            style={{ marginTop: 8 }}
+          />
+          {index > 0 && (
+            <Button
+              title="Previous sense"
+              variant="secondary"
+              onPress={() => setIndex(index - 1)}
+              style={{ marginTop: 8 }}
+            />
+          )}
+        </>
+      )}
+    </Screen>
   );
 }
 
 function Checkin() {
   const app = useApp();
   const { colors } = useTheme();
+  const draftKey = "checkin:new";
+  const draft = app.editorDrafts[draftKey];
   const [mood, setMood] = useState(
     ["Okay", "Calm", "Low", "Stressed", "Great"].includes(app.params?.mood)
       ? app.params.mood
-      : "",
+      : draft?.mood || "",
   );
-  const [tags, setTags] = useState<string[]>([]);
-  const [note, setNote] = useState("");
+  const [tags, setTags] = useState<string[]>(() => {
+    try {
+      return JSON.parse(draft?.tags || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [note, setNote] = useState(draft?.note || "");
   const [more, setMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const saveLock = useRef(false);
+  function writeDraft(nextMood = mood, nextTags = tags, nextNote = note) {
+    if (saveLock.current) return;
+    setMood(nextMood);
+    setTags(nextTags);
+    setNote(nextNote);
+    app.setEditorDraft(draftKey, {
+      mood: nextMood,
+      tags: JSON.stringify(nextTags),
+      note: nextNote,
+    });
+  }
   const choices = ["Okay", "Calm", "Low", "Stressed", "Great"];
-  const tones = [
-    colors.peach,
-    colors.accent,
-    colors.lavender,
-    "#D99554",
-    "#9AA46B",
-  ];
   const tagChoices = more
     ? [
         "Rested",
@@ -304,10 +819,14 @@ function Checkin() {
       ]
     : ["Rested", "Grateful", "Tense", "Focused", "Kind"];
   async function save() {
+    if (saveLock.current) return;
     if (!mood) {
       setError("Choose a mood before saving your check-in.");
       return;
     }
+    saveLock.current = true;
+    const submittedDraft = { mood, tags: JSON.stringify(tags), note };
+    app.setEditorDraft(draftKey, submittedDraft);
     setSaving(true);
     setError("");
     try {
@@ -318,10 +837,12 @@ function Checkin() {
         day: localDay(),
         createdAt: stamp(),
       });
+      app.setEditorDraft(draftKey, null, submittedDraft);
       setSaved(true);
     } catch (e) {
       setError(errText(e));
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
@@ -360,14 +881,16 @@ function Checkin() {
       <Card style={{ padding: 16 }}>
         <Heading small>Your mood today</Heading>
         <View accessibilityRole="radiogroup" style={styles.moodRow}>
-          {choices.map((label, i) => (
+          {choices.map((label) => (
             <Pressable
               key={label}
               accessibilityRole="radio"
               accessibilityLabel={label}
               accessibilityState={{ checked: mood === label }}
+              aria-checked={mood === label}
+              disabled={saving}
               onPress={() => {
-                setMood(label);
+                writeDraft(label);
                 setError("");
               }}
               style={[
@@ -379,8 +902,8 @@ function Checkin() {
                 },
               ]}
             >
-              <View style={[styles.moodDot, { backgroundColor: tones[i] }]} />
-              <Copy style={{ fontSize: 11, lineHeight: 16 }}>{label}</Copy>
+              <MoodStone mood={label} size={31} />
+              <Copy style={{ fontSize: 12, lineHeight: 17 }}>{label}</Copy>
             </Pressable>
           ))}
         </View>
@@ -395,8 +918,11 @@ function Checkin() {
             key={tag}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: tags.includes(tag) }}
+            aria-checked={tags.includes(tag)}
+            disabled={saving}
             onPress={() =>
-              setTags(
+              writeDraft(
+                mood,
                 tags.includes(tag)
                   ? tags.filter((v) => v !== tag)
                   : [...tags, tag],
@@ -431,7 +957,8 @@ function Checkin() {
       </View>
       <Field
         value={note}
-        onChangeText={setNote}
+        onChangeText={(value) => writeDraft(mood, tags, value)}
+        editable={!saving}
         placeholder="What is on your mind today?"
         minHeight={88}
       />
@@ -473,10 +1000,11 @@ function Assessments() {
             </View>
             <View style={styles.cardFooter}>
               <Button
-                title="Start →"
+                title="Start"
+                icon="arrow-forward"
                 onPress={() => app.navigate("assessment", { id: item.id })}
               />
-              <Copy muted style={{ fontSize: 11, flex: 1 }}>
+              <Copy muted style={{ fontSize: 13, lineHeight: 19, flex: 1 }}>
                 {previous
                   ? `Last reflection: ${new Date(previous.createdAt).toLocaleDateString()}`
                   : "Your first reflection"}
@@ -600,14 +1128,22 @@ function Assessment({ params }: { params: AnyRecord }) {
       <View style={styles.twoButtons}>
         <View style={{ flex: 1 }}>
           <Button
-            title="← Back"
+            title="Back"
+            icon="arrow-back"
             variant="secondary"
             onPress={() => (index ? setIndex(index - 1) : app.back())}
           />
         </View>
         <View style={{ flex: 1 }}>
           <Button
-            title={saving ? "Saving…" : index === 3 ? "Finish →" : "Next →"}
+            title={
+              saving
+                ? "Saving…"
+                : index === definition.questions.length - 1
+                  ? "Finish"
+                  : "Next"
+            }
+            icon="arrow-forward"
             onPress={next}
             disabled={saving}
           />
@@ -768,9 +1304,12 @@ function Breathing({ params }: { params: AnyRecord }) {
     const timer = setInterval(() => {
       if (!active.current) return;
       const seconds = before.current + (Date.now() - base.current) / 1000;
-      setElapsed(Math.min(duration, seconds));
+      // The visible timer changes once a second; keep fractional clock time in
+      // refs so the native petal animation stays smooth without rerendering the
+      // entire activity ten times a second.
+      setElapsed(Math.min(duration, Math.floor(seconds)));
       if (seconds >= duration) finish(duration, true);
-    }, 100);
+    }, 250);
     return () => clearInterval(timer);
   }, [running, duration]);
   useEffect(() => {
@@ -825,7 +1364,7 @@ function Breathing({ params }: { params: AnyRecord }) {
       <Screen>
         <Header title="Solace Moment" onBack={keepGoing} />
         <View style={{ alignItems: "center", marginVertical: 28 }}>
-          <Petal size={150} />
+          <Artwork kind="petal" size={150} />
         </View>
         <Card style={{ padding: 24 }}>
           <Heading small>End this moment?</Heading>
@@ -851,18 +1390,35 @@ function Breathing({ params }: { params: AnyRecord }) {
   return (
     <Screen>
       <Header title="Solace Moment" onBack={end} />
+      <BotanicalBackdrop
+        style={{ top: 25, right: -155, width: 290, height: 290, opacity: 0.18 }}
+      />
+      <BotanicalBackdrop
+        variant="footer"
+        style={{ bottom: -110, right: -100, opacity: 0.18 }}
+      />
       <Copy style={{ textAlign: "center", marginTop: 3 }} muted>
         A comfortable breath. Nothing to force.
       </Copy>
       {!started && (
+        <View style={{ alignItems: "center", marginTop: 12 }}>
+          <SaveToToolkit
+            kind="breathing"
+            targetId="breathing"
+            title="A breathing moment"
+          />
+        </View>
+      )}
+      {!started && (
         <View
-          style={[styles.chips, { justifyContent: "center", marginTop: 20 }]}
+          style={[styles.chips, { justifyContent: "center", marginTop: 6 }]}
         >
           {[60, 120, 180].map((value) => (
             <Pressable
               key={value}
               accessibilityRole="radio"
               accessibilityState={{ checked: duration === value }}
+              aria-checked={duration === value}
               onPress={() => setDuration(value)}
               style={[
                 styles.chip,
@@ -881,7 +1437,7 @@ function Breathing({ params }: { params: AnyRecord }) {
       )}
       <View style={styles.momentArt}>
         <Animated.View style={{ transform: [{ scale }] }}>
-          <Petal size={270} />
+          <Artwork kind="petal" size={270} />
         </Animated.View>
       </View>
       <Heading
@@ -904,7 +1460,13 @@ function Breathing({ params }: { params: AnyRecord }) {
       )}
       <Copy
         accessibilityLiveRegion="none"
-        style={{ textAlign: "center", marginTop: 22, fontSize: 18 }}
+        style={{
+          textAlign: "center",
+          marginTop: 22,
+          fontSize: 18,
+          fontVariant: ["tabular-nums"],
+          letterSpacing: 1,
+        }}
       >
         {clock(elapsed)} / {clock(duration)}
       </Copy>
@@ -946,13 +1508,34 @@ function Breathing({ params }: { params: AnyRecord }) {
 function Feedback({ params }: { params: AnyRecord }) {
   const app = useApp();
   const { colors } = useTheme();
-  const [feedback, setFeedback] = useState("");
-  const [note, setNote] = useState("");
-  const [remember, setRemember] = useState(false);
+  const draftKey = `feedback:${String(params.session?.createdAt || "new")}`;
+  const draft = app.editorDrafts[draftKey];
+  const [feedback, setFeedback] = useState(draft?.feedback || "");
+  const [note, setNote] = useState(draft?.note || "");
+  const [remember, setRemember] = useState(draft?.remember === "true");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
-  const savedSession = useRef<AnyRecord | null>(null);
+  const savedSession = useRef<AnyRecord | null>(
+    draft?.savedSessionId ? { id: draft.savedSessionId } : null,
+  );
+  const saveLock = useRef(false);
+  function writeDraft(
+    nextFeedback = feedback,
+    nextNote = note,
+    nextRemember = remember,
+  ) {
+    if (saveLock.current) return;
+    setFeedback(nextFeedback);
+    setNote(nextNote);
+    setRemember(nextRemember);
+    app.setEditorDraft(draftKey, {
+      feedback: nextFeedback,
+      note: nextNote,
+      remember: String(nextRemember),
+      savedSessionId: savedSession.current?.id || "",
+    });
+  }
   const session = params.session || {
     type: "breathing",
     title: "A reset moment",
@@ -960,7 +1543,22 @@ function Feedback({ params }: { params: AnyRecord }) {
     completed: false,
     createdAt: stamp(),
   };
+  const preference =
+    session.type === "grounding"
+      ? "Finds five-senses grounding helpful."
+      : session.type === "breathing"
+        ? "Finds short breathing moments helpful."
+        : null;
   async function save() {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    const submittedDraft = {
+      feedback,
+      note,
+      remember: String(remember),
+      savedSessionId: String(savedSession.current?.id || ""),
+    };
+    app.setEditorDraft(draftKey, submittedDraft);
     setSaving(true);
     setError("");
     try {
@@ -970,10 +1568,15 @@ function Feedback({ params }: { params: AnyRecord }) {
         feedback: feedback || "skipped",
         note: note.trim(),
       });
-      if (remember && feedback === "Helped")
+      const savedDraft = {
+        ...submittedDraft,
+        savedSessionId: String(savedSession.current.id),
+      };
+      app.setEditorDraft(draftKey, savedDraft);
+      if (remember && feedback === "Helped" && preference)
         await app.save("memories", {
-          text: "Finds short breathing moments helpful.",
-          content: "Finds short breathing moments helpful.",
+          text: preference,
+          content: preference,
           sourceType: "session",
           sourceId: savedSession.current?.id,
           ...(session.sourceConversationId
@@ -982,10 +1585,12 @@ function Feedback({ params }: { params: AnyRecord }) {
           approved: true,
           createdAt: stamp(),
         });
+      app.setEditorDraft(draftKey, null, savedDraft);
       setSaved(true);
     } catch (e) {
       setError(errText(e));
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
@@ -1009,7 +1614,9 @@ function Feedback({ params }: { params: AnyRecord }) {
         <PageIntro title="A little care, saved">
           Your moment is in your Journey. You can return whenever you need.
         </PageIntro>
-        <Petal size={170} />
+        <View style={{ alignItems: "center", marginVertical: 24 }}>
+          <Artwork kind="petal" size={170} />
+        </View>
         {session.sourceConversationId && (
           <View style={{ marginBottom: 12 }}>
             <Button
@@ -1027,6 +1634,7 @@ function Feedback({ params }: { params: AnyRecord }) {
         <Button
           title="Back to Today"
           variant="secondary"
+          style={{ marginTop: 12 }}
           onPress={() => app.navigate("today")}
         />
       </Screen>
@@ -1050,7 +1658,9 @@ function Feedback({ params }: { params: AnyRecord }) {
               key={item.label}
               accessibilityRole="radio"
               accessibilityState={{ checked: feedback === item.label }}
-              onPress={() => setFeedback(item.label)}
+              aria-checked={feedback === item.label}
+              disabled={saving}
+              onPress={() => writeDraft(item.label)}
               style={[
                 styles.feedbackOption,
                 {
@@ -1071,15 +1681,18 @@ function Feedback({ params }: { params: AnyRecord }) {
       </Card>
       <Field
         value={note}
-        onChangeText={setNote}
+        onChangeText={(value) => writeDraft(feedback, value)}
+        editable={!saving}
         placeholder="Add a note (optional)…"
         minHeight={90}
       />
-      {feedback === "Helped" && (
+      {feedback === "Helped" && !!preference && (
         <Pressable
           accessibilityRole="checkbox"
           accessibilityState={{ checked: remember }}
-          onPress={() => setRemember(!remember)}
+          aria-checked={remember}
+          disabled={saving}
+          onPress={() => writeDraft(feedback, note, !remember)}
           style={styles.checkRow}
         >
           <Mark
@@ -1087,17 +1700,22 @@ function Feedback({ params }: { params: AnyRecord }) {
             color={colors.primary}
           />
           <Copy style={{ flex: 1, fontSize: 13 }}>
-            Save a preference that short breathing moments help me.
+            {session.type === "grounding"
+              ? "Save a preference that five-senses grounding helps me."
+              : "Save a preference that short breathing moments help me."}
           </Copy>
         </Pressable>
       )}
-      {remember && feedback === "Helped" && !app.user?.personalization && (
-        <Hint>
-          This saves the preference for you to manage. Personalization is
-          currently off; enable it in Profile if you want Solace to use approved
-          preferences and recent check-ins.
-        </Hint>
-      )}
+      {remember &&
+        feedback === "Helped" &&
+        !!preference &&
+        !app.user?.personalization && (
+          <Hint>
+            This saves the preference for you to manage. Personalization is
+            currently off; enable it in Profile if you want Solace to use
+            approved preferences and recent check-ins.
+          </Hint>
+        )}
       <ErrorNote error={error} />
       <Button
         title={saving ? "Saving…" : "Save and continue →"}
@@ -1114,17 +1732,31 @@ function Feedback({ params }: { params: AnyRecord }) {
 
 function Reflection() {
   const app = useApp();
-  const [text, setText] = useState("");
-  const [need, setNeed] = useState("");
-  const [expanded, setExpanded] = useState(false);
+  const draftKey = "reflection:new";
+  const draft = app.editorDrafts[draftKey];
+  const [text, setText] = useState(draft?.text || "");
+  const [need, setNeed] = useState(draft?.need || "");
+  const [expanded, setExpanded] = useState(!!draft?.need);
+  const [discarding, setDiscarding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const saveLock = useRef(false);
+  function writeDraft(nextText = text, nextNeed = need) {
+    if (saveLock.current) return;
+    setText(nextText);
+    setNeed(nextNeed);
+    app.setEditorDraft(draftKey, { text: nextText, need: nextNeed });
+  }
   async function save() {
+    if (saveLock.current) return;
     if (!text.trim()) {
       setError("Write a little about what is on your mind, or skip for now.");
       return;
     }
+    saveLock.current = true;
+    const submittedDraft = { text, need };
+    app.setEditorDraft(draftKey, submittedDraft);
     setSaving(true);
     setError("");
     try {
@@ -1136,10 +1768,12 @@ function Reflection() {
           : {}),
         createdAt: stamp(),
       });
+      app.setEditorDraft(draftKey, null, submittedDraft);
       setSaved(true);
     } catch (e) {
       setError(errText(e));
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }
@@ -1167,6 +1801,7 @@ function Reflection() {
         <Button
           title="Back to Today"
           variant="secondary"
+          style={{ marginTop: 12 }}
           onPress={() => app.navigate("today")}
         />
       </Screen>
@@ -1178,11 +1813,18 @@ function Reflection() {
         A guided journal to notice, process, and make space for what is on your
         mind.
       </PageIntro>
+      {!!app.params?.prompt && <Hint>{String(app.params.prompt)}</Hint>}
+      <SaveToToolkit
+        kind="reflection"
+        targetId="reflection"
+        title="A moment to reflect"
+      />
       <Card style={{ padding: 16 }}>
         <Heading small>What has been on your mind?</Heading>
         <Field
           value={text}
-          onChangeText={setText}
+          onChangeText={(value) => writeDraft(value, need)}
+          editable={!saving}
           placeholder="Write your reflection here…"
           minHeight={180}
         />
@@ -1195,18 +1837,63 @@ function Reflection() {
       {expanded && (
         <Field
           value={need}
-          onChangeText={setNeed}
+          onChangeText={(value) => writeDraft(text, value)}
+          editable={!saving}
           placeholder="Perhaps rest, reassurance, connection, or something else…"
           minHeight={100}
         />
       )}
+      <Copy muted style={{ fontSize: 12, marginTop: 14, marginBottom: 14 }}>
+        Your draft is kept while you move around the app. Save it to keep it in
+        your Journey.
+      </Copy>
       <ErrorNote error={error} />
       <Button
         title={saving ? "Saving…" : "Save reflection"}
         onPress={save}
         disabled={saving}
       />
-      <Button title="Skip for now" variant="secondary" onPress={app.back} />
+      <Button
+        title="Keep draft and leave"
+        variant="ghost"
+        onPress={app.back}
+        disabled={saving}
+        style={{ marginTop: 10 }}
+      />
+      {!!(text || need) && !discarding && (
+        <Button
+          title="Discard draft…"
+          variant="ghost"
+          disabled={saving}
+          onPress={() => setDiscarding(true)}
+        />
+      )}
+      {discarding && (
+        <Card style={{ marginTop: 12 }}>
+          <Heading small>Discard this draft?</Heading>
+          <Copy style={{ marginTop: 7, marginBottom: 12 }}>
+            This removes the writing you have not saved. You can keep writing
+            instead.
+          </Copy>
+          <Button
+            title="Keep writing"
+            variant="secondary"
+            onPress={() => setDiscarding(false)}
+          />
+          <Button
+            title="Discard draft"
+            variant="ghost"
+            onPress={() => {
+              setText("");
+              setNeed("");
+              app.setEditorDraft(draftKey, null);
+              setExpanded(false);
+              setDiscarding(false);
+              setError("");
+            }}
+          />
+        </Card>
+      )}
     </Screen>
   );
 }
@@ -1387,6 +2074,12 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                 {record.completed ? "" : " · Ended early"}
               </Copy>
             )}
+            {record.type === "grounding" && (
+              <Copy style={{ marginTop: 12 }}>
+                {record.steps?.length || 0} of 5 senses explored ·{" "}
+                {clock(record.durationSec || 0)} active time
+              </Copy>
+            )}
             {record.type === "resource" && (
               <Copy style={{ marginTop: 12 }}>
                 {record.steps?.length || 0} practices tried
@@ -1457,6 +2150,27 @@ function Resources() {
         A curated library of practices, tools, and gentle guidance for everyday
         wellbeing.
       </PageIntro>
+      <Artwork
+        kind="stillness"
+        style={{
+          width: "100%",
+          height: 144,
+          borderRadius: 22,
+          marginBottom: 24,
+        }}
+      />
+      <Action
+        title="Your saved toolkit"
+        description={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
+        icon="bookmark-outline"
+        onPress={() => app.navigate("toolkit")}
+      />
+      <Action
+        title="Five-senses grounding"
+        description="Notice this moment through your senses."
+        icon="hand-left-outline"
+        onPress={() => app.navigate("grounding")}
+      />
       {RESOURCE_GUIDES.map((guide) => (
         <Action
           key={guide.id}
@@ -1503,7 +2217,8 @@ function Resource({ params }: { params: AnyRecord }) {
     setError("");
   }, [guide.id]);
   async function save() {
-    if (!checked.length) {
+    if (saving) return;
+    if (!checked.length && !previous?.id) {
       setError("Mark a practice you tried before saving your progress.");
       return;
     }
@@ -1532,6 +2247,24 @@ function Resource({ params }: { params: AnyRecord }) {
     <Screen>
       <Header />
       <PageIntro title={guide.title}>{guide.description}</PageIntro>
+      <SaveToToolkit kind="resource" targetId={guide.id} title={guide.title} />
+      <Artwork
+        kind={guide.id === "sleep" ? "night" : "stillness"}
+        style={{
+          width: "100%",
+          height: 144,
+          borderRadius: 22,
+          marginBottom: 22,
+        }}
+      />
+      {guide.id === "anxiety" && (
+        <Action
+          title="Try five-senses grounding"
+          description="Follow an optional practice, one sense at a time."
+          icon="hand-left-outline"
+          onPress={() => app.navigate("grounding", { source: guide.id })}
+        />
+      )}
       <Card style={{ padding: 16, marginBottom: 16 }}>
         <View style={styles.between}>
           <Copy style={{ fontFamily: F.strong }}>Your progress</Copy>
@@ -1558,7 +2291,9 @@ function Resource({ params }: { params: AnyRecord }) {
             <Pressable
               accessibilityRole="checkbox"
               accessibilityLabel={`Mark ${step.title} as tried`}
+              disabled={saving}
               accessibilityState={{ checked: checked.includes(index) }}
+              aria-checked={checked.includes(index)}
               onPress={() => {
                 setChecked(
                   checked.includes(index)
@@ -1578,8 +2313,9 @@ function Resource({ params }: { params: AnyRecord }) {
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: expanded === index }}
+              aria-expanded={expanded === index}
               onPress={() => setExpanded(expanded === index ? null : index)}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minHeight: 48, justifyContent: "center" }}
             >
               <Heading small style={{ fontSize: 25 }}>
                 {step.title}
@@ -1671,6 +2407,7 @@ function Plan() {
   const [saved, setSaved] = useState(false);
   const savedPlan = useRef<AnyRecord | null>(existing || null);
   async function save(nextTasks = tasks) {
+    if (saving) return;
     setSaving(true);
     setError("");
     try {
@@ -1701,6 +2438,7 @@ function Plan() {
         <Heading small>Your next 3 days</Heading>
         <Pressable
           accessibilityRole="button"
+          disabled={saving}
           onPress={() => setEditing(!editing)}
           style={[
             styles.chip,
@@ -1718,7 +2456,9 @@ function Plan() {
             <Pressable
               accessibilityRole="checkbox"
               accessibilityLabel={`Day ${index + 1}: ${task.title}`}
+              disabled={saving}
               accessibilityState={{ checked: !!task.completed }}
+              aria-checked={!!task.completed}
               onPress={() => {
                 setTasks(
                   tasks.map((v, n) =>
@@ -1743,6 +2483,7 @@ function Plan() {
                 <TextInput
                   accessibilityLabel={`Day ${index + 1} activity`}
                   value={task.title}
+                  editable={!saving}
                   maxLength={90}
                   onChangeText={(title) => {
                     setTasks(
@@ -1774,7 +2515,8 @@ function Plan() {
           {!editing && (
             <View style={{ marginTop: 13 }}>
               <Button
-                title="Open practice →"
+                title="Open practice"
+                icon="arrow-forward"
                 variant="secondary"
                 onPress={() => app.navigate(task.action || "reflection")}
               />
@@ -1912,7 +2654,7 @@ function Affirmation() {
               busy === "challenge"
                 ? "Saving…"
                 : complete
-                  ? "✓ Completed today — undo"
+                  ? "Completed today · undo"
                   : "I tried this — mark complete"
             }
             variant="secondary"
@@ -1998,6 +2740,8 @@ export default function WellnessScreen({ name }: { name: string }) {
   const params = ((app as any).route?.params ||
     (app as any).params ||
     {}) as AnyRecord;
+  if (name === "toolkit") return <Toolkit />;
+  if (name === "grounding") return <Grounding params={params} />;
   if (name === "checkin") return <Checkin />;
   if (name === "assessments") return <Assessments />;
   if (name === "assessment") return <Assessment params={params} />;
@@ -2029,14 +2773,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 25,
+    marginBottom: 28,
     minHeight: 48,
-  },
-  back: {
-    width: 42,
-    minHeight: 44,
-    alignItems: "flex-start",
-    justifyContent: "center",
   },
   brand: { fontFamily: F.heading, fontSize: 29, letterSpacing: -0.6 },
   notice: {
@@ -2049,49 +2787,48 @@ const styles = StyleSheet.create({
   },
   field: {
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 16,
     fontFamily: F.body,
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 24,
     marginVertical: 12,
   },
   choice: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 15,
-    paddingVertical: 18,
+    gap: 14,
+    paddingVertical: 20,
     paddingHorizontal: 18,
-    borderRadius: 18,
-    marginBottom: 11,
+    borderRadius: 20,
+    marginBottom: 12,
     minHeight: 64,
   },
   action: {
     flexDirection: "row",
     alignItems: "center",
     gap: 13,
-    padding: 16,
-    marginBottom: 11,
+    padding: 18,
+    marginBottom: 12,
   },
   iconBox: {
-    height: 45,
-    width: 45,
-    borderRadius: 15,
+    height: 46,
+    width: 46,
+    borderRadius: 23,
     alignItems: "center",
     justifyContent: "center",
   },
   moodRow: { flexDirection: "row", gap: 5, marginTop: 16 },
   moodChoice: {
     flex: 1,
-    minHeight: 72,
-    paddingVertical: 9,
+    minHeight: 84,
+    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
-    borderWidth: 1.3,
+    borderWidth: 1,
     borderRadius: 16,
   },
-  moodDot: { width: 28, height: 28, borderRadius: 14 },
   sectionLabel: {
     flexDirection: "row",
     gap: 10,
@@ -2103,7 +2840,7 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: 15,
     paddingVertical: 10,
-    minHeight: 42,
+    minHeight: 48,
     borderWidth: 1,
     borderRadius: 24,
     justifyContent: "center",
@@ -2126,14 +2863,14 @@ const styles = StyleSheet.create({
   momentArt: {
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 290,
+    minHeight: 270,
     marginTop: 18,
     marginBottom: 6,
   },
   feedbackOption: {
     flex: 1,
     minHeight: 88,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
@@ -2159,8 +2896,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   checkbox: {
-    minHeight: 44,
-    minWidth: 36,
+    minHeight: 48,
+    minWidth: 48,
     justifyContent: "center",
     alignItems: "center",
   },

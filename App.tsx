@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import * as SystemUI from "expo-system-ui";
 import { useFonts } from "expo-font";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
@@ -58,6 +59,8 @@ const wellnessScreens = new Set([
   "plan",
   "affirmation",
   "challenge",
+  "grounding",
+  "toolkit",
 ]);
 const tabs = [
   { name: "today", title: "Today", icon: "home-outline", activeIcon: "home" },
@@ -78,10 +81,7 @@ const tabs = [
 function TabBar() {
   const app = useApp();
   const { colors } = useTheme();
-  let active = app.route;
-  if (profileScreens.has(active)) active = "profile";
-  else if (active === "history") active = "chat";
-  else if (wellnessScreens.has(active)) active = "today";
+  const active = app.activeTab;
   return (
     <SafeAreaView
       edges={["bottom"]}
@@ -95,8 +95,8 @@ function TabBar() {
         style={{
           flexDirection: "row",
           justifyContent: "space-around",
-          paddingTop: 8,
-          paddingBottom: Platform.OS === "web" ? 10 : 0,
+          paddingTop: 10,
+          paddingBottom: Platform.OS === "web" ? 10 : 4,
         }}
       >
         {tabs.map((tab) => {
@@ -107,14 +107,16 @@ function TabBar() {
               onPress={() => app.setTab(tab.name)}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
+              aria-selected={selected}
               accessibilityLabel={tab.title}
-              style={{
+              style={({ pressed }) => ({
                 alignItems: "center",
                 justifyContent: "center",
                 minWidth: 64,
                 minHeight: 48,
                 paddingHorizontal: 8,
-              }}
+                opacity: pressed ? 0.65 : 1,
+              })}
             >
               <Icon
                 name={selected ? tab.activeIcon : tab.icon}
@@ -124,16 +126,22 @@ function TabBar() {
               <AppText
                 variant="caption"
                 color={selected ? colors.text : colors.muted}
-                style={{ fontSize: 11, marginTop: 2 }}
+                style={{
+                  fontSize: 11,
+                  marginTop: 4,
+                  fontFamily: selected
+                    ? "Inter_600SemiBold"
+                    : "Inter_400Regular",
+                }}
               >
                 {tab.title}
               </AppText>
               <View
                 style={{
                   height: 2,
-                  width: 32,
+                  width: 28,
                   backgroundColor: selected ? colors.primary : "transparent",
-                  marginTop: 3,
+                  marginTop: 5,
                   borderRadius: 2,
                 }}
               />
@@ -148,7 +156,7 @@ function Shell() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   useEffect(() => {
-    if (!app.user) return;
+    if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
       (error) =>
         console.warn(
@@ -159,12 +167,13 @@ function Shell() {
     return subscribeNotificationNavigation((route: string) =>
       app.navigate(route),
     );
-  }, [app.user?.id]);
+  }, [app.user?.id, app.sessionExpired]);
   useEffect(() => {
     if (
       !app.user ||
+      app.sessionExpired ||
       !app.canGoBack ||
-      ["breathing", "moment"].includes(app.route)
+      ["breathing", "moment", "grounding"].includes(app.route)
     )
       return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -172,7 +181,11 @@ function Shell() {
       return true;
     });
     return () => handler.remove();
-  }, [app.user?.id, app.route, app.canGoBack]);
+  }, [app.user?.id, app.sessionExpired, app.route, app.canGoBack]);
+  useEffect(() => {
+    if (Platform.OS !== "web")
+      SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
+  }, [colors.bg]);
   let content: React.ReactNode;
   if (app.sessionError && !app.user)
     content = (
@@ -198,14 +211,10 @@ function Shell() {
         />
       </View>
     );
-  else if (!app.user) content = <AuthScreen />;
+  else if (!app.user || app.sessionExpired) content = <AuthScreen />;
   else if (app.route === "today") content = <TodayScreen />;
   else if (app.route === "chat" || app.route === "solace")
-    content = (
-      <ChatScreen
-        key={`chat-${app.params?.id || "new"}-${app.params?.context || ""}`}
-      />
-    );
+    content = <ChatScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey") content = <JourneyScreen />;
   else if (profileScreens.has(app.route))
@@ -225,7 +234,7 @@ function Shell() {
         backgroundColor:
           Platform.OS === "web"
             ? resolved === "dark"
-              ? "#09130d"
+              ? "#000000"
               : "#EAD5C5"
             : colors.bg,
         alignItems: "center",
@@ -236,7 +245,7 @@ function Shell() {
         style={{
           flex: 1,
           width: "100%",
-          maxWidth: 500,
+          maxWidth: 480,
           backgroundColor: colors.bg,
           ...(Platform.OS === "web"
             ? { boxShadow: "0 0 48px rgba(0,0,0,.12)" }
@@ -247,21 +256,38 @@ function Shell() {
           <View
             style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
           >
-            <ActivityIndicator color={colors.primary} />
+            <Petal size={100} />
+            <AppText variant="title" style={{ marginTop: 14 }}>
+              Solace
+            </AppText>
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={{ marginTop: 7 }}
+            >
+              A little space for you.
+            </AppText>
+            <ActivityIndicator
+              color={colors.primary}
+              style={{ marginTop: 24 }}
+            />
           </View>
         ) : (
           <>
             {content}
             {!!app.user &&
+              !app.sessionExpired &&
               app.route !== "breathing" &&
-              app.route !== "moment" && <TabBar />}
+              app.route !== "moment" &&
+              app.route !== "grounding" && <TabBar />}
           </>
         )}
       </View>
     </View>
   );
 }
-export default function App() {
+function FontGate() {
+  const { colors, resolved } = useTheme();
   const [loaded, error] = useFonts({
     Inter_400Regular,
     Inter_600SemiBold,
@@ -274,7 +300,7 @@ export default function App() {
           flex: 1,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: "#F8EDE3",
+          backgroundColor: colors.bg,
         }}
       >
         <Image
@@ -282,18 +308,24 @@ export default function App() {
           style={{ width: 120, height: 120 }}
           resizeMode="contain"
         />
-        <Text style={{ fontSize: 28, color: "#193326", marginTop: 10 }}>
+        <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+        <Text style={{ fontSize: 28, color: colors.text, marginTop: 10 }}>
           Solace
         </Text>
-        <ActivityIndicator color="#27452E" style={{ marginTop: 20 }} />
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
       </View>
     );
   return (
+    <AppProvider>
+      <Shell />
+    </AppProvider>
+  );
+}
+export default function App() {
+  return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AppProvider>
-          <Shell />
-        </AppProvider>
+        <FontGate />
       </ThemeProvider>
     </SafeAreaProvider>
   );

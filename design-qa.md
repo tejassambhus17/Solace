@@ -23,3 +23,25 @@ No unresolved P0/P1/P2 visual issue observed in the tested browser journeys. Ini
 Accepted differences: native device bezel/status imagery is absent from app-owned content; greeting varies; additional required feature links extend the home scroll; buttons use theme tokens rather than mockup-only texture. Botanical contrast is quieter in dark mode (P3 visual refinement).
 
 Follow-up acceptance is still required on an installed phone: keyboard/safe areas, large accessibility text, screen-reader reading order, native back behavior, and system theme transitions. Passing this browser QA is not proof of those behaviors.
+
+## 5 November refinement
+
+The current polish pass preserves the approved botanical direction and four-tab navigation. Added light/dark production artwork, sculpted labeled mood stones, a clearer editorial type scale, consistent form/touch states and botanical profile composition. Account entry and Today have no duplicate profile shortcut. Chat keeps its composer outside the message scroll region; drafts survive tab navigation.
+
+Reviewed effective 390×845 phone and 1281×900 wide web preview. The first batched inspection found absent web selected-state semantics and text reaching into the featured flower at wide column widths; explicit ARIA states and a bounded text measure fix those. The confirmation pass showed correct selected mood/tab DOM states, readable artwork copy and no horizontal document overflow. Dedicated raw screenshots and a viewport-only contact sheet are in docs/screenshots/polish-*.png.
+
+This evidence is from a browser preview of the shared mobile source, not an installed native build. See docs/VERIFICATION.md for executed journeys, automated checks and remaining physical-device work.
+
+## True-black follow-up
+
+Latest user instruction replaces the washed-out forest dark palette. Main dark surfaces are #000000 / #111112 / #1D1D1F, borders are neutral #303033, and primary controls use warm ivory #EBDFCB. Removed the large green-backed hero image from dark rendering and replaced it with isolated original petal art on charcoal. Supporting botanical images are restrained champagne silhouettes. Light mode stays ivory/blush.
+
+Phone inspection confirmed the exact neutral RGB surface values in the rendered DOM, readable hero copy, clear selection borders and a consistent ivory action system. History now uses a quieter divided-list composition with title/message search and inline rename. Journal drafts have clear keep/discard actions; active detail tabs follow the point of entry. Evidence is in docs/screenshots/black-mode-*.png; token contrast and executed scenarios are in docs/VERIFICATION.md. Native visual/device verification remains pending.
+
+## Dark artwork and personal-routine pass
+
+Added three purpose-generated assets on the neutral black/charcoal palette: translucent petal, basalt/water stillness, and moonlit botanical art. Artwork now differentiates breathing, grounding/toolkit and sleep rather than repeating the same petal everywhere. Text remains in native components. Light-mode supporting art is softened and placed outside the grounding text measure.
+
+The initial batched review covered phone dark flows and light supporting surfaces. Adjustments bounded light illustration away from text and moved weekly reflection above XP in Journey. The confirmation covered persisted toolkit data, saved/incomplete grounding counts and the wide layout. Dark surfaces remain neutral, and the four required tabs preserve their order and originating detail state. No horizontal document overflow or final browser console errors were recorded. Raw evidence and a viewport-only contact sheet are in docs/screenshots/premium-*.png.
+
+The browser is a preview of shared mobile source. Native accessibility, background delivery and performance require the installed final build; no claim of class-leading performance or complete release readiness is made from visual review alone.

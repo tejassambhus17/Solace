@@ -32,3 +32,44 @@ Source: root 11-page PDF; reviewed guide narration and visible reference. "Imple
 - A custom animated mascot, voice, widgets and dynamic ambient worlds were earlier proposals, not PDF requirements. The approved petal has purposeful breathing animation.
 - Images are visual references with illustrative counts. The implementation calculates counts from actual account records.
 - AI key, public hosting, final native build and device testing remain required for full hackathon delivery.
+
+## 5 November refinement review
+
+Compared the current implementation with all 11 pages of the original brief and the approved light/dark concepts. Detailed priorities: [FEATURE_GAPS.md](FEATURE_GAPS.md).
+
+| Area | Refinement implemented | Evidence / remaining boundary |
+|---|---|---|
+| Welcome, login, signup | Reference-led composition, visible field labels, password visibility control, AI role explanation, no profile shortcut | Browser signup, login screen and visibility control exercised |
+| Today | Time-aware greeting, saved same-day mood, sculpted mood indicators, dedicated theme-specific artwork, 3-minute featured reset | Browser light/dark phone-width review; native appearance pending |
+| Conversation | Fixed composer, in-memory account-scoped drafts, clear built-in/live label, preserved activity metadata | Browser draft navigation and suggested activity journey; live response label code-reviewed only |
+| Recovery | Session-load retry after successful auth; committed deletions stay removed even if refresh fails; response-body timeout | Source reviewed; API regressions documented in VERIFICATION.md |
+| History and privacy | Resume ordering uses last activity; activity/provider metadata survives edits; existing ownership/cascade constraints retained | Server integration tests; real provider not exercised |
+| Wellness/Profile | Consistent headers, larger targets, selected state semantics, reminder editing coordination, clear external-link errors, reversible resource progress | Browser selected mood/tab semantics; native notification delivery still pending |
+
+Required functionality is not equivalent to submission readiness. AI configuration, public HTTPS hosting, final installed-build verification, native reminders and the final demo remain outstanding.
+
+## Follow-up: black theme and useful continuity
+
+Latest user direction: true black dark mode replaces the previous green direction. Light mode and the four-tab structure remain supported.
+
+| Addition or fix | Implementation | Evidence boundary |
+|---|---|---|
+| Neutral black theme | #000000 canvas, charcoal layers, warm ivory controls; no green-backed featured artwork | Browser color inspection and phone/wide screenshots; native appearance pending |
+| Search and name conversations | Search retained titles/message text; inline title editing through authenticated records API | Browser search/rename/reopen; concurrent rename/provider regression |
+| Continue a recent conversation | Today resume entry uses account-owned latest activity | Browser navigation; no fabricated history |
+| Protect unsaved writing | In-memory check-in, journal and feedback drafts; journal keep/discard; guards for saving fields | Browser navigation checks plus provider-state regressions; drafts do not survive app restart |
+| Recover expired sessions | Invalid-token handling, reauthentication, same-account route/draft retention, different-account clearing | Provider-state regression harness; browser expiry flow where recorded |
+| Prevent stale work | Serialize credential writes; ignore old-generation callbacks/snapshots; cancel late reminder IDs and navigation | Provider-state and mocked native coordination regressions; actual OS delivery remains pending |
+| Match explicit reflection intent | Built-in starter reflection prompts suggest journaling, with urgent-support priority | Server regressions; built-in guidance remains explicitly distinct from live AI |
+
+## Dark-artwork and useful-routine pass
+
+| Addition | Implementation | Executed evidence / boundary |
+|---|---|---|
+| Generated dark artwork | Transparent petal, stillness and moonlit raster assets in black/charcoal palette; light-mode separation | Phone/wide browser review; native appearance pending |
+| Personal saved toolkit | Persistent, owner-scoped favorites for guides and activities; save/remove/reopen | Browser save/reload/open/remove; duplicate/isolation/persistence/export/deletion server tests |
+| Guided grounding | Optional five-senses sequence, skip/previous/exit, active-only duration, existing feedback and source-aware optional memory | Browser completed-with-skip and skip-all runs; native Back/interruption checks pending |
+| Weekly review | Factual local-day summary, self-reported supportive activity count, optional journal prompt | 9 pure regressions and actual saved Journey browser facts; no diagnostic claims |
+| Rendering efficiency | Cached search selectors, initial 30-row history with show-more, lower-frequency timer displays, near-bottom chat scrolling | Type/bundle checks; device performance profiling and full-snapshot scaling remain pending |
+
+The grounding sequence follows the five-senses structure described by [Hull University Teaching Hospitals NHS Trust](https://www.hey.nhs.uk/wp/wp-content/uploads/2023/02/HEY1318-2022-5-4-3-2-1-Grounding-Technique.pdf), with original app wording and optional alternatives/skips. It is a self-care option, not a treatment claim.

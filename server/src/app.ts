@@ -321,11 +321,19 @@ export function createApp(config: AppConfig) {
     const parsed = parseRecord(collection, req.body);
     const record: RecordData = {
       ...parsed,
-      id: (parsed.id as string | undefined) ?? randomUUID(),
+      id:
+        collection === "favorites"
+          ? `favorite-${String(parsed.kind)}-${String(parsed.targetId)}`
+          : ((parsed.id as string | undefined) ?? randomUUID()),
       createdAt:
         (parsed.createdAt as string | undefined) ?? new Date().toISOString(),
     };
-    if (get(user(req).id, collection, record.id))
+    const existing = get(user(req).id, collection, record.id);
+    // Adding a saved practice is idempotent, including rapid taps or retries
+    // after a response was lost. Identity is scoped by the authenticated owner.
+    if (collection === "favorites" && existing)
+      return res.json({ record: existing });
+    if (existing)
       return apiError(
         res,
         409,
@@ -363,6 +371,16 @@ export function createApp(config: AppConfig) {
       createdAt: existing.createdAt,
       updatedAt: new Date().toISOString(),
     };
+    if (
+      collection === "favorites" &&
+      (record.kind !== existing.kind || record.targetId !== existing.targetId)
+    )
+      return apiError(
+        res,
+        409,
+        "Remove this saved practice before choosing a different one.",
+        "FAVORITE_TARGET_LOCKED",
+      );
     if (collection === "memories" && !validMemorySource(user(req).id, record))
       return apiError(
         res,
@@ -472,10 +490,12 @@ export function createApp(config: AppConfig) {
             "Your account is no longer available.",
             "UNAUTHORIZED",
           );
-        if (
-          input.conversationId &&
-          !get(owner, "conversations", input.conversationId)
-        )
+        // Metadata can change while the provider is working (for example a
+        // history rename). Re-read it so this reply cannot restore an old title.
+        const current = input.conversationId
+          ? get(owner, "conversations", input.conversationId)
+          : undefined;
+        if (input.conversationId && !current)
           return apiError(
             res,
             404,
@@ -484,10 +504,10 @@ export function createApp(config: AppConfig) {
           );
         const now = new Date().toISOString();
         const conversation = {
-          ...previous,
-          id: previous?.id ?? randomUUID(),
-          title: previous?.title ?? input.text.slice(0, 60),
-          createdAt: previous?.createdAt ?? now,
+          ...current,
+          id: current?.id ?? randomUUID(),
+          title: current?.title ?? input.text.slice(0, 60),
+          createdAt: current?.createdAt ?? now,
           updatedAt: now,
           messages: [
             ...history,

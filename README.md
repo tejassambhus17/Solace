@@ -8,6 +8,22 @@ The app is implemented for Android/iOS through Expo, with a working local web pr
 
 **Live AI is not enabled in this checkout:** the user chose to continue without a provider key. The app labels its built-in companion responses. A real Responses API adapter is ready, but live-provider testing remains required. An Android compilation-check APK has been produced, but it is not a functional phone/submission build: it embeds the development emulator endpoint. A hosted HTTPS endpoint, rebuilt APK, device notification test, and submission video remain separate release steps. Hosting is deferred at the user’s request.
 
+## UI refinement and end-to-end review
+
+The November 5 polish pass follows the approved botanical references: warm ivory/forest themes, editorial typography, sculpted mood indicators, dedicated light/dark moment artwork, and consistent touch/focus states. Welcome, login and signup have no profile shortcut; Profile remains the fourth main tab. Chat keeps its composer visible and retains unsent drafts across navigation in memory, clearing them when accounts change or sign out. Successful authentication can recover from a failed data load without registering again.
+
+See [the prioritized feature comparison](docs/FEATURE_GAPS.md) for what is implemented, what was improved, and the remaining release work. The updated web and Android JavaScript exports do **not** update the old APK in `outputs/`.
+
+The follow-up black-mode pass replaces forest-tinted dark surfaces with true black/neutral charcoal and ivory controls. History now searches titles/messages and supports inline renaming; Today can resume the latest conversation. Check-in, journal and activity feedback drafts stay in memory across navigation, and expired sessions can resume the same account after sign-in. Drafts are not device-persistent and clear on logout/account changes.
+
+## Personal toolkit and weekly review
+
+Save breathing, reflection, grounding and resource guides to **Your toolkit**. Favorites persist privately with the account, survive reload, appear in data export and are deleted with the account. Repeated saves are idempotent. Five-senses grounding offers five optional steps, accessible alternatives and an exit; feedback and Journey record actual participation. Skipping every sense does not count as a completed moment.
+
+Journey now offers a factual seven-day review and an optional weekly reflection prompt. It uses saved records and self-reported feedback, never a wellbeing score or inferred diagnosis. New black-mode petal, stillness and moonlit artwork appears across the app; exact prompts and paths are in [dark artwork provenance](assets/DARK_ARTWORK.md).
+
+Search data is cached between query edits, history initially renders 30 rows with an explicit show-more control, breathing display updates avoid fractional-second rerenders, and chat preserves reading position when the reader is away from the bottom. These are implementation improvements, not measured device performance guarantees. Account state is still fetched as a full snapshot; large-account pagination and native performance profiling remain future scaling work.
+
 ## Requirements
 
 - Node **22.13 or newer**, preferably Node 24 LTS. Windows' default Node 20 is insufficient for the current Expo toolchain. On this machine, package scripts use an ignored local configuration pointing to the bundled Node 24. Other machines should install Node 24 or set SOLACE_NODE.
@@ -45,8 +61,8 @@ Set `OPENAI_API_KEY` in **server/.env**, never in root public variables. Set `OP
 
 - Today: mood check-in, personal greeting, affirmation, activity recommendations and quick access.
 - Solace: conversation, actionable activity cards, new/reopen/continue/delete history and visible provider mode.
-- Journey: saved check-ins, moments, feedback, reflections, assessments, factual XP and streaks.
-- Wellness: three non-diagnostic reflective questionnaires; timed breathing; journaling; five resource guides; editable plan; affirmations and small challenges.
+- Journey: saved check-ins, moments, feedback, reflections, assessments, factual XP/streaks and a seven-day review.
+- Wellness: reflective questionnaires; timed breathing; optional five-senses grounding; journaling; five guides; private saved toolkit; editable plan; affirmations and small challenges.
 - Profile: themes, reminder types/time/days, approved memories, name update, data export, logout and account deletion.
 - Notifications: native recurring local schedules with private copy and destination routing; browser limitation is explicit.
 
@@ -74,6 +90,8 @@ docs/                     requirements, verification, architecture and release
 npm run typecheck
 npm run test:wellness
 npm run test:reminders
+npm run test:session-state
+npm run test:insights
 npm --prefix server run typecheck
 npm --prefix server test
 npm --prefix server run build

@@ -7,6 +7,11 @@ const test = require("node:test"),
   ts = require("typescript");
 function harness() {
   let release;
+  let releaseLastResponse;
+  let listenerRemoved = false;
+  const lastResponse = new Promise((resolve) => {
+    releaseLastResponse = resolve;
+  });
   const held = new Promise((resolve) => {
     release = resolve;
   });
@@ -37,6 +42,13 @@ function harness() {
       cancelled.push(id);
       active.delete(id);
     },
+    setNotificationHandler: () => {},
+    addNotificationResponseReceivedListener: () => ({
+      remove: () => {
+        listenerRemoved = true;
+      },
+    }),
+    getLastNotificationResponseAsync: () => lastResponse,
   };
   const storageMock = {
     getItem: async (key) => storage.get(key) ?? null,
@@ -84,6 +96,8 @@ function harness() {
     cancelled,
     storage,
     calls: () => calls,
+    releaseLastResponse,
+    listenerRemoved: () => listenerRemoved,
   };
 }
 const reminder = {
@@ -127,4 +141,52 @@ test("old restore cleanup preserves a newer account schedule", async () => {
     JSON.parse(h.storage.get("solace.device-reminders.new-account")),
     { daily: ["new-2"] },
   );
+});
+
+test("a manual reminder that completes after logout is cancelled and rejects success", async () => {
+  const h = harness();
+  const pending = h.api.scheduleReminder(reminder);
+  await waitUntil(() => h.calls() === 1);
+  await h.api.cancelAllReminders();
+  h.release("manual-pending");
+  await assert.rejects(pending, /session changed/);
+  assert.deepEqual([...h.active], []);
+  assert.deepEqual(h.cancelled, ["manual-pending"]);
+});
+
+test("stale manual scheduling only cancels its own ID after another account restores", async () => {
+  const h = harness();
+  const pending = h.api.scheduleReminder(reminder);
+  await waitUntil(() => h.calls() === 1);
+  await h.api.restoreDeviceReminders("new-account", [reminder]);
+  h.release("manual-pending");
+  await assert.rejects(pending, /session changed/);
+  assert.deepEqual([...h.active], ["new-2"]);
+  assert.deepEqual(h.cancelled, ["manual-pending"]);
+});
+
+test("a pending test notification cannot survive logout", async () => {
+  const h = harness();
+  const pending = h.api.testNotification();
+  await waitUntil(() => h.calls() === 1);
+  await h.api.cancelAllReminders();
+  h.release("test-pending");
+  await assert.rejects(pending, /session changed/);
+  assert.deepEqual([...h.active], []);
+  assert.deepEqual(h.cancelled, ["test-pending"]);
+});
+
+test("a late last-notification response cannot navigate after subscription cleanup", async () => {
+  const h = harness();
+  const routes = [];
+  const unsubscribe = h.api.subscribeNotificationNavigation((route) =>
+    routes.push(route),
+  );
+  unsubscribe();
+  h.releaseLastResponse({
+    notification: { request: { content: { data: { screen: "checkin" } } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.listenerRemoved(), true);
+  assert.deepEqual(routes, []);
 });
