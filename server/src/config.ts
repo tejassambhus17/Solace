@@ -24,14 +24,24 @@ export function readServerConfig(
   if (!["auto", "live", "offline"].includes(mode))
     throw new Error("AI_MODE must be auto, live, or offline.");
   const apiKey = environment.OPENAI_API_KEY?.trim() || undefined;
-  if (mode === "live" && !apiKey)
+  const geminiKey = environment.GEMINI_API_KEY?.trim() || undefined;
+  const geminiModel =
+    environment.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite";
+  if (geminiKey && !/^gemini-[a-z0-9][a-z0-9.-]{0,78}$/.test(geminiModel))
+    throw new Error("GEMINI_MODEL must be a Gemini model ID.");
+  const fallback = environment.OPENAI_FALLBACK_ENABLED?.trim() || "false";
+  if (fallback !== "true" && fallback !== "false")
+    throw new Error("OPENAI_FALLBACK_ENABLED must be true or false.");
+  if (mode === "live" && !apiKey && !geminiKey)
     throw new Error(
-      "AI_MODE=live requires OPENAI_API_KEY in server/.env. Keep provider credentials on the server.",
+      "AI_MODE=live requires GEMINI_API_KEY or OPENAI_API_KEY in server/.env. Keep provider credentials on the server.",
     );
   const database = environment.DATABASE_PATH ?? "./data/solace.sqlite";
   if (!database.trim()) throw new Error("DATABASE_PATH must not be empty.");
   const ai: AIConfig = {
     mode: mode as AIConfig["mode"],
+    gemini: geminiKey ? { apiKey: geminiKey, model: geminiModel } : undefined,
+    openAIFallback: fallback === "true",
     apiKey,
     model: environment.OPENAI_MODEL ?? "gpt-4.1-mini",
     transcriptionModel:

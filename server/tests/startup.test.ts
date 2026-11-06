@@ -31,6 +31,7 @@ function environment(database: string, overrides: Record<string, string> = {}) {
     PORT: "0",
     HOST: "127.0.0.1",
     AI_MODE: "offline",
+    GEMINI_API_KEY: "",
     OPENAI_API_KEY: "",
     TRUST_PROXY_HOPS: "0",
     DATABASE_PATH: database,
@@ -180,6 +181,25 @@ test("startup configuration uses the server directory and rejects unusable mode/
   assert.equal(defaults.port, 3001);
   assert.equal(defaults.ai.mode, "auto");
   assert.equal(defaults.ai.apiKey, undefined);
+  assert.equal(defaults.ai.gemini, undefined);
+  const geminiOnly = readServerConfig(
+    {
+      AI_MODE: "live",
+      GEMINI_API_KEY: "test-key",
+      OPENAI_FALLBACK_ENABLED: "true",
+    },
+    root,
+  ).ai;
+  assert.equal(geminiOnly.gemini?.model, "gemini-3.1-flash-lite");
+  assert.equal(geminiOnly.openAIFallback, true);
+  assert.throws(
+    () =>
+      readServerConfig(
+        { GEMINI_API_KEY: "test-key", GEMINI_MODEL: "models/not-a-model-id" },
+        root,
+      ),
+    /GEMINI_MODEL/,
+  );
   assert.equal(
     readServerConfig({ DATABASE_PATH: ":memory:", PORT: "0" }, root)
       .databasePath,
@@ -200,7 +220,7 @@ test("startup configuration uses the server directory and rejects unusable mode/
   assert.throws(() => readServerConfig({ AI_MODE: "other" }, root), /AI_MODE/);
   assert.throws(
     () => readServerConfig({ AI_MODE: "live", OPENAI_API_KEY: " " }, root),
-    /requires OPENAI_API_KEY/,
+    /requires GEMINI_API_KEY or OPENAI_API_KEY/,
   );
 });
 
@@ -315,7 +335,10 @@ test(
         const process = launch(directory, database, overrides);
         assert.equal(await failed(process), 1);
         assert.doesNotMatch(process.output(), /API ready on port/);
-        assert.match(process.output(), /requires OPENAI_API_KEY|PORT must be/);
+        assert.match(
+          process.output(),
+          /requires GEMINI_API_KEY or OPENAI_API_KEY|PORT must be/,
+        );
         assert.equal(existsSync(database), false);
       }
     } finally {

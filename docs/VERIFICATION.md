@@ -1,5 +1,12 @@
 # Verification record
 
+## Gemini integration — 6 November 2026
+
+- The configured server-side key listed `gemini-3.1-flash-lite` and generated a reply. The compiled API then passed a synthetic smoke test with the local `AI_MODE=auto`, an in-memory database and OpenAI disabled for the run. Gemini recalled a detail from a prior chat turn, both turns were saved, a validated structured Moment used the approved synthetic preference, and a weekly question was generated from counts. Explicit urgent input still took the built-in support route.
+- In an early repeat, Gemini returned weekly wording that the existing validator rejected. The prompt now specifies the accepted question form. The full live smoke test and four additional weekly cases with different synthetic counts passed after that change.
+- `npm run server:test` passed **76/76** and `npm run test:tooling` passed **18/18**. Integration tests exercised provider selection, history, consent revocation before failover, structured output, rate limits, refusal, and transient OpenAI failover using stubs. Client and server type checks, formatting, server build and web export passed. The exported JavaScript was checked for the configured provider credentials.
+- The live checks used synthetic data. The Google project's billing and data-sharing settings were outside this test, and OpenAI failover and transcription were exercised through stubs. Production HTTPS and a full run from the release APK remain separate.
+
 ## Stabilization pass — 6 November 2026
 
 [Reproductions, fixes, retests, screen coverage and screenshots](QA_STABILIZATION.md)

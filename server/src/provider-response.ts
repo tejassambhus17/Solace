@@ -59,3 +59,33 @@ export async function readProviderText(response: Response) {
         .map((item) => item.text)
         .join("\n");
 }
+
+export async function readGeminiText(response: Response) {
+  const body = await readProviderJson(response);
+  if (isObject(body.promptFeedback) && body.promptFeedback.blockReason)
+    throw new Error("AI_REFUSED");
+  const candidate = Array.isArray(body.candidates) ? body.candidates[0] : null;
+  if (!isObject(candidate)) throw new Error("AI_EMPTY_RESPONSE");
+  if (
+    typeof candidate.finishReason === "string" &&
+    [
+      "SAFETY",
+      "BLOCKLIST",
+      "PROHIBITED_CONTENT",
+      "SPII",
+      "RECITATION",
+      "MODEL_ARMOR",
+    ].includes(candidate.finishReason)
+  )
+    throw new Error("AI_REFUSED");
+  if (candidate.finishReason !== "STOP")
+    throw new Error("AI_INCOMPLETE_RESPONSE");
+  const content = candidate.content;
+  if (!isObject(content) || !Array.isArray(content.parts))
+    throw new Error("AI_INVALID_RESPONSE");
+  return content.parts
+    .filter(isObject)
+    .filter((part) => part.thought !== true && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+}

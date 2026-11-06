@@ -1,4 +1,4 @@
-import { type AIConfig, provider } from "./ai.js";
+import type { AIConfig } from "./generation.js";
 import { readProviderJson } from "./provider-response.js";
 
 export const AUDIO_MAX_BYTES = 8 * 1024 * 1024;
@@ -13,7 +13,7 @@ export const audioTypes: Record<string, string> = {
   "audio/ogg": "ogg",
 };
 export function voiceAvailable(config: AIConfig) {
-  return provider(config) === "live" && !!config.apiKey;
+  return config.mode !== "offline" && !!config.apiKey;
 }
 /** Audio remains in this request's memory only. Nothing is saved to disk or records. */
 export async function transcribeAudio(

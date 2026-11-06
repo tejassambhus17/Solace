@@ -16,7 +16,7 @@ function clientEnvironment(executable, env = process.env) {
   // Private server configuration is never loaded into or forwarded to Metro.
   for (const name of Object.keys(next))
     if (
-      name.startsWith("OPENAI_") ||
+      /^(?:OPENAI|GEMINI)_/i.test(name) ||
       [
         "AI_MODE",
         "DATABASE_PATH",

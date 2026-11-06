@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { provider, type AIConfig } from "./ai.js";
-import { structuredOutput } from "./moments.js";
+import { provider, structuredOutput, type AIConfig } from "./generation.js";
 
 type WellnessRecord = Record<string, unknown>;
 export type WeeklyFacts = {
@@ -146,6 +145,7 @@ export async function weeklyReflection(
   config: AIConfig,
   summary: ReturnType<typeof weeklyFacts>,
   signal?: AbortSignal,
+  canFallback?: () => boolean,
 ) {
   const { facts, period } = summary;
   const hasData =
@@ -157,7 +157,7 @@ export async function weeklyReflection(
     ? "What would you like to carry forward, and what would you like to make a little room for?"
     : "What would feel like a gentle place to begin?";
   let mode: "live" | "offline" = "offline";
-  if (hasData && provider(config) === "live") {
+  if (hasData && (config.mode === "live" || provider(config) === "live")) {
     const schema = z
       .object({ invitation: z.string().trim().min(10).max(280) })
       .strict();
@@ -168,10 +168,9 @@ export async function weeklyReflection(
       config,
       "solace_weekly_invitation",
       jsonSchema,
-      "Write one optional, gentle reflection question from the supplied participation counts. No claims about mood, improvement, decline, health, diagnosis, emotional patterns, reasons or outcomes. Do not repeat or introduce numbers, dates or trends. Do not summarize private writing or invent memories. Ask what the person noticed or wants to make room for, without judging how much they did.",
+      "Write one optional, gentle reflection question from the supplied participation counts. Start with What, Which, or How and end with a single question mark. Keep it under 180 characters and use no other sentence-ending punctuation. For example: What would you like to make a little room for next? Ask what the person noticed or wants to make room for without judging participation. Do not repeat or introduce numbers or dates, summarize private writing, invent memories, or make claims about mood, health, diagnosis, reasons or outcomes. Avoid wording about patterns, trends, improvement, decline, treatment, better or worse, and avoid should or must.",
       counts,
-      250,
-      signal,
+      { maxTokens: 250, signal, canFallback },
     );
     const parsed = schema.safeParse(output);
     if (
@@ -186,8 +185,7 @@ export async function weeklyReflection(
       throw new Error("AI_INVALID_REFLECTION");
     invitation = parsed.data.invitation;
     mode = "live";
-  } else if (hasData && config.mode === "live" && !config.apiKey)
-    throw new Error("AI_NOT_CONFIGURED");
+  }
   return {
     provider: mode,
     hasActivity: hasData,

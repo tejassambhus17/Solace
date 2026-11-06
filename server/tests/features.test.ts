@@ -26,6 +26,230 @@ const live: AIConfig = {
   apiKey: "test-only-provider-sentinel",
   transcriptionModel: "test-transcription-model",
 };
+const gemini: AIConfig = {
+  ...offline,
+  mode: "live",
+  gemini: { apiKey: "gemini-test-sentinel", model: "gemini-3.1-flash-lite" },
+};
+
+function geminiResponse(text: string) {
+  return Response.json({
+    candidates: [
+      {
+        finishReason: "STOP",
+        content: {
+          parts: [{ thought: true, text: "private reasoning" }, { text }],
+        },
+      },
+    ],
+  });
+}
+
+test("Gemini is primary, receives bounded chat turns and respects consent changes", async () => {
+  const { app, store, create } = await fixture({
+    ...gemini,
+    apiKey: live.apiKey,
+    openAIFallback: true,
+  });
+  try {
+    const { token } = await create();
+    const firstText = "My synthetic project is called Violet Kestrel.";
+    const followUp = "What was the project name?";
+    const preference = "I prefer grounding sessions";
+    const chat = (text: string, conversationId?: string) =>
+      request(app)
+        .post("/api/chat")
+        .auth(token, { type: "bearer" })
+        .send({ text, conversationId });
+    let calls = 0;
+    await withFetch(
+      async (url, init) => {
+        calls++;
+        assert.equal(
+          url,
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        );
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get("x-goog-api-key"), "gemini-test-sentinel");
+        assert.equal(headers.has("authorization"), false);
+        assert.equal(init?.redirect, "error");
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.store, false);
+        const instructions = body.systemInstruction.parts[0].text;
+        if (calls === 2) {
+          assert.match(instructions, /I prefer grounding sessions/);
+          assert.deepEqual(body.contents, [
+            { role: "user", parts: [{ text: firstText }] },
+            { role: "model", parts: [{ text: "I can help with that." }] },
+            { role: "user", parts: [{ text: followUp }] },
+          ]);
+        } else {
+          assert.doesNotMatch(instructions, /I prefer grounding sessions/);
+          assert.equal(body.contents.length, 1);
+        }
+        return geminiResponse("I can help with that.");
+      },
+      async () => {
+        const first = (await chat(firstText).expect(200)).body;
+        assert.equal(first.provider, "live");
+        assert.equal(first.reply, "I can help with that.");
+        await remember(app, token, preference);
+        const next = (await chat(followUp, first.conversation.id).expect(200))
+          .body;
+        assert.equal(next.conversation.messages.length, 4);
+        await request(app)
+          .patch("/api/auth/me")
+          .auth(token, { type: "bearer" })
+          .send({ personalization: false })
+          .expect(200);
+        await chat(
+          "Continue without personalization.",
+          first.conversation.id,
+        ).expect(200);
+        const urgent = (await chat("I want to die").expect(200)).body;
+        assert.equal(urgent.safety, true);
+        assert.equal(urgent.provider, "offline");
+      },
+    );
+    assert.equal(calls, 3);
+  } finally {
+    store.close();
+  }
+});
+
+test("Gemini uses schema-constrained Moments and receives only counts for weekly questions", async () => {
+  const { app, store, create } = await fixture(gemini);
+  try {
+    const { token } = await create();
+    const memory = await remember(app, token);
+    const post = (path: string, body: object) =>
+      request(app).post(path).auth(token, { type: "bearer" }).send(body);
+    await post("/api/records/reflections", {
+      text: "private-writing-sentinel",
+    }).expect(201);
+    await withFetch(
+      async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.store, false);
+        assert.equal(
+          body.generationConfig.responseMimeType,
+          "application/json",
+        );
+        const schema = body.generationConfig.responseJsonSchema;
+        assert.equal(schema.additionalProperties, false);
+        const input = JSON.parse(body.contents[0].parts[0].text);
+        if (schema.properties.invitation) {
+          assert.equal(input.reflections, 1);
+          assert.equal(input.days, undefined);
+          assert.doesNotMatch(String(init?.body), /private-writing-sentinel/);
+          return geminiResponse(
+            JSON.stringify({
+              invitation: "What would you like to carry forward?",
+            }),
+          );
+        }
+        assert.equal(input.approvedPreference, memory.text);
+        return geminiResponse(JSON.stringify(input.template));
+      },
+      async () => {
+        const moment = (
+          await post("/api/moments/generate", {
+            feeling: "A quiet minute",
+            environment: "ocean",
+          }).expect(200)
+        ).body;
+        assert.equal(moment.provider, "live");
+        assert.equal(moment.activity.type, "grounding");
+        assert.deepEqual(moment.usedMemoryIds, [memory.id]);
+        const weekly = (await post("/api/insights/weekly", {}).expect(200))
+          .body;
+        assert.equal(weekly.provider, "live");
+        assert.equal(weekly.facts.reflections, 1);
+      },
+    );
+    const capabilities = await request(app)
+      .get("/api/capabilities")
+      .auth(token, { type: "bearer" })
+      .expect(200);
+    assert.deepEqual(capabilities.body, {
+      aiProvider: "live",
+      voiceTranscription: false,
+    });
+  } finally {
+    store.close();
+  }
+});
+
+test("Gemini quota errors are recoverable and only opt-in transient failures reach OpenAI", async () => {
+  const { app, store, create } = await fixture(gemini);
+  try {
+    const { token } = await create();
+    const config = { ...gemini, apiKey: live.apiKey };
+    const chat = (ai: AIConfig) =>
+      request(createApp({ store, ai, rateLimits: false }))
+        .post("/api/chat")
+        .auth(token, { type: "bearer" })
+        .send({ text: "A synthetic question" });
+    let mode: "quota" | "refusal" | "truncated" | "network" | "revoked" =
+      "quota";
+    let fallbackCalls = 0;
+    await withFetch(
+      async (url) => {
+        if (String(url).includes("generativelanguage.googleapis.com")) {
+          if (mode === "network") throw new TypeError("test network failure");
+          if (mode === "revoked")
+            await request(app)
+              .patch("/api/auth/me")
+              .auth(token, { type: "bearer" })
+              .send({ personalization: false })
+              .expect(200);
+          if (mode === "refusal")
+            return Response.json({ promptFeedback: { blockReason: "SAFETY" } });
+          if (mode === "truncated")
+            return Response.json({
+              candidates: [
+                {
+                  finishReason: "MAX_TOKENS",
+                  content: { parts: [{ text: "partial" }] },
+                },
+              ],
+            });
+          return Response.json(
+            { error: { message: "upstream-secret-sentinel" } },
+            { status: 429 },
+          );
+        }
+        assert.equal(url, "https://api.openai.com/v1/responses");
+        fallbackCalls++;
+        return Response.json({ output_text: "I can help with that." });
+      },
+      async () => {
+        const rateLimited = (await chat(config).expect(429)).body;
+        assert.equal(rateLimited.code, "AI_RATE_LIMITED");
+        assert.doesNotMatch(
+          JSON.stringify(rateLimited),
+          /upstream-secret-sentinel/,
+        );
+        const optIn = { ...config, openAIFallback: true };
+        mode = "refusal";
+        await chat(optIn).expect(502);
+        mode = "truncated";
+        await chat(optIn).expect(502);
+        assert.equal(fallbackCalls, 0);
+        mode = "quota";
+        assert.equal((await chat(optIn).expect(200)).body.provider, "live");
+        mode = "network";
+        assert.equal((await chat(optIn).expect(200)).body.provider, "live");
+        await remember(app, token);
+        mode = "revoked";
+        await chat(optIn).expect(429);
+        assert.equal(fallbackCalls, 2);
+      },
+    );
+  } finally {
+    store.close();
+  }
+});
 async function fixture(ai: AIConfig = offline) {
   const store = await Store.open(":memory:");
   const app = createApp({ store, ai, rateLimits: false });

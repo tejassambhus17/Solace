@@ -6,9 +6,9 @@ A personal wellness companion built with React Native + Expo, a Node.js API and 
 
 The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The four main tabs are **Today → Solace → Journey → Profile**. The center **Explore** shortcut opens Solace Moments, breathing, grounding, reflections, the saved toolkit, guides, reflective check-ins, plans, affirmations and challenges in one tap. Moments is also available from Today and the Solace header.
 
-The user explicitly asked to finish implementation while postponing provider, hosting and device setup. Those deferred setups no longer block feature coding. They remain verification and release work: an implemented adapter or a successful JavaScript export does not prove a real provider, installed native build or background reminder works. See [requirements](docs/REQUIREMENTS.md), [the implementation milestones](docs/IMPLEMENTATION_PLAN.md) and [actual verification results](docs/VERIFICATION.md).
+Local Gemini responses and physical Android QA have separate verification records. Public hosting and full native release acceptance remain separate work. See [requirements](docs/REQUIREMENTS.md), [the implementation milestones](docs/IMPLEMENTATION_PLAN.md) and [actual verification results](docs/VERIFICATION.md).
 
-**Live AI is not configured in this checkout.** Curated Moments, recorded weekly summaries and built-in companion replies are clearly labeled. Voice transcription reports unavailable when the backend cannot provide it; typing remains available. The older `outputs/solace-build-validation.apk` is a compilation artifact with a development emulator endpoint. It does not contain the current feature implementation and is not a functional submission build.
+**Gemini is the primary text provider when configured.** Chat, Moments and weekly reflections use the server's configured Gemini model. Curated Moments, recorded weekly summaries and built-in companion replies remain available in offline mode. Voice transcription uses the existing OpenAI configuration, with typing available when transcription is unavailable.
 
 ## The daily experience
 
@@ -81,7 +81,7 @@ The API normally uses port 3001 and Expo web uses 8081. Separate terminals can r
 
 Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. An Android debug build can also use an explicit loopback address over USB reverse. Release clients require an explicit HTTPS API and reject loopback, private network addresses and local-only hostnames. Reload Expo after public configuration changes and rebuild installed release binaries.
 
-Provider credentials belong only in **server/.env** or the private server environment. Configure the provider model for the account, then restart the API. `AI_MODE=live` requires credentials, `auto` selects live when configured, and `offline` uses the labeled built-in companion. Configured-provider failures produce recoverable errors instead of an undisclosed fallback. See [server configuration](server/README.md). Never commit environment files, keys or local database records.
+Provider credentials belong only in **server/.env** or the private server environment. Set `GEMINI_API_KEY` to use the default `gemini-3.1-flash-lite`, or set `GEMINI_MODEL` to a supported model, then restart the API. OpenAI handles text when only its key is configured. With both keys, `OPENAI_FALLBACK_ENABLED=true` opts into sending requests to OpenAI after transient Gemini failures. `AI_MODE=live` requires a key, `auto` selects live when configured, and `offline` uses the labeled built-in companion. See [server configuration](server/README.md).
 
 ## Project map
 
@@ -139,6 +139,6 @@ The physical Android debug build passed signup, session restoration, mood saving
 
 Today includes a five-minute Calm Reset, the recorded daily routine progress, and direct Explore More links to Guided Programs, Wellness Toolkit and Check-Ins. The full Explore library is available from See All and the bottom compass.
 
-Submission still needs a real provider, public HTTPS with a persistent database, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. [Release instructions](docs/RELEASE.md) cover those deferred operations. No new Docker setup or branch is required.
+Submission still needs public HTTPS with a persistent database and production provider configuration, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. See [release instructions](docs/RELEASE.md).
 
 SQL.js currently supports one API instance with a private persistent disk. Use HTTPS, restricted origins/proxy settings and backups in deployment. SQLite is not application-encrypted. Large-account pagination and native performance profiling remain scaling work. Solace is an AI wellness companion, not a licensed therapist, diagnostic tool or emergency service. It makes no clinical, HIPAA or certification claim. Social feeds, public profiles, following, community messages, therapist booking, OAuth, email password reset and remote push infrastructure are outside the implemented scope.

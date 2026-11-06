@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { isUrgent, provider, type AIConfig } from "./ai.js";
-import { readProviderText } from "./provider-response.js";
+import { isUrgent } from "./ai.js";
+import { provider, structuredOutput, type AIConfig } from "./generation.js";
 
 export const environments = ["forest", "ocean", "twilight"] as const;
 import type {
@@ -262,46 +262,6 @@ export function curatedMoment(
   });
 }
 
-export async function structuredOutput(
-  config: AIConfig,
-  name: string,
-  schema: Record<string, unknown>,
-  instructions: string,
-  input: unknown,
-  maxTokens = 1800,
-  signal?: AbortSignal,
-) {
-  if (!config.apiKey) throw new Error("AI_NOT_CONFIGURED");
-  let response: Response;
-  const timeout = AbortSignal.timeout(30000);
-  try {
-    response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/responses`, {
-      method: "POST",
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        store: false,
-        max_output_tokens: maxTokens,
-        instructions,
-        input: JSON.stringify(input),
-        text: { format: { type: "json_schema", name, strict: true, schema } },
-      }),
-    });
-  } catch {
-    throw new Error("AI_UNAVAILABLE");
-  }
-  const text = await readProviderText(response);
-  if (!text || text.length > 20000) throw new Error("AI_INVALID_RESPONSE");
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("AI_INVALID_RESPONSE");
-  }
-}
 export async function generateMoment(
   config: AIConfig,
   input: {
@@ -309,6 +269,7 @@ export async function generateMoment(
     environment?: MomentEnvironment;
     memories: MomentMemory[];
   },
+  canFallback?: () => boolean,
 ): Promise<MomentResult> {
   if (isUrgent(input.feeling))
     return {
@@ -322,9 +283,7 @@ export async function generateMoment(
   const selection = selectMoment(input.feeling, input.memories);
   const environment = input.environment || "forest";
   const base = curatedMoment(selection.type, environment);
-  if (config.mode === "live" && !config.apiKey)
-    throw new Error("AI_NOT_CONFIGURED");
-  if (provider(config) === "offline")
+  if (config.mode !== "live" && provider(config) === "offline")
     return {
       activity: base,
       provider: "offline",
@@ -343,6 +302,7 @@ export async function generateMoment(
       template: base,
       approvedPreference: selection.selectedMemory?.text || null,
     },
+    { canFallback },
   );
   const parsed = momentSchema.safeParse(output);
   if (!parsed.success) throw new Error("AI_INVALID_ACTIVITY");

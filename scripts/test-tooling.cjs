@@ -371,6 +371,8 @@ test("Metro receives public app config but not private provider or database envi
     EXPO_PUBLIC_API_URL: "http://127.0.0.1:3001",
     OPENAI_API_KEY: "private-test-sentinel",
     OPENAI_BASE_URL: "private-origin",
+    GEMINI_API_KEY: "gemini-test-sentinel",
+    GEMINI_MODEL: "gemini-test-model",
     DATABASE_PATH: "private-db",
     PORT: "3001",
     HOST: "0.0.0.0",
@@ -381,6 +383,8 @@ test("Metro receives public app config but not private provider or database envi
   for (const key of [
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
     "DATABASE_PATH",
     "PORT",
     "HOST",
@@ -388,6 +392,7 @@ test("Metro receives public app config but not private provider or database envi
   ])
     assert.equal(key in client, false);
   assert.equal(original.OPENAI_API_KEY, "private-test-sentinel");
+  assert.equal(original.GEMINI_API_KEY, "gemini-test-sentinel");
 });
 
 test("missing tsx prevents any child process or Expo launch", () => {

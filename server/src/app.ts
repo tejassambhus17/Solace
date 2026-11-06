@@ -261,7 +261,7 @@ export function createApp(config: AppConfig) {
       ok: true,
       service: "Solace API",
       aiProvider: provider(config.ai),
-      aiConfigured: !!config.ai.apiKey,
+      aiConfigured: !!(config.ai.gemini?.apiKey || config.ai.apiKey),
       database: "sqlite",
       version: "1.0.0",
     }),
@@ -747,13 +747,27 @@ export function createApp(config: AppConfig) {
         .safeParse(get(owner, "preferences", "wellness")?.environment);
       generationLocks.add(owner);
       try {
-        const result = await generateMoment(config.ai, {
-          ...input,
-          environment:
-            input.environment ??
-            (savedEnvironment.success ? savedEnvironment.data : undefined),
-          memories,
-        });
+        const result = await generateMoment(
+          config.ai,
+          {
+            ...input,
+            environment:
+              input.environment ??
+              (savedEnvironment.success ? savedEnvironment.data : undefined),
+            memories,
+          },
+          () => {
+            const account = currentAccount(req);
+            return (
+              !res.destroyed &&
+              !!account &&
+              (!memories.length ||
+                JSON.stringify(
+                  approvedMemories(owner, !!account.personalization),
+                ) === JSON.stringify(memories))
+            );
+          },
+        );
         const current = currentAccount(req);
         if (!current)
           return apiError(
@@ -862,6 +876,9 @@ export function createApp(config: AppConfig) {
           config.ai,
           initial,
           controller.signal,
+          () =>
+            !!currentAccount(req) &&
+            JSON.stringify(summary()) === JSON.stringify(initial),
         );
         if (controller.signal.aborted) return;
         if (!currentAccount(req))
@@ -1093,13 +1110,40 @@ export function createApp(config: AppConfig) {
             tags,
             date,
           })) ?? [];
-        const reply = await getReply(config.ai, {
-          text: input.text,
-          name: user(req).name,
-          history: providerHistory,
-          memories,
-          context,
-        });
+        const samePersonalization = (account: UserRow) =>
+          !personalization ||
+          JSON.stringify(chatPersonalization(account)) ===
+            JSON.stringify(personalization);
+        const currentConversation = () =>
+          previous ? get(owner, "conversations", previous.id) : undefined;
+        const sameContext = (current: RecordData | undefined) =>
+          current?.contextResetId === previous?.contextResetId &&
+          current?.contextResetMessageCount ===
+            previous?.contextResetMessageCount;
+        const reply = await getReply(
+          config.ai,
+          {
+            text: input.text,
+            name: user(req).name,
+            history: providerHistory,
+            memories,
+            context,
+          },
+          () => {
+            const account = currentAccount(req);
+            const current = currentConversation();
+            return (
+              !res.destroyed &&
+              !!account &&
+              samePersonalization(account) &&
+              (!previous ||
+                (!!current &&
+                  current.conversationInstanceId ===
+                    previous.conversationInstanceId &&
+                  sameContext(current)))
+            );
+          },
+        );
         // A revoked session or deleted account cannot receive/persist a late reply.
         const currentUser = currentAccount(req);
         if (!currentUser)
@@ -1111,11 +1155,7 @@ export function createApp(config: AppConfig) {
           );
         // Deleted/corrected memories and revoked consent take effect before a
         // pending personalized response can become another active source.
-        if (
-          personalization &&
-          JSON.stringify(chatPersonalization(currentUser)) !==
-            JSON.stringify(personalization)
-        )
+        if (!samePersonalization(currentUser))
           return apiError(
             res,
             409,
@@ -1124,9 +1164,7 @@ export function createApp(config: AppConfig) {
           );
         // Metadata can change while the provider is working (for example a
         // history rename). Re-read it so this reply cannot restore an old title.
-        const current = previous
-          ? get(owner, "conversations", previous.id)
-          : undefined;
+        const current = currentConversation();
         if (previous && !current)
           return apiError(
             res,
@@ -1143,12 +1181,7 @@ export function createApp(config: AppConfig) {
             "This conversation was replaced while your reply was being prepared. Please start a new conversation.",
             "CONVERSATION_CHANGED",
           );
-        if (
-          current &&
-          (current.contextResetId !== previous?.contextResetId ||
-            current.contextResetMessageCount !==
-              previous?.contextResetMessageCount)
-        )
+        if (current && !sameContext(current))
           return apiError(
             res,
             409,
@@ -1267,6 +1300,13 @@ export function createApp(config: AppConfig) {
           503,
           "Live AI is not configured. Ask the app owner to configure the server key.",
           "AI_NOT_CONFIGURED",
+        );
+      if (message === "AI_PROVIDER_429")
+        return apiError(
+          res,
+          429,
+          "The AI service is busy or has reached its usage limit. Please try again later.",
+          "AI_RATE_LIMITED",
         );
       if (/AI_|aborted|timeout/i.test(message))
         return apiError(
