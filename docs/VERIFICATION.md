@@ -1,5 +1,9 @@
 # Verification record
 
+## Companion, Journal and Guided Techniques
+
+The [connected QA report](COMPANION_JOURNAL_TECHNIQUES.md) records navigation and persistence checks, live Gemini requests, rendered phone layouts, device checks and outstanding release gates.
+
 ## Cross-platform UI repair — 6 November 2026
 
 The [UI repair QA report](QA_UI_REPAIR.md) records matched visual evidence, physical Android recordings, the Explore and Daily Pause completion journeys, and the measured tab-rendering changes. All 162 client checks and 76 backend tests passed. Native iOS materials, public release sign-in, and final Android release performance remain separate checks.
