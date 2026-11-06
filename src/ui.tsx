@@ -25,6 +25,13 @@ import { useTheme } from "./theme";
 export const NavigationInset = createContext(0);
 export const useNavigationInset = () => useContext(NavigationInset);
 
+// The insets fill the card, including padding. Clear Image's intrinsic size.
+export const coverImageStyle: ImageStyle = {
+  ...StyleSheet.absoluteFill,
+  width: "auto",
+  height: "auto",
+};
+
 export function AppText({
   children,
   variant = "body",
@@ -119,7 +126,7 @@ export function Screen({
           <AppText
             variant="heading"
             accessibilityRole="header"
-            style={{ flexShrink: 1 }}
+            style={{ flex: 1 }}
           >
             {title}
           </AppText>

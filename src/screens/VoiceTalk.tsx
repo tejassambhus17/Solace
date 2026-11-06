@@ -169,7 +169,7 @@ export function VoiceTalkScreen() {
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "web" ? undefined : "padding"}
         style={{ flex: 1 }}
       >
         <Row
@@ -187,7 +187,11 @@ export function VoiceTalkScreen() {
             disabled={pending}
             onPress={() => close.current()}
           />
-          <AppText variant="heading" accessibilityRole="header">
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={{ flex: 1, textAlign: "center" }}
+          >
             Voice talk
           </AppText>
           <View style={{ width: 44 }} />

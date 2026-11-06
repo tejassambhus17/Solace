@@ -15,7 +15,15 @@ import {
 } from "../explore-practices";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
-import { AppText, Button, Icon, LotusMark, Row, Screen } from "../ui";
+import {
+  AppText,
+  Button,
+  coverImageStyle,
+  Icon,
+  LotusMark,
+  Row,
+  Screen,
+} from "../ui";
 
 const categories = [
   { id: "all", label: "All", icon: "grid-outline" },
@@ -198,7 +206,7 @@ function DecorativeImage({ source }: { source: ImageSourcePropType }) {
   return (
     <Image
       source={source}
-      style={styles.image}
+      style={coverImageStyle}
       resizeMode="cover"
       resizeMethod="resize"
       fadeDuration={0}
@@ -926,13 +934,6 @@ export function ExploreScreen() {
 const overlayInk = "#FFF8F1";
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0, paddingTop: 0 },
-  image: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-  },
   pressed: { opacity: 0.72 },
   hero: {
     minHeight: 174,
@@ -1015,7 +1016,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   featureBadgeText: { fontSize: 10, lineHeight: 14 },
-  featureTitle: { fontSize: 29, lineHeight: 31, marginTop: 3 },
+  featureTitle: {
+    alignSelf: "stretch",
+    fontSize: 29,
+    lineHeight: 31,
+    marginTop: 3,
+  },
   featureDescription: {
     fontSize: 12,
     lineHeight: 16,

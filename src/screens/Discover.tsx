@@ -16,6 +16,7 @@ import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
   AppText,
+  coverImageStyle,
   Icon,
   LotusMark,
   MoodPetal,
@@ -315,7 +316,7 @@ export function TodayScreen() {
           >
             <Image
               source={artwork[resolved].scene}
-              style={styles.art}
+              style={coverImageStyle}
               resizeMode="cover"
               accessible={false}
               fadeDuration={0}
@@ -589,7 +590,7 @@ export function TodayScreen() {
         >
           <Image
             source={artwork[resolved].reset}
-            style={styles.art}
+            style={coverImageStyle}
             resizeMode="cover"
             accessible={false}
             fadeDuration={0}
@@ -820,7 +821,6 @@ const styles = StyleSheet.create({
     right: 0,
     overflow: "hidden",
   },
-  art: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" },
   sceneFade: {
     position: "absolute",
     bottom: 0,
@@ -974,7 +974,7 @@ const styles = StyleSheet.create({
   focusTitle: {
     fontSize: 29,
     lineHeight: 31,
-    maxWidth: "74%",
+    width: "74%",
     marginTop: 5,
     textShadowColor: "#142519",
     textShadowRadius: 5,

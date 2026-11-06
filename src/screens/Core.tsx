@@ -587,7 +587,7 @@ export function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "web" ? undefined : "padding"}
     >
       <StatusBar style="light" />
       <ChatScene height={sceneHeight} viewportHeight={sceneOffset} />

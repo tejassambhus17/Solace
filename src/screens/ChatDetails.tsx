@@ -2,7 +2,7 @@ import React from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 import { Companion, type CompanionState } from "../Companion";
 import { useTheme } from "../theme";
-import { AppText, Icon, Row } from "../ui";
+import { AppText, coverImageStyle, Icon, Row } from "../ui";
 
 export function ChatScene({
   height,
@@ -33,7 +33,7 @@ export function ChatScene({
           accessibilityIgnoresInvertColors
           resizeMode="cover"
           fadeDuration={0}
-          style={styles.fullImage}
+          style={coverImageStyle}
         />
         <View
           style={[
@@ -303,7 +303,7 @@ export function ChatResetCard({
         pointerEvents="none"
         resizeMode="cover"
         fadeDuration={0}
-        style={styles.fullImage}
+        style={coverImageStyle}
       />
       <View
         pointerEvents="none"
@@ -430,16 +430,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     padding: 16,
   },
-  fullImage: {
-    ...StyleSheet.absoluteFill,
-    width: "100%",
-    height: "100%",
-  },
   resetScrim: {
     backgroundImage:
       "linear-gradient(90deg, #161910DD 0%, #242219B0 46%, #322B1B20 100%)",
   },
-  resetCopy: { maxWidth: "78%" },
+  resetCopy: { width: "78%" },
   resetHeading: { fontSize: 30, lineHeight: 34 },
   resetDescription: { fontSize: 13, lineHeight: 18, marginTop: 3 },
   resetActions: {

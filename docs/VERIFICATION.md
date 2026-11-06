@@ -371,3 +371,15 @@ Compared the three supplied designs with the Expo browser preview in light and d
 - TypeScript, formatting, the web, Android, and iOS exports, and 156 targeted and server integration tests passed. The Moment contract test covers all five authored focus choices with all three durations.
 
 [Today](screenshots/scenic-today-phone.png), [Solace](screenshots/scenic-chat-phone.png), [Explore](screenshots/scenic-explore-phone.png), and [all three dark screens](screenshots/scenic-dark-phone.png) show the browser preview. Installed device rendering, native reminders, and live voice provider behavior remain pending.
+
+## Physical Android smoke test — 6 November 2026
+
+Built and installed the ARM64 Android debug APK on an Android 15 phone over USB. Used the local Metro server and an isolated SQLite API with the built-in companion. No production credentials or account data were used.
+
+- Completed onboarding and signup from a fresh installation. Saved a Calm check-in from Today and confirmed the account and saved mood were restored after stopping and reopening the app.
+- Sent synthetic messages, observed built-in replies, and confirmed both conversations appeared in History after reopening. Reproduced the Android keyboard covering the composer, then verified that Send stayed reachable and worked with the keyboard open after the fix.
+- Reviewed Today in light and dark, checked Explore’s Move filter returned Gentle Movement, and verified full-bleed artwork on the updated Today and Explore cards. Verified the full Voice Talk title and its unconfigured transcription notice on the phone.
+- The phone granted Solace notification permission. The ten-second test reported successful scheduling and Android listed the Solace notification as active. Notification-tap routing and background delivery remain to be confirmed.
+- Client type check, formatting, web and Android exports, all 64 server integration tests, eight reminder coordination tests, and 15 voice lifecycle tests passed during the device pass.
+
+Native recording and audio playback, broader notification scenarios, iOS, and release APK verification remain pending. This debug build uses the USB-forwarded local API and Metro.
