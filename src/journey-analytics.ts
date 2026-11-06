@@ -3,6 +3,7 @@ import {
   activeSeconds,
   adjacentCalendarDay,
   calendarMonthDays,
+  isCompletedMoment,
   journeyRecords,
   visibleJourneyRecords,
   type DayEntry,
@@ -277,10 +278,8 @@ export function journeyAnalytics(
       if (record.localOnly === true) continue;
       if (!firstDay || key < firstDay) firstDay = key;
       if (collection === "sessions") {
-        if (record.completed === true) {
-          day.moments += 1;
-          day.seconds += activeSeconds(record);
-        }
+        if (isCompletedMoment(record)) day.moments += 1;
+        if (record.completed === true) day.seconds += activeSeconds(record);
       } else {
         day[collection] += 1;
       }

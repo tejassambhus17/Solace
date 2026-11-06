@@ -1,11 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AppState, Platform, Pressable, View } from "react-native";
+import {
+  AppState,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import {
   AudioModule,
   RecordingPresets,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState,
 } from "expo-audio";
 import * as Speech from "expo-speech";
 import { File } from "expo-file-system";
@@ -36,8 +43,10 @@ export function VoiceControlsImpl({
 }) {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const { height } = useWindowDimensions();
   const talk = variant === "talk";
   const [state, setState] = useState<VoiceState>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [startingSpeech, setStartingSpeech] = useState(false);
   const speechTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -76,19 +85,9 @@ export function VoiceControlsImpl({
     },
     (recording) => {
       if (!mounted.current) return;
-      if (recording.hasError) {
-        void turnRef.current?.cancel(
-          "Recording was interrupted. Please try again, or type your message.",
-        );
-      } else if (
-        recording.isFinished &&
-        turnRef.current?.state === "listening"
-      ) {
-        void turnRef.current.stop();
-      }
+      void turnRef.current?.recorderEvent(recording);
     },
   );
-  const status = useAudioRecorderState(recorder, 250);
   async function erase() {
     let value = uri.current;
     uri.current = null;
@@ -162,7 +161,13 @@ export function VoiceControlsImpl({
       },
       cancel: async () => {
         try {
-          if (recorder.getStatus().isRecording) await recorder.stop();
+          // The OS can pause a recorder before the app receives an interruption.
+          // On web, canRecord also covers an already-ended MediaRecorder.
+          if (
+            recorder.isRecording ||
+            (Platform.OS !== "web" && recorder.getStatus().canRecord)
+          )
+            await recorder.stop();
         } catch {
           /* Already stopped/disposed. */
         }
@@ -180,6 +185,7 @@ export function VoiceControlsImpl({
       },
       changed: (next, failure) => {
         if (mounted.current) {
+          if (next === "listening") setRecordingSeconds(0);
           setState(next);
           setError(failure);
         }
@@ -240,12 +246,24 @@ export function VoiceControlsImpl({
     );
   }, [state, speaking]);
   useEffect(() => {
-    if (state === "listening" && recorder.getStatus().durationMillis >= 59_000)
-      void turn.stop();
-    if (state === "listening" && status.mediaServicesDidReset) {
-      void turn.cancel("Recording was interrupted. Please try again.");
-    }
-  }, [status.durationMillis, status.mediaServicesDidReset, state]);
+    if (state !== "listening") return;
+    let wasInactive = false;
+    const timer = setInterval(() => {
+      if (turn.state !== "listening") return;
+      const status = recorder.getStatus();
+      const inactive = !recorder.isRecording;
+      // Give the recorder's normal completion event time to arrive. A track
+      // revocation can stop the device without delivering that event.
+      if (status.mediaServicesDidReset || (inactive && wasInactive)) {
+        void turn.recorderEvent({ hasError: true });
+        return;
+      }
+      wasInactive = inactive;
+      if (!inactive && status.durationMillis >= 59_000) void turn.stop();
+      else setRecordingSeconds(Math.floor(status.durationMillis / 1000));
+    }, 250);
+    return () => clearInterval(timer);
+  }, [recorder, state, turn]);
   useEffect(() => {
     ++speechVersion.current;
     clearSpeechWait();
@@ -373,6 +391,7 @@ export function VoiceControlsImpl({
       onPress={() => {
         if (listening) void turn.stop();
         else if (availability === "available") {
+          Keyboard.dismiss();
           setShowUnavailable(false);
           void turn.start();
         } else setShowUnavailable(true);
@@ -447,7 +466,7 @@ export function VoiceControlsImpl({
           style={{ paddingBottom: 6 }}
         >
           {listening
-            ? `Recording · ${Math.floor(status.durationMillis / 1000)}s / 60s`
+            ? `Recording · ${recordingSeconds}s / 60s`
             : transcribing
               ? "Transcribing…"
               : preparing
@@ -473,12 +492,22 @@ export function VoiceControlsImpl({
       {!!review && (
         <View style={{ paddingVertical: 12, gap: 8 }}>
           <AppText variant="label">Your voice, in words</AppText>
-          <AppText selectable>{review}</AppText>
+          {talk ? (
+            <AppText selectable>{review}</AppText>
+          ) : (
+            <ScrollView
+              accessibilityLabel="Voice transcript"
+              keyboardShouldPersistTaps="handled"
+              style={{ maxHeight: Math.min(112, height * 0.2) }}
+            >
+              <AppText selectable>{review}</AppText>
+            </ScrollView>
+          )}
           <AppText variant="caption" color={colors.muted}>
             Review this transcript before adding it to your message. Nothing has
             been sent to the conversation.
           </AppText>
-          <Row>
+          <Row style={{ flexWrap: "wrap" }}>
             <Button
               title="Use transcript"
               variant="secondary"

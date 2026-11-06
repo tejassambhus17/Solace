@@ -97,6 +97,21 @@ export class VoiceTurn {
     this.publish("transcribing");
     await this.convert(this.version);
   }
+  async recorderEvent(event: {
+    hasError?: boolean;
+    isFinished?: boolean;
+    mediaServicesDidReset?: boolean;
+  }) {
+    if (this.disposed || this.state === "idle" || this.state === "cancelling")
+      return;
+    if (event.hasError || event.mediaServicesDidReset) {
+      await this.cancel(
+        "Recording was interrupted. Please try again, or type your message.",
+      );
+    } else if (event.isFinished) {
+      await this.stop();
+    }
+  }
   private async convert(version: number) {
     try {
       const text = (await this.io.transcribe(this.audio!)).trim();

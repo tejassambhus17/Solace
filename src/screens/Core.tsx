@@ -17,7 +17,7 @@ import {
 } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
-import { Companion } from "../Companion";
+import { Companion, useReducedMotion } from "../Companion";
 import { localDay, recordDay } from "../content";
 import { VoiceControls } from "../VoiceControls";
 import { useTheme } from "../theme";
@@ -74,6 +74,8 @@ export function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
   const submitting = useRef(false);
+  const emailField = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const passwordField = useRef<React.ComponentRef<typeof TextInput>>(null);
   function changePage(next: "welcome" | "intro" | "login" | "signup") {
     if (submitting.current || app.busy) return;
     setPage(next);
@@ -232,7 +234,7 @@ export function AuthScreen() {
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <Screen style={{ flex: 1 }}>
+      <Screen adjustKeyboardInsets={false} style={{ flex: 1 }}>
         <BotanicalBackdrop
           variant="footer"
           style={{ bottom: -110, right: -90, opacity: 0.16 }}
@@ -282,12 +284,16 @@ export function AuthScreen() {
                 autoCapitalize="words"
                 autoComplete="name"
                 textContentType="name"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => emailField.current?.focus()}
               />
             </View>
           )}
           <View style={{ gap: 7 }}>
             <AppText variant="label">Email</AppText>
             <Input
+              ref={emailField}
               accessibilityLabel="Email"
               placeholder="you@example.com"
               value={email}
@@ -298,12 +304,16 @@ export function AuthScreen() {
               autoCorrect={false}
               autoComplete="email"
               textContentType="emailAddress"
+              returnKeyType="next"
+              submitBehavior="submit"
+              onSubmitEditing={() => passwordField.current?.focus()}
             />
           </View>
           <View style={{ gap: 7 }}>
             <AppText variant="label">Password</AppText>
             <View style={{ position: "relative" }}>
               <Input
+                ref={passwordField}
                 accessibilityLabel="Password"
                 placeholder={
                   page === "signup" ? "At least 8 characters" : "Your password"
@@ -389,6 +399,7 @@ export function ChatScreen() {
   const app = useApp();
   const navigationInset = useNavigationInset();
   const { colors, resolved } = useTheme();
+  const reduceMotion = useReducedMotion();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(68);
@@ -398,11 +409,10 @@ export function ChatScreen() {
     Math.min(308, Math.round(width * 0.64)) + Math.min(insets.top, 18);
   const sceneOffset = insets.top + headerHeight;
   const visibleScene = Math.max(36, sceneHeight - sceneOffset);
-  const [id, setId] = useState<string | undefined>(app.params?.id);
+  const id = typeof app.params?.id === "string" ? app.params.id : undefined;
   const draftKey = id || "new";
-  const [input, setInput] = useState(
-    app.chatDrafts[draftKey] ?? String(app.params?.context || ""),
-  );
+  const context = String(app.params?.context || "");
+  const input = app.chatDrafts[draftKey] ?? context;
   const [inputFocused, setInputFocused] = useState(false);
   const composerInput = useRef<React.ElementRef<typeof TextInput>>(null);
   const [pending, setPending] = useState("");
@@ -426,14 +436,9 @@ export function ChatScreen() {
   useEffect(() => {
     nearBottom.current = true;
     setShowLatest(false);
-    setId(app.params?.id);
-    setInput(
-      app.chatDrafts[app.params?.id || "new"] ??
-        String(app.params?.context || ""),
-    );
     setFailure("");
     setShowComposerMenu(false);
-  }, [app.params?.id, app.params?.context || ""]);
+  }, [id]);
   const conversation = app.data.conversations.find((x) => x.id === id);
   const messages = Array.isArray(conversation?.messages)
     ? conversation.messages
@@ -486,7 +491,7 @@ export function ChatScreen() {
   }
   function writeDraft(text: string) {
     inputRef.current = text;
-    setInput(text);
+    if (context) app.setParams({ context: "" });
     app.setChatDraft(draftKey, text);
   }
   async function send() {
@@ -497,17 +502,14 @@ export function ChatScreen() {
     nearBottom.current = true;
     setShowLatest(false);
     setShowComposerMenu(false);
-    app.setChatDraft(draftKey, submitted);
+    writeDraft(submitted);
     setPending(text);
     setFailure("");
     try {
       const result = await app.chat(text, id);
       app.setChatDraft(draftKey, "", submitted);
-      if (mounted.current) {
-        setInput("");
-        setId(result.conversation.id);
+      if (mounted.current)
         app.setParams({ id: result.conversation.id, context: "" });
-      }
     } catch (e) {
       if (mounted.current)
         setFailure(
@@ -641,10 +643,7 @@ export function ChatScreen() {
                 scroll.current?.scrollTo({ y: 0, animated: false });
                 nearBottom.current = true;
                 setShowLatest(false);
-                setId(undefined);
                 app.setParams({ id: undefined, context: "" });
-                inputRef.current = app.chatDrafts.new || "";
-                setInput(inputRef.current);
                 setFailure("");
                 setShowComposerMenu(false);
               }}
@@ -671,6 +670,10 @@ export function ChatScreen() {
             scrollEventThrottle={100}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            onLayout={() => {
+              if ((messages.length || pending) && nearBottom.current)
+                scroll.current?.scrollToEnd({ animated: false });
+            }}
             onContentSizeChange={() => {
               if ((messages.length || pending) && nearBottom.current)
                 scroll.current?.scrollToEnd({ animated: false });
@@ -783,7 +786,7 @@ export function ChatScreen() {
                 onPress={() => {
                   nearBottom.current = true;
                   setShowLatest(false);
-                  scroll.current?.scrollToEnd({ animated: true });
+                  scroll.current?.scrollToEnd({ animated: !reduceMotion });
                 }}
                 style={{ minHeight: 42 }}
               />
@@ -794,7 +797,7 @@ export function ChatScreen() {
           style={[
             chatStyles.composer,
             {
-              paddingBottom: 10 + (navigationInset || insets.bottom),
+              paddingBottom: 10 + navigationInset,
               backgroundColor: colors.bg,
             },
           ]}
@@ -864,7 +867,7 @@ export function ChatScreen() {
                   <TextInput
                     ref={composerInput}
                     accessibilityLabel="Message Solace"
-                    placeholder="Message Solace…"
+                    placeholder={width < 360 ? "Message…" : "Message Solace…"}
                     placeholderTextColor={colors.muted}
                     selectionColor={colors.accent}
                     value={input}

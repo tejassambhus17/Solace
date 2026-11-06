@@ -85,9 +85,16 @@ export function activeSeconds(session: RecordItem) {
     : 0;
 }
 
+export function isCompletedMoment(session: RecordItem) {
+  // Resource checklists are saved to session history, but their completion
+  // does not mean that a guided Moment or standalone practice took place.
+  return session.completed === true && session.type !== "resource";
+}
+
 export function journeySummary(data: JourneyData, now = new Date()) {
   const records = journeyRecords(data, now);
   const completed = records.sessions.filter((item) => item.completed === true);
+  const moments = completed.filter(isCompletedMoment);
   const checkinDays = new Set(records.checkins.map(recordDay));
   const activityDays = new Set(
     categories.flatMap((collection) => records[collection].map(recordDay)),
@@ -134,7 +141,7 @@ export function journeySummary(data: JourneyData, now = new Date()) {
         id: "first-moment",
         title: "A little beginning",
         description: "Complete your first Moment",
-        value: completed.length,
+        value: moments.length,
         target: 1,
         icon: "leaf-outline",
       },
@@ -150,7 +157,7 @@ export function journeySummary(data: JourneyData, now = new Date()) {
         id: "five-pauses",
         title: "Making space",
         description: "Complete five mindful pauses",
-        value: completed.length,
+        value: moments.length,
         target: 5,
         icon: "flower-outline",
       },

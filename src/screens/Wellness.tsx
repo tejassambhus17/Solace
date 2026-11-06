@@ -16,6 +16,7 @@ import { useApp, type WeeklyReflectionResult } from "../store";
 import { useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
+import { newMomentSessionId } from "../moments";
 import {
   Screen,
   Card,
@@ -34,6 +35,7 @@ import {
   assessmentSummary,
   DEFAULT_PLAN,
   localDay,
+  recordDay,
   RESOURCE_GUIDES,
   todayAffirmation,
 } from "../content";
@@ -605,7 +607,6 @@ function Grounding({ params }: { params: AnyRecord }) {
   const accumulated = useRef(0);
   const since = useRef<number | null>(null);
   const finished = useRef(false);
-  const startedAt = useRef(stamp());
   const stopClock = () => {
     if (since.current !== null)
       accumulated.current += Math.max(0, monotonicNow() - since.current) / 1000;
@@ -647,8 +648,10 @@ function Grounding({ params }: { params: AnyRecord }) {
     if (finished.current) return;
     finished.current = true;
     stopClock();
+    const completedAt = new Date();
     app.navigate("feedback", {
       session: {
+        id: newMomentSessionId(),
         type: "grounding",
         title: "Five-senses grounding",
         durationSec: Math.min(
@@ -664,7 +667,8 @@ function Grounding({ params }: { params: AnyRecord }) {
                 params.conversationId || params.sourceConversationId,
             }
           : {}),
-        createdAt: startedAt.current,
+        createdAt: completedAt.toISOString(),
+        day: localDay(completedAt),
       },
     });
   }
@@ -726,11 +730,7 @@ function Grounding({ params }: { params: AnyRecord }) {
           </Hint>
           <Button
             title="Begin grounding"
-            onPress={() => {
-              startedAt.current = stamp();
-              setStarted(true);
-              since.current = Date.now();
-            }}
+            onPress={() => setStarted(true)}
             style={{ marginTop: 20 }}
           />
         </>
@@ -1386,8 +1386,10 @@ function Breathing({ params }: { params: AnyRecord }) {
     const recordedSeconds = complete
       ? duration
       : Math.min(duration, Math.floor(seconds));
+    const completedAt = new Date();
     app.navigate("feedback", {
       session: {
+        id: newMomentSessionId(),
         type: "breathing",
         title: "A reset moment",
         durationSec: recordedSeconds,
@@ -1401,7 +1403,8 @@ function Breathing({ params }: { params: AnyRecord }) {
                 params.conversationId || params.sourceConversationId,
             }
           : {}),
-        createdAt: stamp(),
+        createdAt: completedAt.toISOString(),
+        day: localDay(completedAt),
       },
     });
   }
@@ -1581,10 +1584,15 @@ function Breathing({ params }: { params: AnyRecord }) {
       >
         {!started ? "A moment for you" : !running ? "Rest here" : phase}
       </Heading>
-      {running && (
+      {started && (
         <Copy
           accessibilityLiveRegion="none"
-          style={{ textAlign: "center", marginTop: 7 }}
+          aria-hidden={!running}
+          style={{
+            textAlign: "center",
+            marginTop: 7,
+            opacity: running ? 1 : 0,
+          }}
         >
           {Math.ceil(phaseRemaining)}s
         </Copy>
@@ -1601,14 +1609,6 @@ function Breathing({ params }: { params: AnyRecord }) {
       >
         {clock(elapsed)} / {clock(duration)}
       </Copy>
-      {autoPaused && (
-        <Copy
-          muted
-          style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}
-        >
-          Your moment paused while the app was away. Resume when you are ready.
-        </Copy>
-      )}
       <View style={[styles.twoButtons, { marginTop: 30 }]}>
         <View style={{ flex: 1 }}>
           <Button title="End" variant="secondary" onPress={end} />
@@ -1620,6 +1620,14 @@ function Breathing({ params }: { params: AnyRecord }) {
           />
         </View>
       </View>
+      {autoPaused && (
+        <Copy
+          muted
+          style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}
+        >
+          Your moment paused while the app was away. Resume when you are ready.
+        </Copy>
+      )}
       <Copy
         muted
         style={{
@@ -1639,7 +1647,8 @@ function Breathing({ params }: { params: AnyRecord }) {
 function Feedback({ params }: { params: AnyRecord }) {
   const app = useApp();
   const { colors } = useTheme();
-  const draftKey = `feedback:${String(params.session?.createdAt || "new")}`;
+  const session = params.session;
+  const draftKey = `feedback:${String(session?.id || session?.createdAt || "new")}`;
   const draft = app.editorDrafts[draftKey];
   const [feedback, setFeedback] = useState(draft?.feedback || "");
   const [note, setNote] = useState(draft?.note || "");
@@ -1647,10 +1656,12 @@ function Feedback({ params }: { params: AnyRecord }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [submitted, setSubmitted] = useState(draft?.submitted === "true");
   const savedSession = useRef<AnyRecord | null>(
     draft?.savedSessionId ? { id: draft.savedSessionId } : null,
   );
   const saveLock = useRef(false);
+  const waitingForSession = submitted && !savedSession.current;
   function writeDraft(
     nextFeedback = feedback,
     nextNote = note,
@@ -1665,31 +1676,27 @@ function Feedback({ params }: { params: AnyRecord }) {
       note: nextNote,
       remember: String(nextRemember),
       savedSessionId: savedSession.current?.id || "",
+      submitted: String(submitted),
     });
   }
-  const session = params.session || {
-    type: "breathing",
-    title: "A reset moment",
-    durationSec: 0,
-    completed: false,
-    createdAt: stamp(),
-  };
   const preference =
-    session.type === "grounding"
+    session?.type === "grounding"
       ? "Finds five-senses grounding helpful."
-      : session.type === "breathing"
+      : session?.type === "breathing"
         ? "Finds short breathing moments helpful."
         : null;
   async function save() {
-    if (saveLock.current) return;
+    if (saveLock.current || !session) return;
     saveLock.current = true;
     const submittedDraft = {
       feedback,
       note,
       remember: String(remember),
       savedSessionId: String(savedSession.current?.id || ""),
+      submitted: "true",
     };
     app.setEditorDraft(draftKey, submittedDraft);
+    setSubmitted(true);
     setSaving(true);
     setError("");
     try {
@@ -1706,6 +1713,7 @@ function Feedback({ params }: { params: AnyRecord }) {
       app.setEditorDraft(draftKey, savedDraft);
       if (remember && feedback === "Helped" && preference)
         await app.save("memories", {
+          id: `memory-${savedSession.current.id}`,
           text: preference,
           content: preference,
           sourceType: "session",
@@ -1714,7 +1722,7 @@ function Feedback({ params }: { params: AnyRecord }) {
             ? { sourceConversationId: session.sourceConversationId }
             : {}),
           approved: true,
-          createdAt: stamp(),
+          createdAt: session.createdAt,
         });
       app.setEditorDraft(draftKey, null, savedDraft);
       setSaved(true);
@@ -1725,7 +1733,7 @@ function Feedback({ params }: { params: AnyRecord }) {
       setSaving(false);
     }
   }
-  if (!params.session)
+  if (!session)
     return (
       <Screen>
         <Header />
@@ -1740,7 +1748,7 @@ function Feedback({ params }: { params: AnyRecord }) {
     );
   if (saved)
     return (
-      <Screen>
+      <Screen key="practice-saved">
         <Header />
         <PageIntro title="A little care, saved">
           Your moment is in your Journey. You can return whenever you need.
@@ -1788,9 +1796,12 @@ function Feedback({ params }: { params: AnyRecord }) {
             <Pressable
               key={item.label}
               accessibilityRole="radio"
-              accessibilityState={{ checked: feedback === item.label }}
+              accessibilityState={{
+                checked: feedback === item.label,
+                disabled: saving || waitingForSession,
+              }}
               aria-checked={feedback === item.label}
-              disabled={saving}
+              disabled={saving || waitingForSession}
               onPress={() => writeDraft(item.label)}
               style={[
                 styles.feedbackOption,
@@ -1813,7 +1824,7 @@ function Feedback({ params }: { params: AnyRecord }) {
       <Field
         value={note}
         onChangeText={(value) => writeDraft(feedback, value)}
-        editable={!saving}
+        editable={!saving && !waitingForSession}
         placeholder="Add a note (optional)…"
         minHeight={90}
       />
@@ -1848,8 +1859,19 @@ function Feedback({ params }: { params: AnyRecord }) {
           </Hint>
         )}
       <ErrorNote error={error} />
+      {waitingForSession && !saving && (
+        <Hint>
+          Your feedback is still here. Retry to save the same practice.
+        </Hint>
+      )}
       <Button
-        title={saving ? "Saving…" : "Save and continue →"}
+        title={
+          saving
+            ? "Saving…"
+            : waitingForSession
+              ? "Retry saving practice"
+              : "Save and continue →"
+        }
         onPress={save}
         disabled={saving}
       />
@@ -2473,6 +2495,7 @@ function SessionDetail({ params }: { params: AnyRecord }) {
   const record = (app.data.sessions || []).find(
     (v: AnyRecord) => v.id === params.id,
   );
+  const day = record && recordDay(record);
   async function remove() {
     if (!record?.id) return;
     setDeleting(true);
@@ -2490,13 +2513,15 @@ function SessionDetail({ params }: { params: AnyRecord }) {
     <Screen>
       <Header />
       <PageIntro title={record?.title || "Your moment"}>
-        {record
-          ? new Date(record.createdAt).toLocaleDateString(undefined, {
+        {day
+          ? new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
               month: "long",
               day: "numeric",
               year: "numeric",
             })
-          : "This moment is no longer available."}
+          : record
+            ? "Saved practice"
+            : "This moment is no longer available."}
       </PageIntro>
       {record && (
         <>
@@ -2554,7 +2579,7 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                 {record.completed ? "" : " · Ended early"}
               </Copy>
             )}
-            {record.type === "grounding" && (
+            {record.type === "grounding" && record.kind !== "generated" && (
               <Copy style={{ marginTop: 12 }}>
                 {record.steps?.length || 0} of 5 senses explored ·{" "}
                 {clock(record.durationSec || 0)} active time
@@ -2685,12 +2710,11 @@ function Resource({ params }: { params: AnyRecord }) {
   const { colors, resolved } = useTheme();
   const guide =
     RESOURCE_GUIDES.find((v) => v.id === params.id) || RESOURCE_GUIDES[0];
+  const [day] = useState(localDay);
   const previous = [...(app.data.sessions || [])]
     .filter(
       (v: AnyRecord) =>
-        v.type === "resource" &&
-        v.resourceId === guide.id &&
-        v.day === localDay(),
+        v.type === "resource" && v.resourceId === guide.id && v.day === day,
     )
     .sort((a: AnyRecord, b: AnyRecord) =>
       String(b.createdAt).localeCompare(String(a.createdAt)),
@@ -2700,6 +2724,7 @@ function Resource({ params }: { params: AnyRecord }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const saveLock = useRef(false);
   useEffect(() => {
     setChecked(previous?.steps || []);
     setExpanded(0);
@@ -2707,29 +2732,40 @@ function Resource({ params }: { params: AnyRecord }) {
     setError("");
   }, [guide.id]);
   async function save() {
-    if (saving) return;
+    if (saveLock.current) return;
     if (!checked.length && !previous?.id) {
       setError("Mark a practice you tried before saving your progress.");
       return;
     }
+    saveLock.current = true;
     setSaving(true);
     setError("");
     try {
       await app.save("sessions", {
-        ...(previous?.id ? { id: previous.id } : {}),
+        id: previous?.id ?? `resource-${guide.id}-${day}`,
         type: "resource",
         resourceId: guide.id,
         title: guide.title,
-        steps: checked,
+        steps: [...checked].sort((a, b) => a - b),
         completed: checked.length === guide.steps.length,
-        day: localDay(),
-        createdAt: previous?.createdAt || stamp(),
-        updatedAt: stamp(),
+        day,
       });
       setSaved(true);
     } catch (e) {
-      setError(errText(e));
+      if ((e as { status?: number }).status === 409) {
+        try {
+          await app.refresh();
+          setError(
+            "Progress was saved in another attempt. Review your choices and save again.",
+          );
+        } catch (refreshError) {
+          setError(errText(refreshError));
+        }
+      } else {
+        setError(errText(e));
+      }
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   }

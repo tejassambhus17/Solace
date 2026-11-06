@@ -52,7 +52,25 @@ type ExploreItem = {
   destination: PracticeDestination;
 };
 type FeaturedTile = ExploreItem & {
-  tile: { meta: string; image: ImageSourcePropType; base: string };
+  tile: {
+    meta: string;
+    image: ImageSourcePropType;
+    base: string;
+    actionIcon?: string;
+  };
+};
+
+type ExploreView = {
+  category: Category;
+  searchOpen: boolean;
+  query: string;
+  showAll: boolean;
+  builderOpen: boolean;
+  moreOpen: boolean;
+  focus: PracticeFocus;
+  duration: Duration;
+  x: number;
+  y: number;
 };
 
 const exploreArt = {
@@ -110,6 +128,7 @@ const forYou: FeaturedTile[] = [
       meta: "≈4 min · Journaling",
       image: exploreArt.reflect,
       base: "#2C212C",
+      actionIcon: "pencil-outline",
     },
   },
   {
@@ -368,15 +387,22 @@ export function ExploreScreen() {
   const { top } = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
   const singleColumn = width < 350 || fontScale > 1.2;
+  const restored = app.params?.exploreView as ExploreView | undefined;
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  const [category, setCategory] = useState<Category>("all");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [showAll, setShowAll] = useState(false);
-  const [builderOpen, setBuilderOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [focus, setFocus] = useState<PracticeFocus>("breathe");
-  const [duration, setDuration] = useState<Duration>(5);
+  const categoryRail = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const offsets = useRef({ x: restored?.x ?? 0, y: restored?.y ?? 0 });
+  const restoreOffsets = useRef({ ...offsets.current });
+  const [category, setCategory] = useState(restored?.category ?? "all");
+  const [searchOpen, setSearchOpen] = useState(restored?.searchOpen ?? false);
+  const [focusSearch, setFocusSearch] = useState(false);
+  const [query, setQuery] = useState(restored?.query ?? "");
+  const [showAll, setShowAll] = useState(restored?.showAll ?? false);
+  const [builderOpen, setBuilderOpen] = useState(
+    restored?.builderOpen ?? false,
+  );
+  const [moreOpen, setMoreOpen] = useState(restored?.moreOpen ?? false);
+  const [focus, setFocus] = useState(restored?.focus ?? "breathe");
+  const [duration, setDuration] = useState<Duration>(restored?.duration ?? 5);
   const practicePlan = builderOpen
     ? createExplorePractice(focus, duration)
     : null;
@@ -392,6 +418,19 @@ export function ExploreScreen() {
   const showCatalog = searching || showAll || category !== "all";
   const categoryLabel = categories.find((item) => item.id === category)?.label;
   function open(destination: PracticeDestination) {
+    // Save the view on this stack entry, so leaving Explore discards it.
+    const exploreView: ExploreView = {
+      category,
+      searchOpen,
+      query,
+      showAll,
+      builderOpen,
+      moreOpen,
+      focus,
+      duration,
+      ...offsets.current,
+    };
+    app.setParams({ exploreView });
     if ("route" in destination) {
       app.navigate(destination.route, destination.params);
       return;
@@ -415,10 +454,25 @@ export function ExploreScreen() {
       setCategory("all");
       setShowAll(false);
     }
+    setFocusSearch(!searchOpen);
     setSearchOpen(!searchOpen);
   }
   return (
-    <Screen edgeToEdgeTop scrollRef={scroll} style={styles.screen}>
+    <Screen
+      edgeToEdgeTop
+      scrollRef={scroll}
+      onScroll={(event) => {
+        offsets.current.y = Math.max(0, event.nativeEvent.contentOffset.y);
+      }}
+      onContentSizeChange={() => {
+        const y = restoreOffsets.current.y;
+        if (y > 0) {
+          scroll.current?.scrollTo({ y, animated: false });
+          restoreOffsets.current.y = 0;
+        }
+      }}
+      style={styles.screen}
+    >
       <StatusBar style="light" />
       <View
         style={[
@@ -478,7 +532,7 @@ export function ExploreScreen() {
             <IconAction
               icon="bookmark-outline"
               label="Open saved wellness toolkit"
-              onPress={() => app.navigate("toolkit")}
+              onPress={() => open({ route: "toolkit" })}
             />
           </Row>
         </Row>
@@ -503,10 +557,22 @@ export function ExploreScreen() {
 
       <View style={styles.body}>
         <ScrollView
+          ref={categoryRail}
           horizontal
           style={styles.categoryViewport}
           showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
+          onScroll={(event) => {
+            offsets.current.x = Math.max(0, event.nativeEvent.contentOffset.x);
+          }}
+          onContentSizeChange={() => {
+            const x = restoreOffsets.current.x;
+            if (x > 0) {
+              categoryRail.current?.scrollTo({ x, animated: false });
+              restoreOffsets.current.x = 0;
+            }
+          }}
           contentContainerStyle={styles.categoryRail}
           accessibilityRole="radiogroup"
           accessibilityLabel="Practice categories"
@@ -583,7 +649,7 @@ export function ExploreScreen() {
           >
             <Icon name="search-outline" color={colors.muted} size={19} />
             <TextInput
-              autoFocus
+              autoFocus={focusSearch}
               accessibilityLabel="Find a practice or wellness tool"
               placeholder="Find a practice or tool"
               placeholderTextColor={colors.muted}
@@ -755,8 +821,12 @@ export function ExploreScreen() {
                         {item.tile.meta}
                       </AppText>
                     </View>
-                    <View style={styles.tilePlay}>
-                      <Icon name="play" color={overlayInk} size={11} />
+                    <View style={styles.tileAction}>
+                      <Icon
+                        name={item.tile.actionIcon ?? "play"}
+                        color={overlayInk}
+                        size={11}
+                      />
                     </View>
                   </Pressable>
                 ))}
@@ -769,7 +839,7 @@ export function ExploreScreen() {
           accessibilityRole="button"
           accessibilityLabel="Create Your Wellness Plan"
           accessibilityHint="Opens your editable three-day plan"
-          onPress={() => app.navigate("plan")}
+          onPress={() => open({ route: "plan" })}
           style={({ pressed }) => [
             styles.planBanner,
             pressed && styles.pressed,
@@ -817,7 +887,7 @@ export function ExploreScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={card.title}
                   accessibilityHint={detail}
-                  onPress={() => app.navigate(card.route)}
+                  onPress={() => open({ route: card.route })}
                   style={({ pressed }) => [
                     styles.moreCard,
                     singleColumn && styles.fullTile,
@@ -1161,7 +1231,7 @@ const styles = StyleSheet.create({
     width: "29%",
   },
   tileCopy: { flex: 1, minWidth: 0, paddingVertical: 5 },
-  tilePlay: {
+  tileAction: {
     width: 22,
     height: 22,
     marginRight: 5,

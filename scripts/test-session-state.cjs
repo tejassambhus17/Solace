@@ -767,6 +767,30 @@ test("a render during logout cannot restore erased drafts or transmit private wr
   h.close();
 });
 
+test("signing out aborts an in-flight private request and clears its account", async () => {
+  const h = harness({ platform: "ios" });
+  await settle();
+  const transport = accountTransport("account-a", "token-a");
+  h.onRequest = transport;
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  const pending = deferred();
+  let signal;
+  h.onRequest = async (route, options) => {
+    if (route !== "/export") return transport(route);
+    signal = options.signal;
+    return pending.promise;
+  };
+  const exporting = h.render().exportData();
+  const rejected = assert.rejects(exporting, /cancelled|session changed/);
+  await until(() => signal);
+  await h.render().signOut();
+  pending.resolve(ok({ data: { reflections: [{ id: "private" }] } }));
+  await rejected;
+  assert.equal(signal.aborted, true);
+  assert.equal(h.render().user, null);
+  h.close();
+});
+
 test("failed old-account erasure never persists the new account's credential", async () => {
   const h = harness({ platform: "ios" });
   await settle();
@@ -905,13 +929,13 @@ test("an unconfigured release shows a recoverable configuration error without se
   };
   await assert.rejects(
     h.render().signIn("synthetic@solace.test", "test-only-password"),
-    /configured HTTPS API/,
+    /install an updated build/,
   );
   const app = h.render();
   assert.equal(calls, 0);
   assert.equal(app.busy, false);
   assert.equal(app.user, null);
-  assert.match(app.error, /EXPO_PUBLIC_API_URL/);
+  assert.doesNotMatch(app.error, /EXPO_PUBLIC_API_URL/);
   assert.equal(app.pendingWrites.length, 0);
   h.close();
 });

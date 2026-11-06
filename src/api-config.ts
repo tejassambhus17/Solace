@@ -18,23 +18,40 @@ const DEVELOPMENT_PORT = 3001;
 const malformedMessage =
   "Solace's API address is invalid. Set EXPO_PUBLIC_API_URL to an http:// or https:// server URL without credentials, query parameters, or fragments, then restart Expo.";
 const releaseMessage =
-  "This Solace build needs a configured HTTPS API. Set EXPO_PUBLIC_API_URL to the deployed server address and rebuild the app.";
+  "This build can’t connect to Solace. Please install an updated build.";
+
+function isPrivateIPv4(first: number, second: number) {
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
 
 function isLocalOnly(hostname: string) {
   const host = hostname
     .toLowerCase()
     .replace(/^\[|\]$/g, "")
     .replace(/\.$/, "");
+  const ipv4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host);
+  if (ipv4) return isPrivateIPv4(Number(ipv4[1]), Number(ipv4[2]));
+  if (host.includes(":")) {
+    // URL serializes IPv4-mapped IPv6 literals into two hexadecimal groups.
+    const mapped = /^::ffff:([0-9a-f]+):[0-9a-f]+$/.exec(host);
+    if (mapped) {
+      const high = Number.parseInt(mapped[1], 16);
+      return isPrivateIPv4(high >> 8, high & 255);
+    }
+    return host === "::" || host === "::1" || /^(?:f[cd]|fe[89ab])/.test(host);
+  }
   return (
-    host === "localhost" ||
+    !host.includes(".") ||
     host.endsWith(".localhost") ||
-    host === "0.0.0.0" ||
-    /^127(?:\.\d{1,3}){3}$/.test(host) ||
-    host === "::" ||
-    host === "::1" ||
-    host.startsWith("::ffff:7f") ||
-    host === "10.0.2.2" ||
-    host === "10.0.3.2"
+    host.endsWith(".local")
   );
 }
 
@@ -47,7 +64,7 @@ export function resolveApiConfiguration(
   const issue = (error: string): ApiConfiguration => ({
     baseUrl: null,
     origin: null,
-    error,
+    error: options.development ? error : releaseMessage,
     development: options.development,
     platform: options.platform,
     source: "unconfigured",

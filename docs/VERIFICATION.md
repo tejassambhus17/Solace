@@ -1,5 +1,43 @@
 # Verification record
 
+## Stabilization pass — 6 November 2026
+
+[Reproductions, fixes, retests, screen coverage and screenshots](QA_STABILIZATION.md)
+
+### Automated and build checks
+
+| Check | Actual result |
+|---|---|
+| `npm run doctor` | Passed on Node 24.22.1. Both npm package trees and native Sharp/transform binaries were present. |
+| `npm run format:check`, `npm run typecheck`, `npm run server:typecheck`, `npm run server:build` | Passed. The repository has no separate JavaScript lint script. |
+| `npm run server:test` | **73/73** integration and process tests passed with loopback access. A sandbox-only attempt failed with socket `EACCES`. |
+| Client regressions | **157/157** passed across wellness (7), reminders (8), session-state (35), insights (9), routine (10), offline (9), tooling (18), API config (11), voice (17), progress (18), Moments (9) and native config (6). |
+| `npm run export:web`, `npm run export:android`, `npm run export:ios` | Passed with an explicit reserved HTTPS QA URL and two Metro workers. iOS evidence is a JavaScript/Hermes export. |
+| Physical Android Debug | Rebuilt arm64 with JDK 21 and the installed Android SDK, using a separate QA application ID. Started on Android 15 using Metro and USB reverse. Actual SDK permission declarations include audio recording and notifications. |
+| Android release-mode Gradle assembly | Passed offline with an isolated arm64 QA ID and a development signing key. Inspected the final 1,974,716-byte embedded Hermes bundle and confirmed the reserved HTTPS QA URL. The handset returned `INSTALL_FAILED_USER_RESTRICTED` for this separate package, so packaged startup is **blocked**. |
+
+### Physical Android coverage
+
+- **Verified.** Fresh welcome and onboarding, signup through the OS keyboard, saved Calm mood, cold app restart with restored session and check-in, native chat send with keyboard present, labeled built-in reply, and honest Voice Talk fallback. These used a real Express server and disposable SQLite records over USB reverse.
+- **Verified.** At the handset's existing text scale, a two-line chat message could be sent with the keyboard open. The corrected composer left 28 physical pixels between its border and the IME, down from 158 on the same phone and state.
+- **Verified.** Solace's recommended two-minute breathing practice paused at 1:45, held across two captures, resumed to feedback and saved. The same account's Journey displayed one Moment and two mindful minutes. [Native Journey](screenshots/stabilization/android-journey-after-practice.png)
+- **Verified.** A second native practice kept the Pause/Resume button in the same physical position during manual pause and after returning from the background. The foreground return explained why the clock was paused. [Background pause](screenshots/stabilization/android-breath-background.png)
+- **Verified.** Ending the second practice and leaving feedback unsaved kept Journey at one Moment and two minutes. Android hardware Back restored Explore's two Sleep results. Today retained its selected Calm mood and five pastel petals in Light and Dark. The disposable account signed out successfully.
+- **Verified.** Dark onboarding retained complete serif descenders at the existing text scale and at 1.3×. The account action scrolled clear of the Android system bar with Reduce Motion enabled. This is a focused onboarding check. [Large text capture](screenshots/stabilization/android-onboarding-large-reduced-motion.png)
+- **Verified.** Android requested notification permission for the isolated package. A test reminder was posted while the app was backgrounded. ADB checked the notification by the QA package ID. Foreground, normal-closed recurring delivery and tap routing are separate checks. [Permission prompt](screenshots/stabilization/android-notification-permission.png)
+- **Blocked.** The Xiaomi shade did not yield a usable UIAutomator tree. Automatic approval review declined whole-shade screenshot/OCR because it could reveal unrelated notifications. Package-scoped evidence establishes posting. The manual tap step is listed below.
+
+### Remaining manual gates
+
+1. **iOS blocked on this Windows session.** Open the Personal Team development build on a Mac with a paired iPhone. Rebuild with the current Expo native dependencies and the existing signing configuration. With a disposable account, repeat signup, multiline input and scrolling, inspect VoiceOver and larger text, test Reduce Motion/Reduce Transparency, and check that the last action clears the unchanged Liquid Glass rail on each tab and detail.
+2. **Packaged Android startup blocked by USB installation.** In an attended session, install `android/app/build/outputs/apk/release/app-release.apk` and approve the isolated `com.solacewellness.app.qa.release` installation on the handset if prompted. With the Metro USB mapping removed, cold-launch the release QA package and confirm welcome and onboarding render. Its reserved HTTPS address is for this startup probe.
+3. **Live provider and public release blocked by deferred setup.** Configure the key only in `server/.env`. Verify live chat, generated Moments, weekly drafts and real transcription. Deploy the configured API over publicly reachable HTTPS with persistent storage. Rebuild and install the release APK, disable Metro, and repeat the complete two-account sequence against that HTTPS API before recording the submission demo.
+4. **Native voice and audio.** On the live-provider build, deny the mic, then allow it. Record, stop, review a long transcript and send explicitly. Cancel and retry a failed upload. Repeat with permission revoked, while backgrounding, during an audio interruption and while switching audio routes. Check TTS stop/mute and ambient handoff.
+5. **Native reminders.** In the QA app, send a test and tap the Solace alert in the phone's shade. Expect the Check-in screen. On each target OS, save a recurring reminder for a near future time, save it again, edit it, disable it, and confirm only the current enabled schedule can deliver. Repeat in foreground, background and after normal close, and cross a timezone change. Verify permission denial and recovery. Remote push is a separate provisioning and delivery test.
+6. **Further device coverage.** Recheck the remaining nested Explore, account/photo picker and assessment routes at smaller and larger native sizes. Test photo cancellation, denial and upload failure with a disposable image. Repeat cross-tab and immersive tests with larger text and Reduce Motion. Gather release frame and memory traces during navigation, chat scrolling and voice transitions.
+
+## Historical verification
+
 Date: 5 November 2026. Record actual results here; never turn an unexecuted release checklist into a pass.
 
 ## Automated checks executed

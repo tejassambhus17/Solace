@@ -44,6 +44,12 @@ const {
   "./content": content,
   "./progress": progress,
 });
+const { journeyGoalProgress } = load("src/journey-goals.ts", {
+  "../server/src/goal-contract": load("server/src/goal-contract.ts"),
+  "./content": content,
+  "./journey-analytics": { journeyRange },
+  "./progress": progress,
+});
 const now = () => new Date(2026, 10, 5, 12);
 const item = (id, day, extra = {}) => ({ id, day, ...extra });
 
@@ -520,5 +526,35 @@ test("saved story separates reflective assessments, daily check-ins and saved af
   assert.equal(
     journeyReport(analytics, "all", "2026-11-05").stats.checkinDays,
     1,
+  );
+});
+
+test("completing a resource checklist is visible in history without earning a Moment", () => {
+  const day = "2026-11-05";
+  const guide = item("resource", day, { type: "resource", completed: true });
+  const moment = item("breathing", day, {
+    type: "breathing",
+    completed: true,
+    durationSec: 60,
+  });
+  const goal = { metric: "moments", period: "week", target: 1 };
+  const guideOnly = { sessions: [guide] };
+  const analytics = journeyAnalytics(guideOnly, now());
+  assert.equal(analytics.days.get(day).entries[0].record, guide);
+  assert.equal(journeyReport(analytics, "week", day).stats.moments, 0);
+  assert.equal(
+    analytics.milestones.find(({ id }) => id === "first-moment").earned,
+    false,
+  );
+  assert.equal(journeyGoalProgress(goal, guideOnly, now()).current, 0);
+
+  const mixed = { sessions: [guide, moment] };
+  const report = journeyReport(journeyAnalytics(mixed, now()), "week", day);
+  assert.deepEqual(report.stats, { checkinDays: 0, moments: 1, seconds: 60 });
+  assert.deepEqual(
+    journeyGoalProgress(goal, mixed, now()).activities.map(
+      ({ record }) => record.id,
+    ),
+    [moment.id],
   );
 });

@@ -32,6 +32,7 @@ const {
   elapsedMomentMs,
   momentPosition,
   breathingPosition,
+  momentBreathingPosition,
   isPlayableMoment,
   momentClockText,
 } = loadHelper("moments.ts");
@@ -124,6 +125,24 @@ test("breathing visual phase and remaining seconds use the same actual clock", (
     breathingPosition(4, { inhale: 4, hold: 0, exhale: 6 }).phase,
     "Breathe out",
   );
+});
+
+test("built-in breathing cues start at the guided step and stop during the return", () => {
+  const practice = createExplorePractice("breathe", 3);
+  const cueAt = (milliseconds, builtIn = true) =>
+    momentBreathingPosition(
+      practice,
+      momentPosition(practice, milliseconds),
+      milliseconds,
+      builtIn,
+    );
+  assert.equal(cueAt(0), null);
+  assert.equal(cueAt(35_999), null);
+  assert.equal(cueAt(36_000).phase, "Breathe in");
+  assert.equal(cueAt(40_000).phase, "Breathe out");
+  assert.equal(cueAt(126_000), null);
+  assert.equal(cueAt(180_000), null);
+  assert.equal(cueAt(0, false).phase, "Breathe in");
 });
 
 test("navigation data must be bounded, internally consistent guidance before playback", () => {

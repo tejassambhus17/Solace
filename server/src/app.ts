@@ -497,6 +497,16 @@ export function createApp(config: AppConfig) {
         "The source conversation was not found.",
         "NOT_FOUND",
       );
+    if (collection === "memories") {
+      record.approved = parsed.approved ?? true;
+      if (!validMemorySource(user(req).id, record))
+        return apiError(
+          res,
+          404,
+          "The source activity or conversation was not found.",
+          "NOT_FOUND",
+        );
+    }
     const existing = get(user(req).id, collection, record.id);
     // Adding a saved practice is idempotent, including rapid taps or retries
     // after a response was lost. Identity is scoped by the authenticated owner.
@@ -506,9 +516,13 @@ export function createApp(config: AppConfig) {
       existing &&
       (collection === "preferences" ||
         collection === "goals" ||
-        (collection === "sessions" &&
-          parsed.kind === "generated" &&
-          existing.kind === "generated"))
+        collection === "sessions" ||
+        collection === "reminders" ||
+        (collection === "memories" &&
+          record.sourceType === "session" &&
+          record.id === `memory-${record.sourceId}` &&
+          record.approved === existing.approved &&
+          memoryProvenance(record) === memoryProvenance(existing)))
     ) {
       // Stable client IDs reconcile a lost response without recording another completion.
       // Supplied timestamps and every supplied field must match; changed payloads conflict.
@@ -527,16 +541,6 @@ export function createApp(config: AppConfig) {
         "This item already exists. Update it instead.",
         "RECORD_EXISTS",
       );
-    if (collection === "memories") {
-      record.approved = parsed.approved ?? true;
-      if (!validMemorySource(user(req).id, record))
-        return apiError(
-          res,
-          404,
-          "The source activity or conversation was not found.",
-          "NOT_FOUND",
-        );
-    }
     store.transaction(() => put(user(req).id, collection, record));
     return res.status(201).json({ record });
   });

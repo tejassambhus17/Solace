@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
+  AppState,
   Easing,
   Image,
   Platform,
@@ -57,10 +58,19 @@ export function Companion({
 }) {
   const { resolved, colors } = useTheme();
   const reduced = useReducedMotion();
-  const motion = useRef(new Animated.Value(0)).current;
+  const [active, setActive] = useState(
+    () => !AppState.currentState || AppState.currentState === "active",
+  );
+  const [motion] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) =>
+      setActive(next === "active"),
+    );
+    return () => subscription?.remove();
+  }, []);
   useEffect(() => {
     motion.stopAnimation();
-    if (reduced) {
+    if (reduced || !active) {
       motion.setValue(0);
       return;
     }
@@ -111,6 +121,8 @@ export function Companion({
   }, [
     state,
     reduced,
+    active,
+    motion,
     breathing?.inhale,
     breathing?.hold,
     breathing?.exhale,

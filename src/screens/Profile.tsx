@@ -160,6 +160,9 @@ export default function ProfileScreen({ name }: { name: string }) {
   const [selectedDays, setDays] = useState([1, 2, 3, 4, 5]);
   const [enabled, setEnabled] = useState(true);
   const [reminderId, setReminderId] = useState<string | null>(null);
+  const reminderCreateAttempt = useRef<{ id: string; fingerprint: string }>(
+    null,
+  );
   const [reminderStatusLocation, setReminderStatusLocation] = useState<
     "form" | "list"
   >("form");
@@ -254,6 +257,7 @@ export default function ProfileScreen({ name }: { name: string }) {
     </View>
   );
   function resetReminder() {
+    reminderCreateAttempt.current = null;
     setReminderId(null);
     setReminderType("checkin");
     setReminderTitle("");
@@ -266,7 +270,7 @@ export default function ProfileScreen({ name }: { name: string }) {
 
   if (name === "settings")
     return (
-      <Screen title="Settings" back={app.back}>
+      <Screen key={routeIdentity} title="Settings" back={app.back}>
         {heading(
           "Make it yours",
           "Choose how Solace looks and what it remembers.",
@@ -390,7 +394,7 @@ export default function ProfileScreen({ name }: { name: string }) {
 
   if (name === "about")
     return (
-      <Screen title="About Solace" back={app.back}>
+      <Screen key={routeIdentity} title="About Solace" back={app.back}>
         {heading(
           "A calmer place to pause",
           "Check in, talk, and take one small step toward everyday wellbeing.",
@@ -470,7 +474,7 @@ export default function ProfileScreen({ name }: { name: string }) {
           : null;
     };
     return (
-      <Screen title="What Solace remembers" back={app.back}>
+      <Screen key={routeIdentity} title="What Solace remembers" back={app.back}>
         {heading(
           "A little context. Your choice.",
           "Only preferences you explicitly save belong here. You can correct them, remove them, or turn personalization off.",
@@ -846,6 +850,7 @@ export default function ProfileScreen({ name }: { name: string }) {
   if (name === "reminders")
     return (
       <Screen
+        key={routeIdentity}
         title="Gentle reminders"
         back={app.back}
         scrollRef={reminderScroll}
@@ -999,18 +1004,47 @@ export default function ProfileScreen({ name }: { name: string }) {
                 days: [...selectedDays].sort((a, b) => a - b),
                 enabled,
               };
+              const duplicate = app.data.reminders.some(
+                (reminder) =>
+                  reminder.id !== reminderId &&
+                  reminder.type === record.type &&
+                  reminder.title === record.title &&
+                  reminder.hour === record.hour &&
+                  reminder.minute === record.minute &&
+                  reminder.enabled === record.enabled &&
+                  Array.isArray(reminder.days) &&
+                  reminder.days.length === record.days.length &&
+                  record.days.every((day) => reminder.days.includes(day)),
+              );
+              if (duplicate) {
+                setMessage("This reminder is already saved.");
+                return;
+              }
               const owner = String(app.user?.id);
               const previousIds =
                 reminderId && Platform.OS !== "web"
                   ? await deviceReminderIds(owner, reminderId)
                   : [];
               const result = await scheduleReminder(record);
+              let id = reminderId;
+              if (!id) {
+                // The API may have committed before the response was lost.
+                // Reuse the identity while retrying the same preferences.
+                const fingerprint = JSON.stringify(record);
+                if (reminderCreateAttempt.current?.fingerprint !== fingerprint)
+                  reminderCreateAttempt.current = {
+                    id: `reminder-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`,
+                    fingerprint,
+                  };
+                id = reminderCreateAttempt.current.id;
+              }
               let saved;
               try {
                 saved = await app.save("reminders", {
-                  ...(reminderId ? { id: reminderId } : {}),
+                  id,
                   ...record,
-                  notificationIds: result.ids,
+                  // The OS gives each attempt fresh IDs. Keep them in the
+                  // device map so a retry still has the same API payload.
                   permission: result.permission,
                 });
               } catch (e) {
@@ -1182,6 +1216,7 @@ export default function ProfileScreen({ name }: { name: string }) {
   if (name === "account")
     return (
       <Screen
+        key={routeIdentity}
         title={privacyOnly ? "Privacy & data" : "Your account"}
         back={app.back}
       >
@@ -1508,7 +1543,7 @@ export default function ProfileScreen({ name }: { name: string }) {
     );
 
   return (
-    <Screen title="Find support" back={app.back}>
+    <Screen key={routeIdentity} title="Find support" back={app.back}>
       {heading(
         "You deserve support",
         "Connect with human help when you need more than an app.",

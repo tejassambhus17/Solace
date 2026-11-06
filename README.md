@@ -79,7 +79,7 @@ Setup installs both lockfiles with development/platform packages, compiles the A
 
 The API normally uses port 3001 and Expo web uses 8081. Separate terminals can run `npm run server` and `npm run web`. A packaged local preview uses `npm run export:web:preview`, then `npm run preview` on port 8082. Stop the owned development processes with Ctrl+C.
 
-Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. Release clients require an explicit HTTPS API and reject loopback/emulator addresses. Reload Expo after public configuration changes; rebuild installed release binaries.
+Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. An Android debug build can also use an explicit loopback address over USB reverse. Release clients require an explicit HTTPS API and reject loopback, private network addresses and local-only hostnames. Reload Expo after public configuration changes and rebuild installed release binaries.
 
 Provider credentials belong only in **server/.env** or the private server environment. Configure the provider model for the account, then restart the API. `AI_MODE=live` requires credentials, `auto` selects live when configured, and `offline` uses the labeled built-in companion. Configured-provider failures produce recoverable errors instead of an undisclosed fallback. See [server configuration](server/README.md). Never commit environment files, keys or local database records.
 
@@ -133,7 +133,7 @@ npm run export:android
 npm run export:ios
 ```
 
-**205 regressions passed in the latest hardening pass**, alongside client and server type checks and web, Android and iOS exports. The local browser run covered account restoration, interrupted chat recovery, human-support navigation, mood and Moment saves, and reminder preference editing. Provider adapters were tested with controlled responses. Verify microphone access, permission prompts, background notifications and installed app behavior on native devices. See [VERIFICATION.md](docs/VERIFICATION.md).
+The November 6 stabilization pass includes an integrated two-account browser journey, matched defect retests, and checks on a USB-connected Android 15 handset. The report lists the exact scenarios, commands and outstanding release gates. [QA stabilization report](docs/QA_STABILIZATION.md) · [Verification record](docs/VERIFICATION.md)
 
 The physical Android debug build passed signup, session restoration, mood saving, built-in chat and history checks using the local API over USB. The device pass also verified the chat keyboard fix. [Device verification](docs/VERIFICATION.md#physical-android-smoke-test--6-november-2026)
 

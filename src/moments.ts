@@ -16,6 +16,10 @@ export const emptyClock = (): MomentClock => ({
   runningSince: null,
 });
 
+export function newMomentSessionId() {
+  return `moment-session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /** A monotonic active clock. Pauses never accrue time or unlock completion. */
 export function elapsedMomentMs(
   clock: MomentClock,
@@ -88,6 +92,22 @@ export function breathingPosition(
     remaining: Math.ceil(cycle - position),
     progress: 1 - (position - pattern.inhale - pattern.hold) / pattern.exhale,
   };
+}
+
+export function momentBreathingPosition(
+  activity: SolaceMoment,
+  position: ReturnType<typeof momentPosition>,
+  elapsedMs: number,
+  builtIn: boolean,
+) {
+  if (!activity.breathing || position.complete) return null;
+  // The three-step built-in breathing practices use the first and last steps
+  // to arrive and return at a natural pace. The petal guides the middle step.
+  if (builtIn && activity.steps.length === 3)
+    return position.index === 1
+      ? breathingPosition(position.stepElapsed, activity.breathing)
+      : null;
+  return breathingPosition(elapsedMs / 1000, activity.breathing);
 }
 
 const boundedText = (value: unknown, maximum: number) =>

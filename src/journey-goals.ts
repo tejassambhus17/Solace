@@ -9,6 +9,7 @@ import { localDay, recordDay } from "./content";
 import { journeyRange } from "./journey-analytics";
 import {
   activeSeconds,
+  isCompletedMoment,
   journeyRecords,
   type DayEntry,
   type JourneyData,
@@ -98,7 +99,9 @@ export function journeyGoalProgress(
     .filter((record) => {
       const day = recordDay(record);
       if (!day || (startDay && day < startDay) || day > endDay) return false;
-      if (collection === "sessions") return record.completed === true;
+      if (goal.metric === "moments") return isCompletedMoment(record);
+      if (goal.metric === "mindful-minutes")
+        return record.completed === true && activeSeconds(record) > 0;
       if (collection !== "checkins") return true;
       if (days.has(day)) return false;
       days.add(day);

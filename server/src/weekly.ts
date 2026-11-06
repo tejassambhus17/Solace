@@ -151,7 +151,7 @@ export async function weeklyReflection(
   const hasData =
     facts.checkins + facts.completedSessions + facts.reflections > 0;
   const factual = hasData
-    ? `This week you recorded ${facts.checkins} check-in${facts.checkins === 1 ? "" : "s"}, completed ${facts.completedSessions} moment${facts.completedSessions === 1 ? "" : "s"}, and saved ${facts.reflections} reflection${facts.reflections === 1 ? "" : "s"}. Completed activities totalled ${facts.minutes} minute${facts.minutes === 1 ? "" : "s"}. You marked ${facts.helpfulSessions} completed ${facts.helpfulSessions === 1 ? "activity" : "activities"} helpful or a little helpful.`
+    ? `This week you recorded ${facts.checkins} check-in${facts.checkins === 1 ? "" : "s"}, completed ${facts.completedSessions} ${facts.completedSessions === 1 ? "activity" : "activities"}, and saved ${facts.reflections} reflection${facts.reflections === 1 ? "" : "s"}. Completed activities totalled ${facts.minutes} minute${facts.minutes === 1 ? "" : "s"}. You marked ${facts.helpfulSessions} completed ${facts.helpfulSessions === 1 ? "activity" : "activities"} helpful or a little helpful.`
     : "Your week is a fresh page. A check-in, a moment or a reflection will appear here when you choose to save one.";
   let invitation = hasData
     ? "What would you like to carry forward, and what would you like to make a little room for?"

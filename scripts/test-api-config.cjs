@@ -60,7 +60,7 @@ test("release configuration must be explicit and secure instead of silently usin
   ]) {
     const result = release(url);
     assert.equal(result.baseUrl, null);
-    assert.match(result.error, /configured HTTPS API/);
+    assert.match(result.error, /install an updated build/);
   }
   assert.equal(
     release("https://api.solace.test").baseUrl,
@@ -132,8 +132,35 @@ test("HTTPS loopback and emulator-only addresses cannot masquerade as release AP
   ]) {
     const result = release(`https://${host}`);
     assert.equal(result.baseUrl, null, host);
-    assert.match(result.error, /configured HTTPS API/, host);
+    assert.match(result.error, /install an updated build/, host);
   }
+});
+
+test("release rejects private-network endpoints and keeps setup instructions out of the app", () => {
+  for (const url of [
+    "https://10.12.0.5",
+    "https://172.31.2.5",
+    "https://192.168.1.2",
+    "https://169.254.1.2",
+    "https://[fd12::1]",
+    "https://[fe80::1]",
+    "https://[::ffff:192.168.1.2]",
+    "https://solace.local",
+    "https://solace",
+    "not-a-url",
+  ]) {
+    const result = release(url);
+    assert.equal(result.baseUrl, null, url);
+    assert.doesNotMatch(
+      result.error,
+      /EXPO_PUBLIC|https?:|restart Expo|localhost/i,
+    );
+  }
+  assert.equal(release("https://172.32.0.5").baseUrl, "https://172.32.0.5");
+  assert.equal(
+    development("ios", { configuredUrl: "https://192.168.1.2" }).baseUrl,
+    "https://192.168.1.2",
+  );
 });
 
 test("IPv6 preview hosts preserve their full address and receive only one bracket pair", () => {
@@ -213,6 +240,11 @@ test("the installed Expo URL implementation supports the same native configurati
       platform: "ios",
       development: false,
       configuredUrl: "https://127.0.0.1:3001",
+    },
+    {
+      platform: "android",
+      development: false,
+      configuredUrl: "https://[::ffff:192.168.1.2]",
     },
   ];
   for (const input of options) {

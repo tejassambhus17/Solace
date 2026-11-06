@@ -6,7 +6,6 @@ import {
   ScrollView,
   Pressable,
   TextInput,
-  TextInputProps,
   ViewStyle,
   StyleProp,
   TextStyle,
@@ -14,10 +13,14 @@ import {
   ImageSourcePropType,
   ImageStyle,
   ActivityIndicator,
+  Platform,
   ScrollViewProps,
   StyleSheet,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useTheme } from "./theme";
 
@@ -47,7 +50,8 @@ export function AppText({
     display: {
       fontFamily: "CormorantGaramond_600SemiBold",
       fontSize: 48,
-      lineHeight: 50,
+      // Cormorant's 1.21-em vertical metrics need room for descenders on Android.
+      lineHeight: Platform.OS === "android" ? 59 : 50,
       letterSpacing: -1.2,
     },
     title: {
@@ -81,10 +85,12 @@ export function Screen({
   title,
   back,
   scrollRef,
+  onScroll,
   onContentSizeChange,
   contentContainerStyle,
   edgeToEdge = false,
   edgeToEdgeTop = false,
+  adjustKeyboardInsets = true,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
@@ -92,20 +98,24 @@ export function Screen({
   title?: string;
   back?: () => void;
   scrollRef?: React.ComponentProps<typeof ScrollView>["ref"];
+  onScroll?: ScrollViewProps["onScroll"];
   onContentSizeChange?: ScrollViewProps["onContentSizeChange"];
   contentContainerStyle?: StyleProp<ViewStyle>;
   edgeToEdge?: boolean;
   edgeToEdgeTop?: boolean;
+  adjustKeyboardInsets?: boolean;
 }) {
   const { colors } = useTheme();
   const navigationInset = useNavigationInset();
+  const { bottom } = useSafeAreaInsets();
+  const bottomClearance = Math.max(navigationInset, bottom);
   const content = (
     <View
       style={[
         {
           paddingHorizontal: 24,
           paddingTop: 18,
-          paddingBottom: 32 + (scroll ? 0 : navigationInset),
+          paddingBottom: 32 + (scroll ? 0 : bottomClearance),
         },
         style,
       ]}
@@ -147,18 +157,23 @@ export function Screen({
       {scroll ? (
         <ScrollView
           ref={scrollRef}
-          style={
-            navigationInset && !edgeToEdge
-              ? { marginBottom: navigationInset }
-              : undefined
+          automaticallyAdjustKeyboardInsets={
+            Platform.OS === "ios" && adjustKeyboardInsets
           }
+          keyboardDismissMode={
+            Platform.OS === "ios" && adjustKeyboardInsets
+              ? "interactive"
+              : "on-drag"
+          }
+          onScroll={onScroll}
+          scrollEventThrottle={onScroll ? 16 : undefined}
           onContentSizeChange={onContentSizeChange}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[
             { flexGrow: 1 },
-            edgeToEdge && { paddingBottom: navigationInset },
             contentContainerStyle,
+            { paddingBottom: bottomClearance },
           ]}
         >
           {content}
@@ -302,7 +317,7 @@ export function Button({
     </Pressable>
   );
 }
-export function Input(props: TextInputProps) {
+export function Input(props: React.ComponentPropsWithRef<typeof TextInput>) {
   const { colors } = useTheme();
   const [focused, setFocused] = useState(false);
   return (

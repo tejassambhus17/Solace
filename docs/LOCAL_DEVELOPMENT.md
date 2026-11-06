@@ -47,7 +47,11 @@ For a persistent setting, edit only EXPO_PUBLIC_API_URL in the root .env/.env.lo
 - Authentication works without an AI provider key. Built-in companion replies remain explicitly labeled. Real AI is a separate check after privately configuring the provider key in server/.env.
 - AI_MODE=live without OPENAI_API_KEY fails startup clearly. This does not validate an existing key or prove a provider is reachable; only an actual successful live request does that.
 - Development defaults: iOS simulator 127.0.0.1:3001, Android emulator 10.0.2.2:3001, web browser hostname on port 3001. Explicit public configuration takes precedence. If the server port changes, configure the matching public URL too.
-- Release builds require an explicit HTTPS API and reject loopback/emulator URLs. Compilation alone does not establish deployment readiness.
+- Release builds require an explicit public HTTPS API. The app rejects loopback, private network addresses and local-only hostnames. An invalid release address shows a plain build-recovery message in the app. Diagnose it in build configuration.
+
+If you choose a non-default Expo web port, set `ALLOWED_ORIGINS` for the API to include that exact origin and restart it. For example, a loopback preview on port 8091 can use `http://127.0.0.1:8091,http://localhost:8091`. Keep deployed origins explicit.
+
+For a USB-connected Android phone, a debug app can use `EXPO_PUBLIC_API_URL=http://127.0.0.1:3001` with `adb reverse tcp:3001 tcp:3001`. Reverse the debug app's Metro port separately, for example `adb reverse tcp:8081 tcp:8093` when the host Metro runs on 8093. Use a disposable database for QA and remove only the reverse mappings you added when finished.
 
 For a compiled local web preview, use `npm run export:web:preview` then `npm run preview`. `npm run export:web` is the production export and must be paired with the deployed HTTPS API configuration before treating its output as a functional release.
 

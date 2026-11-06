@@ -181,16 +181,19 @@ async function request(
   path: string,
   token: string | null,
   options: RequestInit = {},
+  sessionSignal?: AbortSignal,
 ) {
   if (!apiConfiguration.baseUrl)
     throw new Error(
       apiConfiguration.error || "Solace's API address is not configured.",
     );
   const controller = new AbortController();
-  const externalSignal = options.signal;
+  const externalSignals = [options.signal, sessionSignal];
   const cancel = () => controller.abort();
-  if (externalSignal?.aborted) cancel();
-  else externalSignal?.addEventListener("abort", cancel, { once: true });
+  for (const signal of externalSignals) {
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
+  }
   const timer = setTimeout(
     () => controller.abort(),
     [
@@ -217,7 +220,7 @@ async function request(
       });
       text = await response.text();
     } catch {
-      if (externalSignal?.aborted)
+      if (externalSignals.some((signal) => signal?.aborted))
         throw new Error("The request was cancelled.");
       const error = new Error(
         apiConnectionError(apiConfiguration, controller.signal.aborted),
@@ -251,12 +254,22 @@ async function request(
       );
     return body;
   } finally {
-    externalSignal?.removeEventListener("abort", cancel);
+    for (const signal of externalSignals)
+      signal?.removeEventListener("abort", cancel);
     clearTimeout(timer);
   }
 }
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const generation = useRef(0);
+  const sessionRequests = useRef<AbortController | null>(null);
+  sessionRequests.current ??= new AbortController();
+  const advanceSession = () => {
+    const version = ++generation.current;
+    const previous = sessionRequests.current;
+    sessionRequests.current = new AbortController();
+    previous?.abort();
+    return version;
+  };
   const accountTransition = useRef<number | null>(null);
   const owner = useRef<string | null>(null);
   const revision = useRef(0);
@@ -454,7 +467,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       version !== generation.current
     )
       return;
-    const expiredVersion = ++generation.current;
+    const expiredVersion = advanceSession();
     setToken(null);
     setSessionError(null);
     setSessionExpired(true);
@@ -474,7 +487,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     else assertActiveSession(version);
     if (!token) throw new Error("Please sign in again to continue.");
     try {
-      return await request(path, token, options);
+      return await request(
+        path,
+        token,
+        options,
+        sessionRequests.current?.signal,
+      );
     } catch (error) {
       expireSession(error, version);
       throw error;
@@ -483,7 +501,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const load = async (t: string, version = generation.current) => {
     assertSession(version);
     const startedAt = revision.current;
-    const result = await request("/state", t);
+    const result = await request(
+      "/state",
+      t,
+      {},
+      sessionRequests.current?.signal,
+    );
     assertSession(version);
     if (
       typeof result?.user?.id !== "string" ||
@@ -568,17 +591,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const authorize = async (path: string, values: Item) => {
     assertActiveSession(draftGeneration);
-    const version = ++generation.current;
+    const version = advanceSession();
     accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);
     setBusy(true);
     setError(null);
     try {
-      const result = await request(path, null, {
-        method: "POST",
-        body: JSON.stringify(values),
-      });
+      const result = await request(
+        path,
+        null,
+        { method: "POST", body: JSON.stringify(values) },
+        sessionRequests.current?.signal,
+      );
       assertSession(version);
       if (
         typeof result?.token !== "string" ||
@@ -636,7 +661,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     authorize("/auth/register", { name, email, password });
   const signOut = async () => {
     assertSession(draftGeneration);
-    const version = ++generation.current;
+    const version = advanceSession();
     accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);
@@ -890,7 +915,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const createWithId =
       !!id &&
-      ["sessions", "preferences", "goals"].includes(collection) &&
+      ["sessions", "preferences", "goals", "memories", "reminders"].includes(
+        collection,
+      ) &&
       !data[collection].some((item) => item.id === id);
     const updating = !!id && !createWithId;
     const result = await authenticatedRequest(
@@ -1066,7 +1093,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteAccount = async () => {
     assertActiveSession(draftGeneration);
     if (!token) throw new Error("Please sign in first.");
-    const version = ++generation.current;
+    const version = advanceSession();
     accountTransition.current = version;
     flushLock.current = null;
     setSyncingWrites(false);

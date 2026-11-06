@@ -269,3 +269,27 @@ test("a failed native stop is cancelled rather than leaving a live microphone wi
   assert.equal(f.cancels(), 1);
   assert.match(f.events.at(-1).error, /Device interrupted/);
 });
+
+test("a recorder reset with a finished flag discards audio instead of uploading it", async () => {
+  const f = fixture();
+  await f.turn.start();
+  await f.turn.recorderEvent({ isFinished: true, mediaServicesDidReset: true });
+  assert.equal(f.turn.state, "idle");
+  assert.equal(f.cancels(), 1);
+  assert.equal(f.uploads(), 0);
+  assert.match(f.events.at(-1).error, /interrupted/);
+});
+
+test("normal recorder completion still transcribes exactly once", async () => {
+  const f = fixture();
+  await f.turn.start();
+  await Promise.all([
+    f.turn.recorderEvent({ isFinished: true }),
+    f.turn.recorderEvent({ isFinished: true }),
+  ]);
+  await f.turn.recorderEvent({ hasError: true });
+  assert.equal(f.turn.state, "idle");
+  assert.equal(f.uploads(), 1);
+  assert.equal(f.cancels(), 0);
+  assert.equal(f.transcripts.length, 1);
+});

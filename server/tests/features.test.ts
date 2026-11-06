@@ -477,6 +477,100 @@ test("generated sessions, preferences and goals are private, validated and idemp
     store.close();
   }
 });
+test("legacy activity completion retries reconcile the original record for its owner", async () => {
+  const { store, app, create } = await fixture();
+  try {
+    const a = await create("legacy-retry-a@solace.test");
+    const b = await create("legacy-retry-b@solace.test");
+    const record = {
+      id: "session-qa-retry",
+      title: "Breathing",
+      type: "breathing",
+      durationSec: 60,
+      completed: true,
+      feedback: "A little",
+    };
+    const save = (token: string, body = record) =>
+      request(app)
+        .post("/api/records/sessions")
+        .auth(token, { type: "bearer" })
+        .send(body);
+    const initial = await save(a.token).expect(201);
+    const retry = await save(a.token).expect(200);
+    assert.deepEqual(retry.body.record, initial.body.record);
+    await save(a.token, { ...record, durationSec: 90 }).expect(409);
+    const before = await request(app)
+      .get("/api/state")
+      .auth(b.token, { type: "bearer" })
+      .expect(200);
+    assert.equal(before.body.data.sessions.length, 0);
+    await save(b.token).expect(201);
+    const rememberCompletion = (token: string, text = "Short practices") =>
+      request(app)
+        .post("/api/records/memories")
+        .auth(token, { type: "bearer" })
+        .send({
+          id: `memory-${record.id}`,
+          sourceType: "session",
+          sourceId: record.id,
+          text,
+          approved: true,
+        });
+    const memory = await rememberCompletion(a.token).expect(201);
+    const memoryRetry = await rememberCompletion(a.token).expect(200);
+    assert.deepEqual(memoryRetry.body.record, memory.body.record);
+    await rememberCompletion(a.token, "Long practices").expect(409);
+    const after = await request(app)
+      .get("/api/state")
+      .auth(a.token, { type: "bearer" })
+      .expect(200);
+    assert.equal(after.body.data.sessions.length, 1);
+    assert.equal(after.body.data.memories.length, 1);
+    assert.equal(
+      (
+        await request(app)
+          .get("/api/state")
+          .auth(b.token, { type: "bearer" })
+          .expect(200)
+      ).body.data.memories.length,
+      0,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("a lost reminder create response can be retried without another account schedule", async () => {
+  const { store, app, create } = await fixture();
+  try {
+    const { token } = await create();
+    const record = {
+      id: "reminder-qa-retry",
+      type: "checkin",
+      enabled: true,
+      hour: 8,
+      minute: 30,
+      days: [1, 3, 5],
+    };
+    const save = (body = record) =>
+      request(app)
+        .post("/api/records/reminders")
+        .auth(token, { type: "bearer" })
+        .send(body);
+    const initial = await save().expect(201);
+    const retry = await save().expect(200);
+    assert.deepEqual(retry.body.record, initial.body.record);
+    await save({ ...record, minute: 45 }).expect(409);
+    const state = await request(app)
+      .get("/api/state")
+      .auth(token, { type: "bearer" })
+      .expect(200);
+    assert.equal(state.body.data.reminders.length, 1);
+  } finally {
+    store.close();
+  }
+});
+
 test("weekly facts use actual local-day records and exclude future or incomplete activity", () => {
   const now = new Date("2026-11-05T20:00:00Z");
   const record = { createdAt: "2026-11-04T23:00:00Z", day: "2026-11-05" };

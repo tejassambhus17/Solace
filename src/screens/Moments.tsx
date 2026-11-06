@@ -19,12 +19,13 @@ import { Companion, useReducedMotion } from "../Companion";
 import { ENVIRONMENTS, EnvironmentScene } from "../Environment";
 import { localDay } from "../content";
 import {
-  breathingPosition,
   elapsedMomentMs,
   emptyClock,
   isPlayableMoment,
+  momentBreathingPosition,
   momentClockText,
   momentPosition,
+  newMomentSessionId,
   pauseMoment,
   resumeMoment,
   type GeneratedMoment,
@@ -574,16 +575,19 @@ function PlayableMoment({
   const [notice, setNotice] = useState("");
   const clock = useRef(emptyClock());
   const resumeAfterExit = useRef(false);
-  const finishedAt = useRef<string | null>(null);
+  const finishedAt = useRef<{ createdAt: string; day: string } | null>(null);
   const saveLock = useRef(false);
   const saveSnapshot = useRef<Item | null>(null);
-  const sessionId = useRef(
-    `moment-session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`,
-  );
+  const [sessionId] = useState(newMomentSessionId);
   const complete = elapsedMs >= activity.durationSec * 1000;
   const position = momentPosition(activity, elapsedMs);
-  const rhythm = activity.breathing
-    ? breathingPosition(elapsedMs / 1000, activity.breathing)
+  const rhythm = running
+    ? momentBreathingPosition(
+        activity,
+        position,
+        elapsedMs,
+        provider === "offline",
+      )
     : null;
   function pause(message = "") {
     clock.current = pauseMoment(clock.current, now(), activity.durationSec);
@@ -591,7 +595,11 @@ function PlayableMoment({
     setRunning(false);
     if (message) setNotice(message);
     if (clock.current.elapsedMs >= activity.durationSec * 1000) {
-      finishedAt.current ||= new Date().toISOString();
+      const completedAt = new Date();
+      finishedAt.current ||= {
+        createdAt: completedAt.toISOString(),
+        day: localDay(completedAt),
+      };
       setFinished(true);
     }
   }
@@ -636,6 +644,9 @@ function PlayableMoment({
     return () => clearInterval(timer);
   }, [running, activity.durationSec]);
   useEffect(() => {
+    if (savedSession) scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [savedSession]);
+  useEffect(() => {
     const subscription = NativeAppState.addEventListener("change", (state) => {
       if (state !== "active" && clock.current.runningSince !== null)
         pause("Paused while you were away. Continue whenever you're ready.");
@@ -653,13 +664,12 @@ function PlayableMoment({
     };
   }, [started, finished, savedSession, exitConfirmation]);
   async function save() {
-    if (saveLock.current || !complete) return;
+    if (saveLock.current || !finishedAt.current) return;
     saveLock.current = true;
     setSaving(true);
     setError("");
-    const completedAt = finishedAt.current || new Date().toISOString();
     saveSnapshot.current ||= {
-      id: sessionId.current,
+      id: sessionId,
       kind: "generated",
       type: activity.type,
       title: activity.title,
@@ -675,8 +685,7 @@ function PlayableMoment({
       ...(app.params?.conversationId
         ? { sourceConversationId: app.params.conversationId }
         : {}),
-      createdAt: completedAt,
-      day: localDay(new Date(completedAt)),
+      ...finishedAt.current,
     };
     try {
       const saved = await app.save("sessions", saveSnapshot.current);
@@ -722,13 +731,7 @@ function PlayableMoment({
           }}
         >
           <Companion
-            state={
-              finished
-                ? "happy"
-                : running && activity.type === "breathing"
-                  ? "breathing"
-                  : "idle"
-            }
+            state={finished ? "happy" : rhythm ? "breathing" : "idle"}
             breathing={activity.breathing}
             breathingProgress={running && rhythm ? rhythm.progress : undefined}
             phase={

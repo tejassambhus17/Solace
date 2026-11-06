@@ -1,4 +1,3 @@
-import type { DayEntry } from "../progress";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -24,7 +23,13 @@ import {
   type JourneyPeriod,
 } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
-import { journeySummary } from "../progress";
+import { momentClockText } from "../moments";
+import {
+  activeSeconds,
+  isCompletedMoment,
+  journeySummary,
+  type DayEntry,
+} from "../progress";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
@@ -53,13 +58,13 @@ const metrics = [
     key: "moments",
     label: "Moments",
     icon: "flower-outline",
-    filter: "sessions",
+    filter: "moments",
   },
   {
     key: "seconds",
     label: "Mindful time",
     icon: "time-outline",
-    filter: "sessions",
+    filter: "timed",
   },
 ] as const;
 const artwork = {
@@ -313,9 +318,14 @@ function HistoryEntry({ entry }: { entry: DayEntry }) {
         : collection === "reflections"
           ? "create-outline"
           : "clipboard-outline";
+  const seconds = collection === "sessions" ? activeSeconds(record) : 0;
   const detail =
     collection === "sessions"
-      ? `${record.completed === true ? "Completed" : "Ended early"}${record.feedback ? ` · ${record.feedback === "skipped" ? "No helpfulness rating" : record.feedback}` : ""}`
+      ? record.type === "resource"
+        ? record.completed
+          ? "Guide completed"
+          : "Partial guide progress"
+        : `${record.completed === true ? "Completed" : "Ended early"}${record.feedback ? ` · ${record.feedback === "skipped" ? "No helpfulness rating" : record.feedback}` : ""}`
       : collection === "checkins"
         ? record.note || "Your own check-in, in your own words."
         : collection === "reflections"
@@ -324,7 +334,8 @@ function HistoryEntry({ entry }: { entry: DayEntry }) {
             record.note ||
             "Open your reflection"
           : "A self-reported reflection, not a diagnosis.";
-  const subtitle = record.localOnly ? `Waiting to sync. ${detail}` : detail;
+  const duration = seconds ? ` · ${momentClockText(seconds)} active` : "";
+  const subtitle = `${record.localOnly ? "Waiting to sync. " : ""}${detail}${duration}`;
   const open =
     collection === "sessions"
       ? () => app.navigate("session-detail", { id: record.id })
@@ -375,15 +386,18 @@ export function JourneyActivityScreen() {
     [app.data, now],
   );
   const { filter, startDay, endDay, day } = app.params || {};
+  const practices = filter === "moments" || filter === "timed";
   const title = day
     ? "Activity on " + formatDay(day)
     : filter === "checkins"
       ? "Mood check-ins"
-      : filter === "sessions"
+      : filter === "moments"
         ? "Completed Moments"
-        : filter === "story"
-          ? "Your check-ins"
-          : "Activity history";
+        : filter === "timed"
+          ? "Mindful time"
+          : filter === "story"
+            ? "Your check-ins"
+            : "Activity history";
   const days = [...analytics.days.entries()]
     .filter(([key]) =>
       day
@@ -398,9 +412,13 @@ export function JourneyActivityScreen() {
           ? collection === "checkins" || collection === "assessments"
           : filter === "checkins"
             ? collection === "checkins"
-            : filter === "sessions"
-              ? collection === "sessions" && record.completed === true
-              : true,
+            : filter === "moments"
+              ? collection === "sessions" && isCompletedMoment(record)
+              : filter === "timed"
+                ? collection === "sessions" &&
+                  record.completed === true &&
+                  activeSeconds(record) > 0
+                : true,
       ),
     }))
     .filter((item) => item.entries.length > 0);
@@ -441,14 +459,8 @@ export function JourneyActivityScreen() {
             whenever you’re ready.
           </AppText>
           <Button
-            title={
-              filter === "sessions"
-                ? "Explore practices"
-                : "Check in with yourself"
-            }
-            onPress={() =>
-              app.navigate(filter === "sessions" ? "explore" : "checkin")
-            }
+            title={practices ? "Explore practices" : "Check in with yourself"}
+            onPress={() => app.navigate(practices ? "explore" : "checkin")}
           />
         </View>
       )}
