@@ -45,6 +45,9 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
   const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
+  const onToday = app.route === "today";
+  const twilight = resolved === "dark" && onToday;
+  const bottomInset = Math.max(insets.bottom, 10);
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
@@ -77,16 +80,22 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
           ? app.inExplore
           : !app.inExplore && app.activeTab === destination.name;
         const today = destination.name === "today";
-        const selectedSurface = today
-          ? colors.sageSurface
-          : explore || resolved === "light"
-            ? colors.lavenderSurface
-            : colors.surface2;
-        const selectedInk = today
-          ? colors.sageText
-          : explore || resolved === "light"
-            ? colors.lavenderText
-            : colors.primary;
+        const selectedSurface =
+          today && twilight
+            ? "#322742"
+            : today
+              ? colors.sageSurface
+              : explore || resolved === "light"
+                ? colors.lavenderSurface
+                : colors.surface2;
+        const selectedInk =
+          today && twilight
+            ? "#D7B6FA"
+            : today
+              ? colors.sageText
+              : explore || resolved === "light"
+                ? colors.lavenderText
+                : colors.primary;
         return (
           <Pressable
             key={destination.name}
@@ -112,7 +121,9 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
               alignItems: "center",
               justifyContent: "center",
               backgroundColor:
-                selected && !android ? selectedSurface : "transparent",
+                selected && !android && !twilight
+                  ? selectedSurface
+                  : "transparent",
               overflow: "hidden",
               opacity: pressed ? 0.65 : 1,
             })}
@@ -169,9 +180,21 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
         right: 0,
         paddingHorizontal: 14,
         paddingTop: 8,
-        paddingBottom: Math.max(insets.bottom, 10),
+        paddingBottom: bottomInset,
       }}
     >
+      {onToday && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.bottomSafeArea,
+            {
+              height: bottomInset + 16,
+              backgroundColor: twilight ? "#14111D" : colors.bg,
+            },
+          ]}
+        />
+      )}
       <View
         style={{
           borderRadius: radius,
@@ -212,9 +235,9 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
             style={[
               shape,
               {
-                backgroundColor: colors.surface,
+                backgroundColor: twilight ? "#211D2B" : colors.surface,
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: twilight ? "#3E344B" : colors.border,
               },
             ]}
           >
@@ -225,3 +248,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  bottomSafeArea: { position: "absolute", left: 0, right: 0, bottom: 0 },
+});

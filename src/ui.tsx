@@ -83,6 +83,7 @@ export function Screen({
   scrollRef,
   onContentSizeChange,
   contentContainerStyle,
+  edgeToEdge = false,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
@@ -92,6 +93,7 @@ export function Screen({
   scrollRef?: React.ComponentProps<typeof ScrollView>["ref"];
   onContentSizeChange?: ScrollViewProps["onContentSizeChange"];
   contentContainerStyle?: StyleProp<ViewStyle>;
+  edgeToEdge?: boolean;
 }) {
   const { colors } = useTheme();
   const navigationInset = useNavigationInset();
@@ -137,19 +139,25 @@ export function Screen({
   );
   return (
     <SafeAreaView
-      edges={["top"]}
+      edges={edgeToEdge ? [] : ["top"]}
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       {scroll ? (
         <ScrollView
           ref={scrollRef}
           style={
-            navigationInset ? { marginBottom: navigationInset } : undefined
+            navigationInset && !edgeToEdge
+              ? { marginBottom: navigationInset }
+              : undefined
           }
           onContentSizeChange={onContentSizeChange}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={[{ flexGrow: 1 }, contentContainerStyle]}
+          contentContainerStyle={[
+            { flexGrow: 1 },
+            edgeToEdge && { paddingBottom: navigationInset },
+            contentContainerStyle,
+          ]}
         >
           {content}
         </ScrollView>

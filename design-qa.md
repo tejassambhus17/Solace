@@ -2,6 +2,19 @@
 
 final result: passed
 
+## Twilight Today phone reference — 6 November 2026
+
+Compared the second supplied image with the live dark Today screen. The source crop starts below the status bar, excludes the phone frame, and was resized to 393 pixels wide. The browser captures measured 394 × 852 CSS pixels. Compared the top artwork and greeting, mood panel and feature, and the Journey, Explore More, and navigation region side by side. The browser preview uses a test account with a real saved Calm check-in.
+
+- **Spacing and layout.** The first capture put Explore More about 30 pixels lower than the normalized reference and exposed part of the daily routine below the floating bar. Tightening the header, mood and feature spacing brought the section closer to the reference. Extending the bottom safe-area backing covered content below the rounded navigation edges. The final capture shows the Explore card titles above the bar, with more content available on scroll.
+- **Typography and copy.** The serif greeting, feature and section titles follow the reference hierarchy. Inter handles body copy and controls. The layout shows the signed-in name, the current greeting and the five-minute timer. The progress bar and count come from saved records.
+- **Palette and artwork.** The dark screen pairs a black canvas with plum surfaces, champagne actions and violet selections. The twilight lotus, stacked stones and mountain thumbnails are separate full-bleed assets. Light uses the sunrise artwork and watercolor petals. Both captures show readable labels and complete card titles.
+- **Interactions and fit.** Verified the Calm check-in and its saved selection, five-minute Moment entry, four practice shortcuts, Journey, all three Explore More cards, and See All. No horizontal overflow at 320 pixels, 394 pixels or the 1536-pixel desktop viewport. Chrome reported zero error-level entries in the verified preview tab.
+
+[Dark Today](docs/screenshots/twilight-today-dark.jpg) · [Light Today](docs/screenshots/twilight-today-light.jpg)
+
+The reference uses iPhone system chrome and a glass rail. The browser capture uses the app’s web fallback. Native safe-area appearance and iOS glass remain device checks.
+
 ## Scenic redesign references — 6 November 2026
 
 Compared the three latest supplied frames with the 390 × 845 CSS pixel browser preview. The captures show the app viewport and exclude the surrounding browser renderer. The current app uses actual names, stats, mood, and conversation state. The system status bar and device frame belong to the operating system.

@@ -34,14 +34,14 @@ Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled E
 
 ## Today and the daily pause
 
-Today follows the supplied sunrise layout:
+Today follows the latest phone reference. The dark arrival uses a violet lake scene and the light arrival uses the sunrise scene.
 
-1. Sunrise scenery, a lotus wordmark, personal greeting, reminders, and a Moments entry.
-2. Real check-in participation, weekly completed Moments, and the latest recorded mood.
-3. Five watercolor mood petals, the check-in entry, and the illustrated **Today's Focus** carousel.
-4. Four Quick Actions and a Journey link with actual daily progress.
+1. Scenic artwork extends into the top safe area. The lotus wordmark, personal greeting, Reminders and Moments controls sit inside the safe area.
+2. Five mood choices show the latest saved check-in for the day. Dark appearance uses colored line icons, and light appearance uses watercolor petals.
+3. **Today’s Moment** opens a five-minute Calm Reset and respects the saved environment. Four compact practice shortcuts follow it.
+4. **Your Journey** shows a linear measure of the actual three-step daily routine. Explore More links to Guided Programs, Wellness Toolkit, Check-Ins and the full Explore library.
 
-The hero changes its title and action for check-in, curated practice, reflection and completed states. Always use `pickDailyRoutine`'s actual next route/parameters. Completing the pause keeps the recorded progress and offers an optional three-minute breathing moment; it must not manufacture completion, assign another goal, or imply clinical benefit.
+Your Daily Pause sits below Explore More and follows the next route from `pickDailyRoutine`. Completing it keeps the recorded progress and offers an optional three-minute breathing practice.
 
 During the practice stage, **Why this pause?** expands the curated reason. Historical preferences/helpful feedback require personalization consent; directly supplied current-day mood can guide a local curated option. Keep these facts understandable without placing a paragraph of explanation in the default hero.
 
@@ -55,7 +55,7 @@ Journey emphasizes factual weekly history and reflection. Participation mileston
 
 ## Artwork and implementation
 
-`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with `assets/daily-pause-dark-v2.png` for shared practice artwork. Today uses `assets/today-pause-light.jpg` in light appearance to match the selected card. Text, progress, and controls are rendered separately. Keep the left reading zone clear and frame it with decorative petals and leaves.
+`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with `assets/daily-pause-dark-v2.png` for shared practice artwork. Today’s twilight lotus, stacked stones, and three Explore thumbnails are documented in [artwork provenance](assets/ARTWORK.md). Text, progress, and controls are rendered separately. Keep the left reading zone clear.
 
 Artwork and decorative icons are hidden from assistive technology and cannot intercept controls. Keep explicit accessible names, expanded/selected states, and progress values on meaningful UI. Bundling and browser rendering do not establish native scrim projection, VoiceOver/TalkBack behavior or device contrast.
 

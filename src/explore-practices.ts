@@ -173,3 +173,26 @@ export function createExplorePractice(
     })),
   };
 }
+export const exploreShortcuts = [
+  {
+    title: "Guided Programs",
+    detail: "Small steps for the next three days.",
+    icon: "map-outline",
+    route: "plan",
+    tone: "lavender",
+  },
+  {
+    title: "Wellness Toolkit",
+    detail: "The practices and guides you’ve saved.",
+    icon: "file-tray-outline",
+    route: "toolkit",
+    tone: "sage",
+  },
+  {
+    title: "Check-Ins",
+    detail: "Notice and record how you feel.",
+    icon: "bar-chart-outline",
+    route: "checkin",
+    tone: "peach",
+  },
+] as const;

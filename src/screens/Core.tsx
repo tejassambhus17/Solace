@@ -382,7 +382,8 @@ export function AuthScreen() {
   );
 }
 
-export { TodayScreen, ExploreScreen } from "./Discover";
+export { TodayScreen } from "./Discover";
+export { ExploreScreen } from "./Explore";
 
 export function ChatScreen() {
   const app = useApp();

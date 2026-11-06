@@ -130,7 +130,9 @@ npm run export:ios
 
 **205 regressions passed in the latest hardening pass**, alongside client and server type checks and web, Android and iOS exports. The local browser run covered account restoration, interrupted chat recovery, human-support navigation, mood and Moment saves, and reminder preference editing. Provider adapters were tested with controlled responses. Verify microphone access, permission prompts, background notifications and installed app behavior on native devices. See [VERIFICATION.md](docs/VERIFICATION.md).
 
-The physical Android debug build passed signup, session restoration, mood saving, built-in chat and history checks using the local API over USB. The device pass also verified the chat keyboard fix and reviewed the revised artwork. [Device verification](docs/VERIFICATION.md#physical-android-smoke-test--6-november-2026)
+The physical Android debug build passed signup, session restoration, mood saving, built-in chat and history checks using the local API over USB. The device pass also verified the chat keyboard fix. [Device verification](docs/VERIFICATION.md#physical-android-smoke-test--6-november-2026)
+
+Today includes a five-minute Calm Reset, the recorded daily routine progress, and direct Explore More links to Guided Programs, Wellness Toolkit and Check-Ins. The full Explore library is available from See All and the bottom compass.
 
 Submission still needs a real provider, public HTTPS with a persistent database, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. [Release instructions](docs/RELEASE.md) cover those deferred operations. No new Docker setup or branch is required.
 

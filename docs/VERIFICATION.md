@@ -383,3 +383,14 @@ Built and installed the ARM64 Android debug APK on an Android 15 phone over USB.
 - Client type check, formatting, web and Android exports, all 64 server integration tests, eight reminder coordination tests, and 15 voice lifecycle tests passed during the device pass.
 
 Native recording and audio playback, broader notification scenarios, iOS, and release APK verification remain pending. This debug build uses the USB-forwarded local API and Metro.
+
+## Twilight Today phone redesign — 6 November 2026
+
+- Compared the supplied reference and final app in a side-by-side capture at equivalent phone widths. Reviewed light and dark at 394 × 852 CSS pixels and checked for horizontal overflow at 320, 394 and 1536 pixels. The verified Chrome tab had zero error-level entries.
+- With a synthetic account on a separate offline API, Calm opened preselected, saved successfully and appeared selected on Today. Journey advanced to one recorded step and its card opened the Journey tab. Start Moment opened the Calm Reset player at `0:00 / 5:00`.
+- Breathe opened the breathing timer, Reflect opened journaling, Sleep opened wind-down, and Focus opened grounding. Guided Programs opened the three-day plan, Wellness Toolkit opened the saved tools screen, Check-Ins opened mood entry, and See All opened the Explore library.
+- Client type check, formatting, web export, Android and iOS JavaScript exports, 64 server integration tests, ten daily-routine tests, and eight Moment tests passed.
+
+[Dark capture](screenshots/twilight-today-dark.jpg) · [Light capture](screenshots/twilight-today-light.jpg) · [Design comparison notes](../design-qa.md)
+
+The connected Android display was off during the redesign check. Installed-device appearance, iPhone safe areas and iOS glass are pending.

@@ -7,10 +7,11 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { localDay, recordDay } from "../content";
-import { createExplorePractice } from "../explore-practices";
-import { weeklyReview } from "../insights";
-import { journeyRecords, journeySummary } from "../progress";
+import { createExplorePractice, exploreShortcuts } from "../explore-practices";
+import { journeyRecords } from "../progress";
 import { pickDailyRoutine } from "../routine";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
@@ -28,37 +29,56 @@ import {
 const quickActions = [
   {
     title: "Breathe",
-    detail: "Relax & reset",
     icon: "leaf-outline",
     route: "breathing",
     params: { durationSec: 180 },
-    tone: "sage",
+    tone: "breathe",
   },
   {
     title: "Reflect",
-    detail: "Write a thought",
-    icon: "create-outline",
+    icon: "pencil-outline",
     route: "reflection",
     params: {},
-    tone: "lavender",
+    tone: "reflect",
   },
   {
     title: "Sleep",
-    detail: "Wind down",
     icon: "moon-outline",
     route: "sleep",
     params: {},
-    tone: "peach",
+    tone: "sleep",
   },
   {
     title: "Focus",
-    detail: "Stay present",
     icon: "locate-outline",
     route: "grounding",
     params: {},
-    tone: "sage",
+    tone: "focus",
   },
 ] as const;
+
+const moodIcons = {
+  Okay: { icon: "happy-outline", color: "#F2B3EE" },
+  Calm: { icon: "leaf-outline", color: "#D7EBFF" },
+  Low: { icon: "cloud-outline", color: "#AEC4FA" },
+  Stressed: { icon: "flash-outline", color: "#FFC96F" },
+  Great: { icon: "sparkles-outline", color: "#FFD487" },
+} as const;
+
+const exploreArt = {
+  plan: {
+    image: require("../../assets/today-explore-guided.jpg"),
+    color: "#D9B3FF",
+  },
+  toolkit: {
+    image: require("../../assets/today-explore-toolkit.jpg"),
+    color: "#B2C7FA",
+  },
+  checkin: {
+    image: require("../../assets/today-explore-checkins.jpg"),
+    color: "#FFC782",
+  },
+} as const;
 
 const calmReset = {
   ...createExplorePractice("breathe", 5),
@@ -72,8 +92,8 @@ const artwork = {
     reset: require("../../assets/redesign-reset-light.jpg"),
   },
   dark: {
-    scene: require("../../assets/redesign-today-scene-dark.jpg"),
-    reset: require("../../assets/redesign-reset-dark.jpg"),
+    scene: require("../../assets/today-twilight-lotus.jpg"),
+    reset: require("../../assets/today-twilight-stones.jpg"),
   },
 };
 
@@ -92,90 +112,20 @@ function useToday() {
   return now;
 }
 
-const gaugeSize = 43;
-
-function JourneyGauge({
-  value,
-  track,
-  fill,
-}: {
-  value: number;
-  track: string;
-  fill: string;
-}) {
-  const degrees = value * 3.6;
-  return (
-    <View
-      accessible={false}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      aria-hidden
-      style={styles.gauge}
-    >
-      <View
-        style={[
-          StyleSheet.absoluteFill,
-          styles.gaugeTrack,
-          { borderColor: track },
-        ]}
-      />
-      {value > 0 && (
-        <View style={[styles.gaugeClip, { left: gaugeSize / 2 }]}>
-          <View
-            style={[
-              styles.gaugeArc,
-              {
-                left: -gaugeSize / 2,
-                borderTopColor: fill,
-                borderLeftColor: fill,
-                transform: [{ rotate: Math.min(180, degrees) - 45 + "deg" }],
-              },
-            ]}
-          />
-        </View>
-      )}
-      {degrees > 180 && (
-        <View style={[styles.gaugeClip, { left: 0 }]}>
-          <View
-            style={[
-              styles.gaugeArc,
-              {
-                borderTopColor: fill,
-                borderLeftColor: fill,
-                transform: [{ rotate: degrees - 45 + "deg" }],
-              },
-            ]}
-          />
-        </View>
-      )}
-      <AppText variant="label" style={styles.gaugeValue}>
-        {value}%
-      </AppText>
-    </View>
-  );
-}
-
 export function TodayScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
-  const { fontScale } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  const { top } = useSafeAreaInsets();
   const dark = resolved === "dark";
-  const largeText = fontScale > 1.3;
+  const largeText = fontScale > 1.2;
+  const compact = width < 360;
   const now = useToday();
   const today = localDay(now);
-  const [focusPage, setFocusPage] = useState(0);
   const [showReason, setShowReason] = useState(false);
   const routine = useMemo(
     () => pickDailyRoutine(app.data, app.user, now),
     [app.data, app.user, now],
-  );
-  const summary = useMemo(() => journeySummary(app.data, now), [app.data, now]);
-  const week = useMemo(
-    () => weeklyReview(summary.records, now),
-    [summary.records, now],
-  );
-  const recentMood = summary.records.checkins.find((record) =>
-    moodPetals.some(({ mood }) => mood === record.mood),
   );
   const selectedCheckin = useMemo(
     () =>
@@ -184,287 +134,170 @@ export function TodayScreen() {
       ),
     [app.data.checkins, now, today],
   );
-  const preference = app.data.preferences.find(
+  const environment = app.data.preferences.find(
     (item) => item.id === "wellness",
-  );
-  const showStreak = preference?.streaksEnabled === true;
-  const environment = preference?.environment;
+  )?.environment;
   const name =
     String(app.user?.name || "")
       .trim()
       .split(/\s+/)[0] || "Friend";
   const greeting =
     now.getHours() < 12
-      ? "Good morning"
+      ? "Good Morning"
       : now.getHours() < 17
-        ? "Good afternoon"
-        : "Good evening";
+        ? "Good Afternoon"
+        : "Good Evening";
   const next = routine.nextStep;
-  const progress = Math.round(
-    (routine.completedCount / routine.steps.length) * 100,
-  );
-  const tones = {
-    sage: { surface: colors.sageSurface, text: colors.sageText },
-    lavender: { surface: colors.lavenderSurface, text: colors.lavenderText },
-    peach: { surface: colors.peachSurface, text: colors.peachText },
-  };
+  const stepCount = routine.steps.length;
+  const progress = (routine.completedCount / stepCount) * 100;
+  const stepLabel = routine.completedCount + " of " + stepCount + " steps";
   const panel = {
-    backgroundColor: dark ? colors.surface : "#F8EEE3",
-    borderColor: dark ? colors.border : "#FFFBF4",
-    boxShadow: dark ? undefined : "0 7px 16px rgba(91,60,38,0.09)",
+    backgroundColor: dark ? "#211C2B" : colors.surface,
+    borderColor: dark ? "#51415E" : colors.border,
   };
-  const stats = [
-    {
-      icon: "leaf-outline",
-      title: showStreak
-        ? summary.streak
-          ? "Day " + summary.streak
-          : "0 days"
-        : week.daysCheckedIn + (week.daysCheckedIn === 1 ? " day" : " days"),
-      detail: showStreak ? "Check-in streak" : "Checked in",
-      label: showStreak
-        ? summary.streak + " consecutive check-in days"
-        : week.daysCheckedIn + " check-in days this week",
-    },
-    {
-      icon: "stats-chart",
-      title:
-        week.completedMoments +
-        (week.completedMoments === 1 ? " Moment" : " Moments"),
-      detail: "This week",
-      label: week.completedMoments + " completed Moments this week",
-    },
-    {
-      icon: "flower-outline",
-      title: recentMood?.mood ?? "No check-in",
-      detail: "Recent mood",
-      label: recentMood
-        ? "Recent mood " + recentMood.mood
-        : "No mood check-in yet",
-    },
-  ];
-  const focusChoices = [
-    {
-      title: calmReset.title,
-      detail: "A 5-minute guided pause to slow down and settle.",
-      action: "Start Moment",
-      icon: "play",
-      open: () =>
-        app.navigate("moment-player", {
-          activity: {
-            ...calmReset,
-            environment:
-              environment === "ocean" || environment === "twilight"
-                ? environment
-                : "forest",
-          },
-          provider: "offline",
-          source: "today",
-        }),
-    },
-    {
-      title:
-        next?.id === "practice" ? routine.suggestion.title : "Your Daily Pause",
-      detail:
-        next?.id === "checkin"
-          ? "Start by noticing how you feel today."
-          : next?.id === "reflection"
-            ? "Make a little room for what you noticed today."
-            : next
-              ? "A suggested practice for today · " +
-                routine.suggestion.duration
-              : "Your daily pause is complete. Take another moment if you like.",
-      action:
-        next?.id === "checkin"
-          ? "Start check-in"
-          : next?.id === "reflection"
-            ? "Start writing"
-            : "Take a moment",
-      icon: "arrow-forward",
-      open: () =>
-        next
-          ? app.navigate(next.route, next.params)
-          : app.navigate("breathing", { durationSec: 180 }),
-    },
-    {
-      title: "Make It Yours",
-      detail: "Find a Solace Moment for how you feel right now.",
-      action: "Create a Moment",
-      icon: "sparkles-outline",
-      open: () => app.navigate("moments"),
-    },
-  ];
-  const focus = focusChoices[focusPage];
+  const secondary = dark ? "#CEC4DA" : colors.muted;
+  const accents = dark
+    ? {
+        breathe: { background: "#202C2B", border: "#3D514D", icon: "#84F4BF" },
+        reflect: { background: "#2A223A", border: "#4D3C66", icon: "#DAB4FF" },
+        sleep: { background: "#2F2529", border: "#59444B", icon: "#FFC66D" },
+        focus: { background: "#23282A", border: "#424C4D", icon: "#BCE8C8" },
+      }
+    : {
+        breathe: {
+          background: colors.sageSurface,
+          border: "#CCDCC8",
+          icon: colors.sageText,
+        },
+        reflect: {
+          background: colors.lavenderSurface,
+          border: "#DED0E7",
+          icon: colors.lavenderText,
+        },
+        sleep: {
+          background: colors.peachSurface,
+          border: "#EFD2BA",
+          icon: colors.peachText,
+        },
+        focus: {
+          background: colors.sageSurface,
+          border: "#CCDCC8",
+          icon: colors.sageText,
+        },
+      };
   useEffect(
     () => setShowReason(false),
-    [today, routine.suggestion.activity, next?.id, focusPage],
+    [today, routine.suggestion.activity, next?.id],
   );
-  const openJourney = () => app.navigate("journey");
+
+  function startMoment() {
+    app.navigate("moment-player", {
+      activity: {
+        ...calmReset,
+        environment:
+          environment === "ocean" || environment === "twilight"
+            ? environment
+            : "forest",
+        provider: "offline",
+        source: "today",
+      },
+    });
+  }
 
   return (
-    <Screen
-      style={styles.screen}
-      contentContainerStyle={{ backgroundColor: colors.bg }}
-    >
-      <View style={styles.content}>
-        <View style={styles.hero}>
-          <View
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={styles.scene}
-          >
-            <Image
-              source={artwork[resolved].scene}
-              style={coverImageStyle}
-              resizeMode="cover"
-              accessible={false}
-              fadeDuration={0}
-            />
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                {
-                  backgroundImage:
-                    "linear-gradient(90deg, rgba(15,29,23,0.58) 0%, rgba(15,29,23,0.34) 48%, rgba(15,29,23,0) 90%)",
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.sceneFade,
-                {
-                  backgroundImage:
-                    "linear-gradient(180deg, transparent 0%, " +
-                    colors.bg +
-                    " 100%)",
-                },
-              ]}
-            />
-          </View>
-          <Row style={styles.header}>
-            <Row style={styles.brand}>
-              <LotusMark size={31} />
-              <AppText
-                variant="heading"
-                color="#FFF9EE"
-                style={styles.brandName}
-              >
-                Solace
-              </AppText>
-            </Row>
-            <Row style={styles.headerActions}>
-              {[
-                {
-                  label: "Reminders",
-                  icon: "notifications-outline",
-                  route: "reminders",
-                },
-                {
-                  label: "Create a Solace Moment",
-                  icon: "sparkles-outline",
-                  route: "moments",
-                },
-              ].map(({ label, icon, route }) => (
-                <Pressable
-                  key={route}
-                  accessibilityRole="button"
-                  accessibilityLabel={label}
-                  onPress={() => app.navigate(route)}
-                  style={({ pressed }) => [
-                    styles.headerAction,
-                    { opacity: pressed ? 0.72 : 1 },
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.headerDisc,
-                      {
-                        backgroundColor: dark ? "#24252AE8" : "#FFF6E8EA",
-                        borderColor: dark ? "#565258" : "#FFFDF7",
-                      },
-                    ]}
-                  >
-                    <Icon
-                      name={icon}
-                      color={dark ? colors.text : "#272C20"}
-                      size={18}
-                    />
-                    {route === "reminders" &&
-                      app.data.reminders.some(
-                        (reminder) => reminder.enabled === true,
-                      ) && (
-                        <View
-                          style={[
-                            styles.reminderDot,
-                            { backgroundColor: colors.sageText },
-                          ]}
-                        />
-                      )}
-                  </View>
-                </Pressable>
-              ))}
-            </Row>
+    <Screen edgeToEdge style={styles.screen}>
+      <StatusBar style="light" />
+      <View style={[styles.hero, { paddingTop: top + 3 }]}>
+        <Image
+          source={artwork[resolved].scene}
+          style={coverImageStyle}
+          resizeMode="cover"
+          accessible={false}
+          pointerEvents="none"
+          fadeDuration={0}
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundImage: dark
+                ? "linear-gradient(90deg, #12101ED9 0%, #1E172B59 45%, #17132300 78%)"
+                : "linear-gradient(90deg, #17271BD4 0%, #1A30205E 46%, #24352900 82%)",
+            },
+          ]}
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            styles.heroFade,
+            {
+              backgroundImage: `linear-gradient(180deg, transparent 0%, ${colors.bg} 100%)`,
+            },
+          ]}
+        />
+        <Row style={styles.header}>
+          <Row style={styles.brand}>
+            <LotusMark size={30} />
+            <AppText variant="heading" color="#FFF8F2" style={styles.brandName}>
+              Solace
+            </AppText>
           </Row>
-          <View style={styles.greeting}>
-            <AppText variant="label" color="#FFF0D5" style={styles.eyebrow}>
-              {greeting}
-            </AppText>
-            <AppText
-              variant="display"
-              accessibilityRole="header"
-              color="#FFF9EE"
-              style={styles.name}
-            >
-              {name}.
-            </AppText>
-            <AppText color="#FFF9EE" style={styles.welcome}>
-              A quieter, kinder space for your mind.
-            </AppText>
-          </View>
-
-          <Row style={[styles.stats, largeText && styles.wrap]}>
-            {stats.map((stat, index) => (
+          <Row style={styles.headerActions}>
+            {[
+              {
+                label: "Reminders",
+                icon: "notifications-outline",
+                route: "reminders",
+              },
+              {
+                label: "Create a Solace Moment",
+                icon: "sparkles-outline",
+                route: "moments",
+              },
+            ].map(({ label, icon, route }) => (
               <Pressable
-                key={stat.icon}
+                key={route}
                 accessibilityRole="button"
-                accessibilityLabel={stat.label + ". Open Journey"}
-                onPress={openJourney}
+                accessibilityLabel={label}
+                onPress={() => app.navigate(route)}
                 style={({ pressed }) => [
-                  styles.stat,
-                  panel,
-                  largeText && styles.largeStat,
-                  { opacity: pressed ? 0.75 : 1 },
+                  styles.headerAction,
+                  {
+                    backgroundColor: dark ? "#2C233DC9" : "#24352CB0",
+                    borderColor: dark ? "#6D5A758C" : "#E3EAD46B",
+                    opacity: pressed ? 0.72 : 1,
+                  },
                 ]}
               >
-                <View
-                  style={[
-                    styles.statIcon,
-                    {
-                      backgroundColor:
-                        index === 2 ? colors.peachSurface : colors.sageSurface,
-                    },
-                  ]}
-                >
-                  <Icon name={stat.icon} color={colors.sageText} size={17} />
-                </View>
-                <View style={styles.statWords}>
-                  <AppText variant="label" style={styles.statTitle}>
-                    {stat.title}
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    color={colors.muted}
-                    style={styles.statDetail}
-                  >
-                    {stat.detail}
-                  </AppText>
-                </View>
+                <Icon name={icon} color="#FFF7F3" size={21} />
+                {route === "reminders" &&
+                  app.data.reminders.some(
+                    (reminder) => reminder.enabled === true,
+                  ) && <View style={styles.reminderDot} />}
               </Pressable>
             ))}
           </Row>
+        </Row>
+        <View style={styles.greeting}>
+          <AppText variant="label" color="#FFDAA4" style={styles.salutation}>
+            {greeting}
+          </AppText>
+          <AppText
+            variant="display"
+            accessibilityRole="header"
+            color="#FFF9F4"
+            style={styles.name}
+          >
+            {name}.
+          </AppText>
+          <AppText color="#FFF7F5" style={styles.welcome}>
+            A calmer, kinder space for your mind.
+          </AppText>
         </View>
+      </View>
 
+      <View style={styles.content}>
         {app.pendingWrites.length > 0 && (
           <Pressable
             accessibilityRole="button"
@@ -480,7 +313,7 @@ export function TodayScreen() {
             <AppText
               variant="caption"
               color={colors.peachText}
-              style={{ flex: 1 }}
+              style={styles.fill}
             >
               {app.pendingWrites.length === 1
                 ? "1 entry is"
@@ -491,8 +324,8 @@ export function TodayScreen() {
           </Pressable>
         )}
 
-        <View style={[styles.moods, panel]}>
-          <Row style={styles.sectionHead}>
+        <View style={[styles.moods, panel, dark && styles.moodDepth]}>
+          <Row style={styles.moodHead}>
             <AppText
               variant="heading"
               accessibilityRole="header"
@@ -502,33 +335,31 @@ export function TodayScreen() {
             </AppText>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Check-in"
+              accessibilityLabel="Open mood check-in"
               onPress={() => app.navigate("checkin")}
               style={({ pressed }) => [
-                styles.checkAction,
-                { opacity: pressed ? 0.75 : 1 },
+                styles.moodEntry,
+                { opacity: pressed ? 0.65 : 1 },
               ]}
             >
-              <Row
+              <View
                 style={[
-                  styles.checkPill,
-                  { backgroundColor: colors.sageSurface },
+                  styles.moodEntryDisc,
+                  { borderColor: panel.borderColor },
                 ]}
               >
-                <Icon name="pulse-outline" color={colors.sageText} size={15} />
-                <AppText
-                  variant="label"
-                  color={colors.sageText}
-                  style={styles.checkText}
-                >
-                  Check-in
-                </AppText>
-              </Row>
+                <Icon
+                  name="pulse-outline"
+                  color={dark ? "#E8DBEF" : colors.sageText}
+                  size={18}
+                />
+              </View>
             </Pressable>
           </Row>
           <Row style={[styles.moodRow, largeText && styles.wrap]}>
             {moodPetals.map(({ mood, image }) => {
               const selected = selectedCheckin?.mood === mood;
+              const graphic = moodIcons[mood];
               return (
                 <Pressable
                   key={mood}
@@ -548,25 +379,32 @@ export function TodayScreen() {
                     styles.mood,
                     largeText && styles.largeMood,
                     {
-                      backgroundColor: selected
-                        ? colors.lavenderSurface
-                        : dark
-                          ? colors.surface2
-                          : "#FFF8ED80",
-                      borderColor: selected
-                        ? colors.lavenderText
-                        : dark
-                          ? colors.border
-                          : "#FFFBF4",
-                      opacity: pressed ? 0.72 : 1,
+                      backgroundColor: dark
+                        ? selected
+                          ? "#493765"
+                          : "#302839"
+                        : selected
+                          ? colors.lavenderSurface
+                          : "#FFFAF3",
+                      borderColor: dark
+                        ? selected
+                          ? "#BE99F2"
+                          : "#45394E"
+                        : selected
+                          ? colors.lavenderText
+                          : colors.border,
+                      opacity: pressed ? 0.75 : 1,
                     },
                   ]}
                 >
-                  <MoodPetal source={image} style={styles.moodPetal} />
+                  {dark ? (
+                    <Icon name={graphic.icon} size={24} color={graphic.color} />
+                  ) : (
+                    <MoodPetal source={image} style={styles.moodPetal} />
+                  )}
                   <AppText
-                    variant={selected ? "label" : "caption"}
-                    color={selected ? colors.lavenderText : colors.text}
-                    style={styles.moodText}
+                    variant="caption"
+                    style={[styles.moodText, compact && styles.compactMoodText]}
                   >
                     {mood}
                   </AppText>
@@ -580,11 +418,8 @@ export function TodayScreen() {
           style={[
             styles.focus,
             {
-              borderColor: dark ? "#655044" : "#FFF0D2",
-              backgroundColor: dark ? "#19171B" : "#344933",
-              boxShadow: dark
-                ? "0 7px 17px rgba(0,0,0,0.48)"
-                : "0 8px 19px rgba(118,87,48,0.24)",
+              borderColor: dark ? "#A8836F" : "#D0B58C",
+              backgroundColor: dark ? "#211D2E" : "#344933",
             },
           ]}
         >
@@ -593,6 +428,7 @@ export function TodayScreen() {
             style={coverImageStyle}
             resizeMode="cover"
             accessible={false}
+            pointerEvents="none"
             fadeDuration={0}
           />
           <View
@@ -600,157 +436,90 @@ export function TodayScreen() {
             style={[
               StyleSheet.absoluteFill,
               {
-                backgroundImage:
-                  "linear-gradient(90deg, rgba(15,34,25,0.68) 0%, rgba(15,34,25,0.46) 47%, rgba(15,34,25,0) 78%)",
+                backgroundImage: dark
+                  ? "linear-gradient(90deg, #211C2DEB 0%, #211C2DAB 44%, #221B2A00 83%)"
+                  : "linear-gradient(90deg, #14281CEB 0%, #172D20AB 44%, #14281C00 85%)",
               },
             ]}
           />
-          <View style={styles.focusBadge}>
-            <Icon name="locate-outline" size={14} color="#FFF8E8" />
-            <AppText variant="label" color="#FFF8E8" style={styles.focusLabel}>
-              Today’s Focus
+          <Row style={styles.focusBadge}>
+            <Icon name="leaf-outline" size={14} color="#FFDEAD" />
+            <AppText variant="label" color="#FFDEAD" style={styles.focusLabel}>
+              Today’s Moment
             </AppText>
-          </View>
+          </Row>
           <AppText
             variant="title"
             accessibilityRole="header"
-            color="#FFFAEE"
-            style={styles.focusTitle}
+            color="#FFF9F4"
+            style={[styles.focusTitle, largeText && styles.fullWidth]}
           >
-            {focus.title}
+            {calmReset.title}
           </AppText>
-          <AppText color="#FFF8EB" style={styles.focusDetail}>
-            {focus.detail}
-          </AppText>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={focus.action}
-            onPress={focus.open}
-            style={({ pressed }) => [
-              styles.focusAction,
-              {
-                backgroundColor: dark ? colors.primary : "#FFF6E7",
-                opacity: pressed ? 0.8 : 1,
-              },
+          <AppText
+            color="#FFF9F5"
+            style={[
+              styles.focusDetail,
+              (compact || largeText) && styles.wideCopy,
             ]}
           >
-            <Icon
-              name={focus.icon}
-              color={dark ? colors.primaryText : "#223222"}
-              size={17}
-            />
-            <AppText
-              variant="label"
-              color={dark ? colors.primaryText : "#1F291F"}
-              style={{ flexShrink: 1 }}
-            >
-              {focus.action}
-            </AppText>
-          </Pressable>
-        </View>
-        <Row style={styles.pager}>
-          {focusChoices.map((choice, index) => (
-            <Pressable
-              key={index}
-              accessibilityRole="button"
-              accessibilityLabel={"Show focus: " + choice.title}
-              accessibilityState={{ selected: focusPage === index }}
-              hitSlop={{ top: 6, bottom: 6 }}
-              onPress={() => setFocusPage(index)}
-              style={styles.pageButton}
-            >
-              <View
-                style={[
-                  styles.pageDot,
-                  {
-                    width: focusPage === index ? 12 : 6,
-                    backgroundColor:
-                      focusPage === index
-                        ? colors.primary
-                        : dark
-                          ? "#665752"
-                          : "#B69A7A",
-                  },
-                ]}
-              />
-            </Pressable>
-          ))}
-        </Row>
-        {focusPage === 1 && next?.id === "practice" && (
-          <View style={styles.reason}>
+            A 5-minute guided pause to slow down and settle.
+          </AppText>
+          <Row style={styles.focusFooter}>
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ expanded: showReason }}
-              onPress={() => setShowReason((value) => !value)}
-              style={styles.reasonButton}
+              onPress={startMoment}
+              style={({ pressed }) => [
+                styles.focusAction,
+                {
+                  backgroundColor: dark ? "#F3D2AE" : "#FFF4DF",
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
             >
-              <AppText variant="caption" color={colors.muted}>
-                Why this pause?
+              <Icon name="play" color="#2B2137" size={16} />
+              <AppText
+                variant="label"
+                color="#2B2137"
+                style={styles.startLabel}
+              >
+                Start Moment
               </AppText>
-              <Icon
-                name={showReason ? "chevron-up" : "chevron-down"}
-                size={12}
-                color={colors.muted}
-              />
             </Pressable>
-            {showReason && (
-              <AppText variant="caption" color={colors.muted}>
-                {routine.suggestion.reason}
+            <Row style={styles.duration}>
+              <Icon name="timer-outline" size={16} color="#FFF5F1" />
+              <AppText
+                variant="label"
+                color="#FFF5F1"
+                style={styles.durationText}
+              >
+                5 min
               </AppText>
-            )}
-          </View>
-        )}
-
-        <Row style={styles.quickHead}>
-          <Row style={styles.quickTitle}>
-            <Icon name="flash-outline" size={21} color={colors.primary} />
-            <AppText
-              variant="heading"
-              accessibilityRole="header"
-              style={styles.quickHeading}
-            >
-              Quick Actions
-            </AppText>
+            </Row>
           </Row>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="See all practices"
-            onPress={() => app.navigate("explore")}
-            style={styles.seeAll}
-          >
-            <AppText variant="caption">See All</AppText>
-            <Icon name="arrow-forward" size={14} />
-          </Pressable>
-        </Row>
+        </View>
+
         <Row style={[styles.quickActions, largeText && styles.wrap]}>
           {quickActions.map((action) => {
-            const tone = tones[action.tone];
+            const tone = accents[action.tone];
             return (
               <Pressable
                 key={action.title}
                 accessibilityRole="button"
-                accessibilityLabel={action.title}
                 onPress={() => app.navigate(action.route, action.params)}
                 style={({ pressed }) => [
                   styles.quickAction,
-                  panel,
-                  largeText && styles.largeStat,
+                  largeText && styles.largeQuickAction,
                   {
-                    backgroundColor: tone.surface,
-                    opacity: pressed ? 0.74 : 1,
+                    backgroundColor: tone.background,
+                    borderColor: tone.border,
+                    opacity: pressed ? 0.75 : 1,
                   },
                 ]}
               >
-                <Icon name={action.icon} color={tone.text} size={23} />
-                <AppText variant="label" style={styles.quickLabel}>
+                <Icon name={action.icon} color={tone.icon} size={25} />
+                <AppText variant="heading" style={styles.quickLabel}>
                   {action.title}
-                </AppText>
-                <AppText
-                  variant="caption"
-                  color={tone.text}
-                  style={styles.quickDetail}
-                >
-                  {action.detail}
                 </AppText>
               </Pressable>
             );
@@ -759,296 +528,378 @@ export function TodayScreen() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            "Your Wellness Journey. " +
-            routine.completedCount +
-            " of " +
-            routine.steps.length +
-            " daily steps recorded"
-          }
-          onPress={openJourney}
+          accessibilityLabel={"Your Journey. " + stepLabel + " completed today"}
+          onPress={() => app.navigate("journey")}
           style={({ pressed }) => [
             styles.journey,
             panel,
-            { opacity: pressed ? 0.76 : 1 },
+            dark && styles.journeyDepth,
+            { opacity: pressed ? 0.75 : 1 },
           ]}
         >
           <View
             style={[
               styles.journeyIcon,
-              { backgroundColor: colors.sageSurface },
+              { backgroundColor: dark ? "#392D4E" : colors.lavenderSurface },
             ]}
           >
-            <Icon name="trail-sign-outline" color={colors.sageText} size={23} />
+            <Icon
+              name="git-network-outline"
+              color={dark ? "#DAB3FA" : colors.lavenderText}
+              size={22}
+            />
           </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.fill}>
             <AppText variant="heading" style={styles.journeyTitle}>
-              Your Wellness Journey
+              Your Journey
             </AppText>
             <AppText
               variant="caption"
-              color={colors.muted}
+              color={secondary}
               style={styles.journeyDetail}
             >
-              {routine.completedCount} of {routine.steps.length} daily steps
-              recorded
+              Build a consistent wellbeing routine.
             </AppText>
+            <Row style={styles.progressRow}>
+              <View
+                style={[
+                  styles.progressTrack,
+                  { backgroundColor: dark ? "#51455F" : colors.border },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${progress}%`,
+                      backgroundColor: dark ? "#C49AF5" : colors.primary,
+                    },
+                  ]}
+                />
+              </View>
+              <AppText
+                variant="caption"
+                color={secondary}
+                style={styles.progressText}
+              >
+                {stepLabel}
+              </AppText>
+            </Row>
           </View>
-          <JourneyGauge
-            value={progress}
-            track={colors.border}
-            fill={colors.primary}
-          />
-          <Icon name="arrow-forward" size={16} />
+          <Icon name="chevron-forward" size={17} />
         </Pressable>
+
+        <View style={styles.explore}>
+          <Row style={styles.exploreHead}>
+            <Row style={styles.exploreTitle}>
+              <Icon name="grid-outline" size={19} />
+              <AppText
+                variant="heading"
+                accessibilityRole="header"
+                style={styles.exploreHeading}
+              >
+                Explore More
+              </AppText>
+            </Row>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="See all practices"
+              onPress={() => app.navigate("explore")}
+              style={({ pressed }) => [
+                styles.seeAll,
+                { opacity: pressed ? 0.68 : 1 },
+              ]}
+            >
+              <AppText variant="label" style={styles.seeAllText}>
+                See All
+              </AppText>
+              <Icon name="chevron-forward" size={14} />
+            </Pressable>
+          </Row>
+          <Row style={[styles.exploreCards, largeText && styles.wrap]}>
+            {exploreShortcuts.map((shortcut) => {
+              const art = exploreArt[shortcut.route];
+              return (
+                <Pressable
+                  key={shortcut.route}
+                  accessibilityRole="button"
+                  accessibilityLabel={shortcut.title}
+                  onPress={() => app.navigate(shortcut.route)}
+                  style={({ pressed }) => [
+                    styles.exploreCard,
+                    largeText && styles.largeExploreCard,
+                    {
+                      borderColor: dark ? "#6D5B7A75" : colors.border,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                >
+                  <Image
+                    source={art.image}
+                    style={coverImageStyle}
+                    resizeMode="cover"
+                    accessible={false}
+                    pointerEvents="none"
+                    fadeDuration={0}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[StyleSheet.absoluteFill, styles.exploreScrim]}
+                  />
+                  <Icon name={shortcut.icon} color={art.color} size={23} />
+                  <AppText
+                    variant="label"
+                    color="#FFF9F7"
+                    style={styles.exploreCardTitle}
+                  >
+                    {shortcut.title}
+                  </AppText>
+                  <AppText
+                    variant="caption"
+                    color="#E7DCEB"
+                    style={styles.exploreDetail}
+                  >
+                    {shortcut.route === "checkin"
+                      ? "Track your mood"
+                      : shortcut.detail}
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </Row>
+        </View>
+
+        <View style={[styles.daily, { borderTopColor: colors.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              next
+                ? app.navigate(next.route, next.params)
+                : app.navigate("breathing", { durationSec: 180 })
+            }
+            style={({ pressed }) => [
+              styles.dailyAction,
+              { opacity: pressed ? 0.68 : 1 },
+            ]}
+          >
+            <View style={styles.fill}>
+              <AppText variant="heading" style={styles.journeyTitle}>
+                Your Daily Pause
+              </AppText>
+              <AppText variant="caption" color={secondary}>
+                {next?.id === "practice"
+                  ? routine.suggestion.title
+                  : next
+                    ? next.title
+                    : "Complete for today. Take another pause anytime."}
+              </AppText>
+            </View>
+            <Icon name="chevron-forward" size={16} />
+          </Pressable>
+          {next?.id === "practice" && (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showReason }}
+                onPress={() => setShowReason((value) => !value)}
+                style={styles.reason}
+              >
+                <AppText variant="caption" color={secondary}>
+                  Why this pause?
+                </AppText>
+                <Icon
+                  name={showReason ? "chevron-up" : "chevron-down"}
+                  color={secondary}
+                  size={13}
+                />
+              </Pressable>
+              {showReason && (
+                <AppText variant="caption" color={secondary}>
+                  {routine.suggestion.reason}
+                </AppText>
+              )}
+            </>
+          )}
+        </View>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 16,
-    overflow: "hidden",
-  },
-  scene: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-    overflow: "hidden",
-  },
-  sceneFade: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: "32%",
-  },
-  content: { paddingHorizontal: 17 },
-  hero: { marginHorizontal: -17, paddingHorizontal: 17 },
-  header: { justifyContent: "space-between", paddingLeft: 9, paddingTop: 9 },
-  brand: { gap: 5 },
-  brandName: {
-    fontSize: 24,
-    lineHeight: 29,
-    textShadowColor: "#293125",
-    textShadowRadius: 7,
-    textShadowOffset: { width: 0, height: 1 },
-  },
-  headerActions: { gap: 0 },
+  screen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 22 },
+  hero: { overflow: "hidden", paddingHorizontal: 18, paddingBottom: 23 },
+  heroFade: { position: "absolute", bottom: 0, left: 0, right: 0, height: 42 },
+  header: { minHeight: 44, justifyContent: "space-between", gap: 6 },
+  brand: { gap: 6, flexShrink: 1 },
+  brandName: { fontSize: 24, lineHeight: 28 },
+  headerActions: { gap: 4 },
   headerAction: {
-    height: 44,
     width: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerDisc: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   reminderDot: {
     position: "absolute",
-    top: 4,
-    right: 4,
+    top: 8,
+    right: 8,
     width: 5,
     height: 5,
     borderRadius: 3,
+    backgroundColor: "#BFDA9B",
   },
-  greeting: { paddingHorizontal: 10, marginTop: 1, marginBottom: 14 },
-  eyebrow: {
-    fontSize: 9.5,
-    lineHeight: 13,
-    textTransform: "uppercase",
-    letterSpacing: 2.4,
-  },
-  name: {
-    fontSize: 42,
-    lineHeight: 44,
-    textShadowColor: "#334237",
-    textShadowRadius: 8,
-    textShadowOffset: { width: 0, height: 1 },
-  },
+  greeting: { marginTop: 3, maxWidth: "100%" },
+  salutation: { fontSize: 12, lineHeight: 16, letterSpacing: 1.25 },
+  name: { fontSize: 41, lineHeight: 44, marginTop: 1 },
   welcome: {
-    fontSize: 11.5,
-    lineHeight: 17,
-    marginTop: 2,
-    textShadowColor: "#2C372D",
-    textShadowRadius: 5,
+    marginTop: 3,
+    fontSize: 12.5,
+    lineHeight: 18,
+    maxWidth: "77%",
+    textShadowColor: "#120F1C",
+    textShadowRadius: 6,
     textShadowOffset: { width: 0, height: 1 },
   },
-  stats: { gap: 6, alignItems: "stretch", marginBottom: 10 },
-  wrap: { flexWrap: "wrap" },
-  stat: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 46,
+  content: { paddingHorizontal: 12, marginTop: -4 },
+  fill: { flex: 1, minWidth: 0 },
+  unsynced: {
+    marginBottom: 12,
+    borderRadius: 14,
+    minHeight: 44,
     flexDirection: "row",
-    gap: 5,
+    gap: 8,
     alignItems: "center",
-    borderRadius: 24,
-    paddingHorizontal: 7,
-    paddingVertical: 5,
-    borderWidth: 1,
+    padding: 10,
   },
-  largeStat: { minWidth: "45%" },
-  statIcon: {
-    width: 27,
-    height: 27,
+  moods: {
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+  },
+  moodDepth: {
+    backgroundImage:
+      "linear-gradient(140deg, #2D233B 0%, #211B2A 53%, #201A28 100%)",
+  },
+  moodHead: { justifyContent: "space-between", gap: 4 },
+  moodHeading: { flex: 1, fontSize: 21, lineHeight: 26 },
+  moodEntry: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: "center",
+    alignItems: "flex-end",
+  },
+  moodEntryDisc: {
+    minWidth: 34,
+    height: 25,
+    borderWidth: 1,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  statWords: { flex: 1, minWidth: 0, gap: 1 },
-  statTitle: { fontSize: 11.5, lineHeight: 14 },
-  statDetail: { fontSize: 9, lineHeight: 12 },
-  unsynced: {
-    marginBottom: 10,
-    borderRadius: 16,
-    minHeight: 44,
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-    padding: 9,
-  },
-  moods: {
-    paddingHorizontal: 10,
-    paddingBottom: 8,
-    borderRadius: 18,
-    borderWidth: 1,
-  },
-  sectionHead: { justifyContent: "space-between", gap: 6, paddingLeft: 3 },
-  moodHeading: { fontSize: 20, lineHeight: 23, flex: 1 },
-  checkAction: { minHeight: 44, justifyContent: "center" },
-  checkPill: {
-    borderRadius: 18,
-    gap: 4,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  checkText: { fontSize: 10.5, lineHeight: 16 },
-  moodRow: { alignItems: "stretch", gap: 6 },
+  moodRow: { gap: 6, alignItems: "stretch" },
+  wrap: { flexWrap: "wrap" },
   mood: {
     flex: 1,
     minWidth: 0,
-    minHeight: 54,
-    borderRadius: 17,
-    borderWidth: 1,
+    minHeight: 51,
     alignItems: "center",
     justifyContent: "center",
-    padding: 3,
-    gap: 1,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 2,
+    paddingVertical: 5,
+    gap: 3,
   },
-  largeMood: { minWidth: "29%" },
-  moodPetal: { width: "83%", height: 30, maxWidth: 40 },
-  moodText: { fontSize: 10.5, lineHeight: 15, textAlign: "center" },
+  largeMood: { flexBasis: "28%", flexGrow: 1 },
+  moodPetal: { width: 29, height: 24 },
+  moodText: { textAlign: "center", fontSize: 11, lineHeight: 15 },
+  compactMoodText: { fontSize: 10 },
   focus: {
-    marginTop: 10,
+    minHeight: 152,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    justifyContent: "center",
     overflow: "hidden",
     borderRadius: 20,
     borderWidth: 1,
-    minHeight: 145,
-    paddingHorizontal: 19,
-    paddingVertical: 11,
-    alignItems: "flex-start",
   },
   focusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
+    alignSelf: "flex-start",
     gap: 5,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 20,
-    backgroundColor: "#263A25A6",
     borderWidth: 1,
-    borderColor: "#E7E4B451",
+    borderColor: "#F7CB9273",
+    backgroundColor: "#D5AC7630",
   },
-  focusLabel: { fontSize: 9.5, lineHeight: 15 },
-  focusTitle: {
-    fontSize: 29,
-    lineHeight: 31,
-    width: "74%",
+  focusLabel: { fontSize: 10.5, lineHeight: 14 },
+  focusTitle: { width: "78%", fontSize: 29, lineHeight: 32, marginTop: 4 },
+  fullWidth: { width: "100%" },
+  focusDetail: { maxWidth: "66%", fontSize: 12, lineHeight: 15, marginTop: 2 },
+  wideCopy: { maxWidth: "90%" },
+  focusFooter: {
     marginTop: 5,
-    textShadowColor: "#142519",
-    textShadowRadius: 5,
-    textShadowOffset: { width: 0, height: 1 },
-  },
-  focusDetail: {
-    maxWidth: "63%",
-    fontSize: 11.5,
-    lineHeight: 15.5,
-    marginTop: 3,
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 6,
   },
   focusAction: {
     flexDirection: "row",
-    gap: 7,
     alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 5,
     minHeight: 44,
     borderRadius: 24,
-    paddingHorizontal: 14,
-    paddingVertical: 3,
-    marginTop: 8,
-    maxWidth: "90%",
+    flexShrink: 1,
   },
-  pager: { justifyContent: "center", gap: 0, height: 28 },
-  pageButton: {
-    height: 28,
-    width: 26,
-    justifyContent: "center",
-    alignItems: "center",
+  startLabel: { flexShrink: 1, fontSize: 13, lineHeight: 18 },
+  duration: {
+    gap: 4,
+    borderRadius: 18,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: "#251F31E6",
+    borderWidth: 1,
+    borderColor: "#FFF5EA48",
   },
-  pageDot: { height: 6, borderRadius: 4 },
-  reason: { marginBottom: 3, paddingHorizontal: 5 },
-  reasonButton: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  quickHead: {
-    justifyContent: "space-between",
-    minHeight: 35,
-    paddingHorizontal: 3,
-  },
-  quickTitle: { flex: 1, minWidth: 0, gap: 6 },
-  quickHeading: { fontSize: 20, lineHeight: 24, flexShrink: 1 },
-  seeAll: { minHeight: 44, flexDirection: "row", gap: 4, alignItems: "center" },
-  quickActions: { alignItems: "stretch", gap: 7 },
+  durationText: { fontSize: 11, lineHeight: 14 },
+  quickActions: { marginTop: 12, alignItems: "stretch", gap: 8 },
   quickAction: {
     flex: 1,
     minWidth: 0,
+    minHeight: 64,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 16,
-    borderWidth: 1,
-    minHeight: 67,
     paddingHorizontal: 3,
-    paddingVertical: 5,
-    gap: 1,
-  },
-  quickLabel: {
-    fontSize: 11.5,
-    lineHeight: 15,
-    marginTop: 3,
-    textAlign: "center",
-  },
-  quickDetail: { fontSize: 9, lineHeight: 13, textAlign: "center" },
-  journey: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 8,
-    minHeight: 57,
-    marginTop: 11,
-    borderRadius: 19,
+    paddingVertical: 7,
+    gap: 3,
     borderWidth: 1,
+    borderRadius: 15,
+  },
+  largeQuickAction: { flexBasis: "43%" },
+  quickLabel: { textAlign: "center", fontSize: 15.5, lineHeight: 19 },
+  journey: {
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 9,
+    alignItems: "center",
+    minHeight: 76,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  journeyDepth: {
+    backgroundImage:
+      "linear-gradient(140deg, #2B2536 0%, #191723 73%, #24222C 100%)",
+    borderColor: "#494153",
   },
   journeyIcon: {
     width: 37,
@@ -1057,33 +908,53 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  journeyTitle: { fontSize: 19, lineHeight: 22 },
-  journeyDetail: { fontSize: 10, lineHeight: 14 },
-  gauge: {
-    width: gaugeSize,
-    height: gaugeSize,
-    justifyContent: "center",
-    alignItems: "center",
+  journeyTitle: { fontSize: 19, lineHeight: 23 },
+  journeyDetail: { fontSize: 11, lineHeight: 15, marginTop: 1 },
+  progressRow: { marginTop: 3, gap: 7 },
+  progressTrack: { flex: 1, height: 6, borderRadius: 3, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 3 },
+  progressText: { fontSize: 10.5, lineHeight: 14 },
+  explore: { marginTop: 10 },
+  exploreHead: {
+    justifyContent: "space-between",
+    gap: 4,
+    paddingHorizontal: 3,
   },
-  gaugeTrack: { borderWidth: 3.5, borderRadius: gaugeSize / 2 },
-  gaugeClip: {
-    position: "absolute",
-    width: gaugeSize / 2,
-    height: gaugeSize,
-    top: 0,
+  exploreTitle: { flex: 1, minWidth: 0, gap: 8 },
+  exploreHeading: { flex: 1, fontSize: 19, lineHeight: 24 },
+  seeAll: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 3 },
+  seeAllText: { fontSize: 11.5, lineHeight: 16 },
+  exploreCards: { gap: 8, alignItems: "stretch" },
+  exploreCard: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 112,
+    paddingHorizontal: 9,
+    paddingTop: 12,
+    paddingBottom: 9,
     overflow: "hidden",
+    borderRadius: 16,
+    borderWidth: 1,
+    backgroundColor: "#282137",
   },
-  gaugeArc: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    width: gaugeSize,
-    height: gaugeSize,
-    borderWidth: 3.5,
-    borderRadius: gaugeSize / 2,
-    borderColor: "transparent",
+  largeExploreCard: { flexBasis: "45%" },
+  exploreScrim: {
+    backgroundImage:
+      "linear-gradient(180deg, #18122020 0%, #201829B0 42%, #17121FF5 100%)",
   },
-  gaugeValue: { fontSize: 10.5, lineHeight: 13 },
+  exploreCardTitle: { fontSize: 12.5, lineHeight: 17, marginTop: 6 },
+  exploreDetail: { fontSize: 10.5, lineHeight: 14, marginTop: 3 },
+  daily: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 14,
+    paddingTop: 7,
+    paddingHorizontal: 3,
+  },
+  dailyAction: {
+    flexDirection: "row",
+    minHeight: 48,
+    alignItems: "center",
+    gap: 8,
+  },
+  reason: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 5 },
 });
-
-export { ExploreScreen } from "./Explore";

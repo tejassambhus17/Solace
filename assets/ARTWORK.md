@@ -17,3 +17,16 @@ Use case: stylized-concept. Create a production background artwork for Solace we
 ## Dark prompt
 
 Use case: stylized-concept. Production background artwork for Solace wellness mobile app featured breathing activity card in DARK MODE. Landscape 1536x1024. No text letters logos UI borders or device. Premium ethereal botanical still life in very deep forest green (#16251B), muted olive gold, warm ivory light. A single translucent glowing sculptural petal cluster with lavender upper tips and amber light at its base, placed in the RIGHT THIRD only. Elegant long olive botanical leaves curve at top right and lower right edges. LEFT TWO THIRDS very quiet smooth deep forest green negative space for ivory text and coded controls. Subtle translucent flowing olive fabric-like hills at bottom. Atmospheric restrained golden light around flower, fine natural vein detail, high-end editorial botanical art, quiet and luxurious. No stars, glitter, grain or neon. Background must be dark green not pitch black. Art only.
+## Today twilight and Explore More
+
+Five optimized JPEGs were generated with built-in ImageGen for the supplied dark Today reference. The live app renders the controls and lettering over the images.
+
+| File | Size | Prompt summary |
+|---|---|---|
+| `today-twilight-lotus.jpg` | 1100 × 591 | Cinematic violet mountain lake at dusk. Amber sun and pink-peach lotus on the lower right. Keep the top and left quiet for live copy. |
+| `today-twilight-stones.jpg` | 1050 × 448 | Twilight lake and three wet river stones stacked on the right. Warm sun, olive leaves, reflected ripples, and dark ink-plum space on the left. |
+| `today-explore-guided.jpg` | 432 × 432 | Layered indigo hills with a pale pink twilight sky and shadowed aubergine foreground. |
+| `today-explore-toolkit.jpg` | 432 × 432 | Shadowy olive woodland ridges, warm clouds, and a dark pine foreground. |
+| `today-explore-checkins.jpg` | 432 × 432 | Rose-brown mountain silhouettes, a small apricot sun, and a dark purple-brown foreground. |
+
+All five prompts specified editorial photographic realism and excluded text, icons, logos, device frames and interface controls.

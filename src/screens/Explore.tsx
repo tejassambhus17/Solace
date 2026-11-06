@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import {
   createExplorePractice,
+  exploreShortcuts,
   practiceDurations,
   practiceFocuses,
   type PracticeFocus,
@@ -120,30 +121,6 @@ const forYou: FeaturedTile[] = [
   },
 ];
 
-const moreCards = [
-  {
-    title: "Guided Programs",
-    detail: "Small steps for the next three days.",
-    icon: "map-outline",
-    route: "plan",
-    tone: "lavender",
-  },
-  {
-    title: "Wellness Toolkit",
-    detail: "The practices and guides you’ve saved.",
-    icon: "file-tray-outline",
-    route: "toolkit",
-    tone: "sage",
-  },
-  {
-    title: "Check-Ins",
-    detail: "Notice and record how you feel.",
-    icon: "bar-chart-outline",
-    route: "checkin",
-    tone: "peach",
-  },
-] as const;
-
 const extraTools: ExploreItem[] = [
   {
     title: "Solace Moments",
@@ -193,7 +170,7 @@ const catalog: ExploreItem[] = [
   featured,
   ...forYou,
   ...extraTools,
-  ...moreCards.map((card): ExploreItem => ({
+  ...exploreShortcuts.map((card): ExploreItem => ({
     title: card.title,
     detail: card.detail,
     icon: card.icon,
@@ -864,7 +841,7 @@ export function ExploreScreen() {
         <View style={styles.section}>
           <SectionHeading icon="grid-outline" title="More to Explore" />
           <View style={styles.moreCards}>
-            {moreCards.map((card) => (
+            {exploreShortcuts.map((card) => (
               <Pressable
                 key={card.route}
                 accessibilityRole="button"
