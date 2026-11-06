@@ -20,6 +20,8 @@ The floating navigation respects safe-area and keyboard clearance. Each tab keep
 
 The [performance report](docs/PERFORMANCE_OPTIMIZATION_REPORT.md) records emulator diagnostics, long-list and player regressions, and release checks. Use the [physical-device checklist](docs/PHYSICAL_DEVICE_QA_CHECKLIST.md) to verify frame pacing, keyboard behavior and native audio on Android and iPhone.
 
+Tap a tab or drag horizontally inside the bottom bar and release to switch. Detail pages keep their normal Back controls and support a leading-edge Back gesture on eligible iOS screens. [Gesture behavior and verification](docs/NAVIGATION_GESTURES_QA.md)
+
 ## Solace Moments and the companion
 
 The Solace tab opens with Companion and My Journal choices and remembers the last used mode for each account. Companion keeps the existing text, history and turn-based voice flows. My Journal supports drafts, saved entries, mood, tags, bookmarks and search. AI reflection and Companion handoff require selecting an excerpt and approving the provider disclosure. Explore opens Guided Techniques, which uses the same Moment player and Journey completion records. The navigation map, privacy behavior and device acceptance steps are in the [Companion, Journal and Guided Techniques QA report](docs/COMPANION_JOURNAL_TECHNIQUES.md).

@@ -1,5 +1,9 @@
 # Verification record
 
+## Gesture navigation pass — 7 November 2026
+
+[Gesture, route, profiler and build results](NAVIGATION_GESTURES_QA.md). The [physical navigation checklist](PHYSICAL_DEVICE_QA_CHECKLIST.md#gesture-navigation-and-nested-transitions) covers both Android system navigation modes and iOS leading-edge Back and Liquid Glass.
+
 ## Performance and motion pass — 7 November 2026
 
 [Emulator measurements, browser regressions and build results](PERFORMANCE_OPTIMIZATION_REPORT.md). The [physical Android and iPhone checklist](PHYSICAL_DEVICE_QA_CHECKLIST.md) covers native frame pacing, audio, keyboard, navigation and release memory.
