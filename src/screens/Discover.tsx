@@ -1,14 +1,23 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AccessibilityInfo,
+  Animated,
   AppState,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   View,
   useWindowDimensions,
 } from "react-native";
+import {
+  AndroidHaptics,
+  performAndroidHapticsAsync,
+  selectionAsync,
+} from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { useReducedMotion } from "../Companion";
 import { localDay, recordDay } from "../content";
 import { createExplorePractice, exploreShortcuts } from "../explore-practices";
 import { journeyRecords } from "../progress";
@@ -57,13 +66,97 @@ const quickActions = [
   },
 ] as const;
 
-const moodIcons = {
-  Okay: { icon: "happy-outline", color: "#F2B3EE" },
-  Calm: { icon: "leaf-outline", color: "#D7EBFF" },
-  Low: { icon: "cloud-outline", color: "#AEC4FA" },
-  Stressed: { icon: "flash-outline", color: "#FFC96F" },
-  Great: { icon: "sparkles-outline", color: "#FFD487" },
-} as const;
+type MoodChoice = (typeof moodPetals)[number];
+
+function TodayMoodOption({
+  choice: { mood, image },
+  status,
+  compact,
+  largeText,
+  reducedMotion,
+  onPress,
+}: {
+  choice: MoodChoice;
+  status?: "saved" | "pending";
+  compact: boolean;
+  largeText: boolean;
+  reducedMotion: boolean;
+  onPress: () => void;
+}) {
+  const { colors, resolved } = useTheme();
+  const dark = resolved === "dark";
+  const selected = status !== undefined;
+  const [tint] = useState(() => new Animated.Value(selected ? 1 : 0));
+  const fadeTint = useCallback(
+    (toValue: number) => {
+      if (reducedMotion) {
+        tint.setValue(toValue);
+        return;
+      }
+      Animated.timing(tint, {
+        toValue,
+        duration: 140,
+        useNativeDriver: Platform.OS !== "web",
+      }).start();
+    },
+    [reducedMotion, tint],
+  );
+  useEffect(() => {
+    fadeTint(selected ? 1 : 0);
+    return () => tint.stopAnimation();
+  }, [fadeTint, selected, tint]);
+
+  const selectionNote =
+    status === "pending"
+      ? ". Your latest mood today, waiting to sync"
+      : selected
+        ? ". Your last saved mood today"
+        : "";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Check in: ${mood}${selectionNote}`}
+      accessibilityHint="Opens a check-in with this mood selected"
+      accessibilityState={{ selected }}
+      onPressIn={() => fadeTint(selected ? 1 : 0.65)}
+      onPressOut={() => fadeTint(selected ? 1 : 0)}
+      onPress={onPress}
+      style={[
+        styles.mood,
+        largeText && styles.largeMood,
+        {
+          backgroundColor: dark ? "#302839" : "#FFFAF3",
+          borderColor: selected
+            ? dark
+              ? "#BE99F2"
+              : colors.lavenderText
+            : dark
+              ? "#45394E"
+              : colors.heroBorder,
+        },
+      ]}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.moodTint,
+          {
+            backgroundColor: dark ? "#493765" : colors.lavenderSurface,
+            opacity: tint,
+          },
+        ]}
+      />
+      <MoodPetal source={image} style={styles.moodPetal} />
+      <AppText
+        variant={selected ? "label" : "caption"}
+        color={selected ? colors.lavenderText : colors.text}
+        style={[styles.moodText, compact && styles.compactMoodText]}
+      >
+        {mood}
+      </AppText>
+    </Pressable>
+  );
+}
 
 const exploreArt = {
   plan: {
@@ -117,6 +210,7 @@ export function TodayScreen() {
   const { colors, resolved } = useTheme();
   const { width, fontScale } = useWindowDimensions();
   const { top } = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
   const dark = resolved === "dark";
   const largeText = fontScale > 1.2;
   const compact = width < 360;
@@ -153,9 +247,9 @@ export function TodayScreen() {
   const stepLabel = routine.completedCount + " of " + stepCount + " steps";
   const panel = {
     backgroundColor: dark ? "#211C2B" : colors.surface,
-    borderColor: dark ? "#51415E" : colors.border,
+    borderColor: dark ? "#51415E" : colors.heroBorder,
   };
-  const secondary = dark ? "#CEC4DA" : colors.muted;
+  const secondary = dark ? "#CEC4DA" : colors.heroMuted;
   const accents = dark
     ? {
         breathe: { background: "#202C2B", border: "#3D514D", icon: "#84F4BF" },
@@ -202,6 +296,22 @@ export function TodayScreen() {
         source: "today",
       },
     });
+  }
+
+  function openCheckin(mood: MoodChoice["mood"]) {
+    if (Platform.OS === "ios") {
+      void selectionAsync().catch(() => {});
+    } else if (Platform.OS === "android") {
+      void performAndroidHapticsAsync(AndroidHaptics.Segment_Tick).catch(
+        () => {},
+      );
+    }
+    if (Platform.OS !== "web") {
+      AccessibilityInfo.announceForAccessibility(
+        `${mood} selected for your check-in.`,
+      );
+    }
+    app.navigate("checkin", { mood });
   }
 
   return (
@@ -357,60 +467,23 @@ export function TodayScreen() {
             </Pressable>
           </Row>
           <Row style={[styles.moodRow, largeText && styles.wrap]}>
-            {moodPetals.map(({ mood, image }) => {
-              const selected = selectedCheckin?.mood === mood;
-              const graphic = moodIcons[mood];
-              return (
-                <Pressable
-                  key={mood}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    "Check in: " +
-                    mood +
-                    (selected
-                      ? selectedCheckin.localOnly
-                        ? ". Your latest mood today, waiting to sync"
-                        : ". Your last saved mood today"
-                      : "")
-                  }
-                  accessibilityState={{ selected }}
-                  onPress={() => app.navigate("checkin", { mood })}
-                  style={({ pressed }) => [
-                    styles.mood,
-                    largeText && styles.largeMood,
-                    {
-                      backgroundColor: dark
-                        ? selected
-                          ? "#493765"
-                          : "#302839"
-                        : selected
-                          ? colors.lavenderSurface
-                          : "#FFFAF3",
-                      borderColor: dark
-                        ? selected
-                          ? "#BE99F2"
-                          : "#45394E"
-                        : selected
-                          ? colors.lavenderText
-                          : colors.border,
-                      opacity: pressed ? 0.75 : 1,
-                    },
-                  ]}
-                >
-                  {dark ? (
-                    <Icon name={graphic.icon} size={24} color={graphic.color} />
-                  ) : (
-                    <MoodPetal source={image} style={styles.moodPetal} />
-                  )}
-                  <AppText
-                    variant="caption"
-                    style={[styles.moodText, compact && styles.compactMoodText]}
-                  >
-                    {mood}
-                  </AppText>
-                </Pressable>
-              );
-            })}
+            {moodPetals.map((choice) => (
+              <TodayMoodOption
+                key={choice.mood}
+                choice={choice}
+                status={
+                  selectedCheckin?.mood === choice.mood
+                    ? selectedCheckin.localOnly
+                      ? "pending"
+                      : "saved"
+                    : undefined
+                }
+                compact={compact}
+                largeText={largeText}
+                reducedMotion={reducedMotion}
+                onPress={() => openCheckin(choice.mood)}
+              />
+            ))}
           </Row>
         </View>
 
@@ -518,7 +591,7 @@ export function TodayScreen() {
                 ]}
               >
                 <Icon name={action.icon} color={tone.icon} size={25} />
-                <AppText variant="heading" style={styles.quickLabel}>
+                <AppText variant="label" style={styles.quickLabel}>
                   {action.title}
                 </AppText>
               </Pressable>
@@ -815,6 +888,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   largeMood: { flexBasis: "28%", flexGrow: 1 },
+  moodTint: { ...StyleSheet.absoluteFill, borderRadius: 17 },
   moodPetal: { width: 29, height: 24 },
   moodText: { textAlign: "center", fontSize: 11, lineHeight: 15 },
   compactMoodText: { fontSize: 10 },
@@ -884,7 +958,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
   },
   largeQuickAction: { flexBasis: "43%" },
-  quickLabel: { textAlign: "center", fontSize: 15.5, lineHeight: 19 },
+  quickLabel: { textAlign: "center", fontSize: 13, lineHeight: 18 },
   journey: {
     marginTop: 12,
     borderRadius: 18,
@@ -913,7 +987,7 @@ const styles = StyleSheet.create({
   progressRow: { marginTop: 3, gap: 7 },
   progressTrack: { flex: 1, height: 6, borderRadius: 3, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 3 },
-  progressText: { fontSize: 10.5, lineHeight: 14 },
+  progressText: { flexShrink: 1, fontSize: 10.5, lineHeight: 14 },
   explore: { marginTop: 10 },
   exploreHead: {
     justifyContent: "space-between",

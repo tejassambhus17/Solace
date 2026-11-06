@@ -401,3 +401,11 @@ The connected Android display was off during the redesign check. Installed-devic
 - Verified the featured and Five Senses timers opened at five minutes, Breath Reset at three minutes, and Sleep Wind Down at ten minutes. Quick Reflection opened the journal. Sleep filtered to the two sleep entries and search found Gentle Movement.
 - Saved the three-day plan from its banner on the isolated test account. Verified the toolkit and check-in routes, and started a ten-minute reflection from the secondary timed-practice builder. The preview reported no console errors during these route checks.
 - TypeScript, formatting, the web preview export, eight Moment tests, and 64 server integration tests passed. Native iPhone appearance remains pending.
+
+## Today petal and interaction polish — 6 November 2026
+
+- The five mood images had identical asset paths, 29 × 24 dimensions, and placement in both themes at 394 × 852 CSS pixels. The page fit 320 and 430 pixel viewports without horizontal overflow.
+- Low opened preselected in the existing check-in. Saving it updated the Today selection and the grounding recommendation explained that it used the recorded Low mood.
+- TypeScript, formatting, seven wellness tests, ten routine tests, and the web preview export passed. The native haptic selection and accessibility announcement still need a rebuilt app on a physical iPhone. The tint transition uses the existing Reduce Motion preference.
+
+[Dark capture](screenshots/today-petals-dark.jpg) · [Light capture](screenshots/today-petals-light.jpg)
