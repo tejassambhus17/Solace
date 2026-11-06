@@ -11,6 +11,7 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   View,
@@ -19,7 +20,10 @@ import {
   TextInput,
   useWindowDimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
 import { routes } from "../routes";
@@ -45,12 +49,10 @@ import {
   ChatWelcome,
 } from "./ChatDetails";
 import { RecommendationExplanation } from "./RecommendationExplanation";
-import { SolaceModeSwitcher } from "./SolaceModeSwitcher";
 import {
   AppText,
   Artwork,
   BrandMark,
-  LotusMark,
   BotanicalBackdrop,
   IconButton,
   Button,
@@ -435,12 +437,14 @@ export function ChatScreen({
   const { colors, resolved } = useTheme();
   const reduceMotion = useReducedMotion();
   const { width } = useWindowDimensions();
-  const gutter = useScreenGutter();
+  const { top } = useSafeAreaInsets();
+  const gutter = Math.max(12, useScreenGutter() - 6);
   const [headerOpacity] = useState(() => new Animated.Value(1));
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showComposerMenu, setShowComposerMenu] = useState(false);
   const [showExplanation, setShowExplanation] = useState(false);
   const dark = resolved === "dark";
-  const sceneHeight = Math.min(308, Math.round(width * 0.64));
+  const sceneHeight = Math.min(225, Math.round(width * 0.5));
   const id = typeof app.params?.id === "string" ? app.params.id : undefined;
   const draftKey = id || "new";
   const context = String(app.params?.context || "");
@@ -457,6 +461,7 @@ export function ChatScreen({
   inputRef.current = input;
   const [failure, setFailure] = useState("");
   const sending = useRef(false);
+  const openingReset = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -466,6 +471,7 @@ export function ChatScreen({
   }, []);
   useEffect(() => {
     setFailure("");
+    setShowHeaderMenu(false);
     setShowComposerMenu(false);
     setShowExplanation(false);
   }, [id]);
@@ -527,6 +533,16 @@ export function ChatScreen({
       conversationId: id,
     });
   }
+  function playReset() {
+    if (openingReset.current) return;
+    openingReset.current = true;
+    Keyboard.dismiss();
+    app.navigate(routes.momentPlayer, {
+      techniqueId: "breathing",
+      source: "chat",
+      conversationId: id,
+    });
+  }
   function startReflection() {
     setShowComposerMenu(false);
     app.navigate("reflection", { source: "solace-chat", conversationId: id });
@@ -539,6 +555,19 @@ export function ChatScreen({
     inputRef.current = text;
     if (context) app.setParams({ context: "" });
     app.setChatDraft(draftKey, text);
+  }
+  function preparePrompt(prompt: string) {
+    const draft = inputRef.current;
+    const next = draft.trim() ? `${draft}\n${prompt}` : prompt;
+    if (!draft.includes(prompt) && next.length <= 4000) writeDraft(next);
+    composerInput.current?.focus();
+  }
+  function startConversation() {
+    Keyboard.dismiss();
+    welcomeScroll.current?.scrollTo({ y: 0, animated: false });
+    app.setParams({ id: undefined, context: "" });
+    setFailure("");
+    setShowComposerMenu(false);
   }
   async function send() {
     const submitted = inputRef.current;
@@ -640,74 +669,77 @@ export function ChatScreen({
     );
   }
   const header = (
-    <View style={[chatStyles.header, { paddingHorizontal: gutter - 8 }]}>
-      <Row style={chatStyles.headerActions}>
-        <ChatHeaderButton
-          icon="headset-outline"
-          label="Start a voice conversation"
-          disabled={activityDisabled}
-          featured
-          scenic={fresh}
-          onPress={() => app.navigate(routes.voice, { id })}
-        />
-        <ChatHeaderButton
-          icon="sparkles-outline"
-          label="Create a Solace Moment"
-          disabled={activityDisabled}
-          scenic={fresh}
-          onPress={openMoments}
-        />
-      </Row>
+    <View style={[chatStyles.header, { paddingHorizontal: gutter - 5 }]}>
+      <ChatHeaderButton
+        icon="chevron-back"
+        label={app.params.fromJournal ? "Back to Journal" : "Back to Solace"}
+        disabled={false}
+        onPress={app.canGoBack ? app.back : () => app.navigate(routes.solace)}
+      />
+      <ChatAvatar size={34} state={pending ? "thinking" : voiceState} />
       <View style={chatStyles.headerBrand}>
-        <Row style={chatStyles.brandName}>
-          {fresh ? (
-            <LotusMark size={28} />
-          ) : (
-            <ChatAvatar size={28} state={pending ? "thinking" : voiceState} />
-          )}
-          <AppText
-            variant="heading"
-            accessibilityRole="header"
-            color={fresh ? "#FFF7E9" : colors.text}
-            style={fresh ? chatStyles.title : chatStyles.compactTitle}
-          >
-            Companion
-          </AppText>
-        </Row>
-        {fresh && (
+        <AppText
+          variant="heading"
+          accessibilityRole="header"
+          style={[chatStyles.title, width < 360 && chatStyles.narrowTitle]}
+        >
+          Solace Companion
+        </AppText>
+        <Row style={chatStyles.brandBadge}>
+          <View
+            style={[chatStyles.brandDot, { backgroundColor: colors.lavender }]}
+          />
           <AppText
             variant="caption"
-            color="#F6EDDE"
+            color={colors.muted}
             style={chatStyles.headerCaption}
           >
-            Here to listen
+            AI Companion
           </AppText>
-        )}
+        </Row>
       </View>
-      <Row style={chatStyles.headerActions}>
-        <ChatHeaderButton
-          icon="create-outline"
-          label="New conversation"
-          disabled={activityDisabled}
-          scenic={fresh}
-          onPress={() => {
-            Keyboard.dismiss();
-            welcomeScroll.current?.scrollTo({ y: 0, animated: false });
-            app.setParams({ id: undefined, context: "" });
-            setFailure("");
-            setShowComposerMenu(false);
-          }}
-        />
-        <ChatHeaderButton
-          icon="time-outline"
-          label="Conversation history"
-          disabled={activityDisabled}
-          scenic={fresh}
-          onPress={() => app.navigate(routes.history)}
-        />
-      </Row>
+      <ChatHeaderButton
+        icon="ellipsis-horizontal"
+        label="Companion options"
+        disabled={false}
+        variant="filled"
+        expanded={showHeaderMenu}
+        onPress={() => {
+          Keyboard.dismiss();
+          setShowComposerMenu(false);
+          setShowHeaderMenu(true);
+        }}
+      />
     </View>
   );
+  const headerActions = [
+    {
+      label: "New conversation",
+      icon: "create-outline",
+      action: startConversation,
+    },
+    {
+      label: "Conversation history",
+      icon: "time-outline",
+      action: () => app.navigate(routes.history),
+    },
+    {
+      label: "Start a voice conversation",
+      icon: "headset-outline",
+      action: () => app.navigate(routes.voice, { id }),
+    },
+    {
+      label: "My Journal",
+      icon: "book-outline",
+      action: () => app.switchSolaceMode("journal"),
+      availableWhileBusy: true,
+    },
+    {
+      label: "Create a Solace Moment",
+      icon: "sparkles-outline",
+      action: openMoments,
+    },
+  ];
   const transcriptFooter = (
     <View style={chatStyles.transcriptFooter}>
       {!!pending && (
@@ -808,66 +840,138 @@ export function ChatScreen({
         />
       )}
       <StatusBar style={dark ? "light" : "dark"} />
+      <Modal
+        visible={showHeaderMenu}
+        transparent
+        animationType={reduceMotion ? "none" : "fade"}
+        onRequestClose={() => setShowHeaderMenu(false)}
+      >
+        <View style={chatStyles.modal}>
+          <Pressable
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            onPress={() => setShowHeaderMenu(false)}
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.overlay },
+            ]}
+          />
+          <View
+            accessibilityViewIsModal
+            style={[
+              chatStyles.headerMenu,
+              {
+                top: top + 48,
+                right: gutter,
+                width: Math.min(280, width - 2 * gutter),
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Row style={chatStyles.headerMenuTitle}>
+              <AppText variant="label" accessibilityRole="header">
+                Companion options
+              </AppText>
+              <ChatHeaderButton
+                icon="close-outline"
+                label="Close companion options"
+                disabled={false}
+                onPress={() => setShowHeaderMenu(false)}
+              />
+            </Row>
+            <ScrollView keyboardShouldPersistTaps="handled" bounces={false}>
+              {headerActions.map(
+                ({ label, icon, action, availableWhileBusy }) => {
+                  const disabled = activityDisabled && !availableWhileBusy;
+                  return (
+                    <Pressable
+                      key={label}
+                      accessibilityRole="button"
+                      accessibilityLabel={label}
+                      accessibilityState={{ disabled }}
+                      disabled={disabled}
+                      onPress={() => {
+                        setShowHeaderMenu(false);
+                        action();
+                      }}
+                      style={({ pressed }) => [
+                        chatStyles.headerMenuAction,
+                        {
+                          backgroundColor: pressed
+                            ? colors.surface2
+                            : "transparent",
+                          opacity: disabled ? 0.48 : 1,
+                        },
+                      ]}
+                    >
+                      <Icon name={icon} size={18} color={colors.lavenderText} />
+                      <AppText
+                        variant="label"
+                        style={chatStyles.headerMenuLabel}
+                      >
+                        {label}
+                      </AppText>
+                    </Pressable>
+                  );
+                },
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
-        <View
-          style={{
-            paddingHorizontal: gutter,
-            paddingVertical: spacing.compact,
-            gap: spacing.compact,
-          }}
+        <Animated.View
+          style={[
+            !fresh && chatStyles.compactHeader,
+            { borderBottomColor: colors.border, opacity: headerOpacity },
+          ]}
         >
-          <SolaceModeSwitcher mode="companion" />
-          {!!app.params.fromJournal && app.canGoBack && (
-            <Button
-              title="Back to Journal"
-              icon="arrow-back"
-              variant="ghost"
-              onPress={app.back}
-            />
-          )}
+          {header}
           {!!conversation?.journalSource && (
-            <AppText variant="caption" color={colors.muted}>
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={{
+                paddingHorizontal: gutter,
+                paddingBottom: spacing.compact,
+              }}
+            >
               Started with a shared journal excerpt
             </AppText>
           )}
-        </View>
+        </Animated.View>
         {fresh ? (
           <ScrollView
             ref={welcomeScroll}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={chatStyles.welcomeScroll}
           >
-            <ChatScene height={sceneHeight}>{header}</ChatScene>
+            <ChatScene height={sceneHeight} />
             <View style={[chatStyles.welcome, { paddingHorizontal: gutter }]}>
-              <ChatWelcome mood={mood} state={voiceState} />
+              <ChatWelcome
+                name={app.user?.name}
+                mood={mood}
+                state={voiceState}
+              />
               <ChatQuickReplies
                 disabled={activityDisabled}
-                onActivity={startReset}
-                onTalk={() => composerInput.current?.focus()}
+                onPrompt={preparePrompt}
               />
-              <ChatResetCard onPress={startReset} disabled={activityDisabled} />
+              <ChatResetCard onPress={playReset} disabled={activityDisabled} />
             </View>
           </ScrollView>
         ) : (
-          <>
-            <Animated.View
-              style={[
-                chatStyles.compactHeader,
-                { borderBottomColor: colors.border, opacity: headerOpacity },
-              ]}
-            >
-              {header}
-            </Animated.View>
-            <ChatTranscript
-              key={draftKey}
-              conversationKey={draftKey}
-              footer={transcriptFooter}
-              gutter={gutter}
-              messages={messages}
-              reduceMotion={reduceMotion}
-              scrollMemory={scrollMemory}
-            />
-          </>
+          <ChatTranscript
+            key={draftKey}
+            conversationKey={draftKey}
+            footer={transcriptFooter}
+            gutter={gutter}
+            messages={messages}
+            reduceMotion={reduceMotion}
+            scrollMemory={scrollMemory}
+          />
         )}
         <View
           style={[
@@ -929,8 +1033,8 @@ export function ChatScreen({
                     style={({ pressed }) => [
                       chatStyles.sendButton,
                       {
-                        backgroundColor: dark ? "#25201DF5" : "#FFF8EFF5",
-                        borderColor: dark ? "#655348" : "#FFFFFF",
+                        backgroundColor: colors.surface2,
+                        borderColor: colors.border,
                         opacity: activityDisabled ? 0.5 : pressed ? 0.72 : 1,
                       },
                     ]}
@@ -962,12 +1066,10 @@ export function ChatScreen({
                       chatStyles.messageInput,
                       {
                         color: colors.text,
-                        backgroundColor: dark ? "#25201DF5" : "#FFF8EFF5",
+                        backgroundColor: colors.surface,
                         borderColor: inputFocused
                           ? colors.primary
-                          : dark
-                            ? "#655348"
-                            : "#FFFFFF",
+                          : colors.border,
                       },
                     ]}
                   />
@@ -988,14 +1090,14 @@ export function ChatScreen({
                     style={({ pressed }) => [
                       chatStyles.sendButton,
                       {
-                        backgroundColor: dark ? colors.primary : "#35533F",
-                        borderColor: dark ? "#F4D5B6" : "#A8B998",
+                        backgroundColor: colors.primary,
+                        borderColor: colors.primary,
                         opacity: sendDisabled ? 0.55 : pressed ? 0.75 : 1,
                       },
                     ]}
                   >
                     <Icon
-                      name={failure ? "refresh-outline" : "paper-plane"}
+                      name={failure ? "refresh-outline" : "arrow-forward"}
                       color={colors.primaryText}
                       size={22}
                     />
@@ -1142,23 +1244,47 @@ const chatStyles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: spacing.compact,
-    gap: 2,
+    paddingVertical: 4,
+    gap: 6,
   },
-  headerActions: { gap: 0 },
-  headerBrand: { flex: 1, minWidth: 0, alignItems: "center" },
-  brandName: { gap: 5, maxWidth: "100%" },
-  headerCaption: { fontSize: 11, lineHeight: 16, textAlign: "center" },
+  headerBrand: { flex: 1, minWidth: 0, paddingLeft: 2 },
+  brandBadge: { gap: 4 },
+  brandDot: { width: 8, height: 8, borderRadius: 4 },
+  headerCaption: { fontSize: 11, lineHeight: 15 },
   title: {
     flexShrink: 1,
-    textAlign: "center",
-    fontSize: 29,
-    lineHeight: 32,
+    fontSize: 25,
+    lineHeight: 29,
   },
+  narrowTitle: { fontSize: 21, lineHeight: 26 },
   compactHeader: { borderBottomWidth: StyleSheet.hairlineWidth },
-  compactTitle: { flexShrink: 1, fontSize: 25, lineHeight: 29 },
-  welcome: { paddingBottom: spacing.card, gap: spacing.row },
+  modal: { flex: 1 },
+  headerMenu: {
+    position: "absolute",
+    maxHeight: "78%",
+    borderRadius: 17,
+    borderWidth: 1,
+    paddingHorizontal: spacing.compact,
+    paddingBottom: spacing.compact,
+  },
+  headerMenuTitle: { justifyContent: "space-between", paddingLeft: 8 },
+  headerMenuAction: {
+    minHeight: 46,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 9,
+  },
+  headerMenuLabel: { flexShrink: 1 },
+  welcomeScroll: { flexGrow: 1 },
+  welcome: {
+    flexGrow: 1,
+    justifyContent: "space-evenly",
+    paddingBottom: spacing.card,
+    gap: 10,
+  },
   transcript: { flex: 1 },
   conversation: {
     flexGrow: 1,
@@ -1175,7 +1301,7 @@ const chatStyles = StyleSheet.create({
     paddingHorizontal: spacing.row,
     paddingVertical: spacing.compact,
   },
-  composer: { paddingTop: spacing.compact },
+  composer: { paddingTop: 6 },
   composerMenu: {
     padding: 12,
     marginBottom: 9,
@@ -1202,30 +1328,28 @@ const chatStyles = StyleSheet.create({
     paddingLeft: 9,
     marginTop: 4,
   },
-  composerRow: { alignItems: "flex-end", gap: 7 },
+  composerRow: { alignItems: "flex-end", gap: 6 },
   messageInput: {
     flex: 1,
     minWidth: 0,
-    minHeight: 46,
+    minHeight: 44,
     maxHeight: 116,
-    paddingHorizontal: 15,
-    paddingVertical: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderWidth: 1,
-    borderRadius: 23,
+    borderRadius: 22,
     fontFamily: "Inter_400Regular",
     fontSize: 15,
     lineHeight: 22,
     textAlignVertical: "top",
-    boxShadow: "0 5px 14px #271C1314",
   },
   sendButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0 5px 14px #271C1314",
   },
 });
 

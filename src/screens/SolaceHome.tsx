@@ -7,24 +7,33 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { spacing } from "../layout";
+import { spacing, useScreenGutter } from "../layout";
 import { useApp } from "../store";
-import { useTheme } from "../theme";
-import { AppText, coverImageStyle, Icon, LotusMark, Row, Screen } from "../ui";
+import { artGradient, useTheme } from "../theme";
+import {
+  AppText,
+  BotanicalBackdrop,
+  coverImageStyle,
+  Icon,
+  LotusMark,
+  Row,
+  Screen,
+} from "../ui";
 
 const choices = [
   {
     mode: "companion",
     title: "Talk with Solace",
-    description: "An AI companion to listen and help you find your next step.",
-    image: require("../../assets/today-twilight-lotus.jpg"),
+    description: "A caring AI companion to listen, support, and guide you.",
+    dark: require("../../assets/solace-companion-twilight.jpg"),
+    light: require("../../assets/redesign-chat-scene-light.jpg"),
   },
   {
     mode: "journal",
     title: "My Journal",
-    description:
-      "A private space to write, reflect, or sort through your thoughts.",
-    image: require("../../assets/redesign-explore-reflect.jpg"),
+    description: "A private space to write, reflect, and sort your thoughts.",
+    dark: require("../../assets/solace-journal-twilight.jpg"),
+    light: require("../../assets/redesign-explore-reflect.jpg"),
   },
 ] as const;
 
@@ -33,23 +42,27 @@ export function SolaceHome() {
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
   const { height } = useWindowDimensions();
+  const gutter = useScreenGutter();
   const compact = height < 700;
   const dark = resolved === "dark";
+  const heroArtwork = dark
+    ? require("../../assets/today-twilight-lotus.jpg")
+    : require("../../assets/redesign-today-scene-light.jpg");
   return (
-    <Screen>
+    <Screen edgeToEdgeTop heroStatusBar="light" style={styles.screen}>
       <View
         style={[
           styles.hero,
-          compact && styles.compactHero,
-          { backgroundColor: dark ? "#1E172A" : colors.heroSurface },
+          {
+            marginHorizontal: -gutter,
+            minHeight: (compact ? 204 : 264) + top,
+            paddingTop: top + 15,
+            paddingHorizontal: gutter,
+          },
         ]}
       >
         <Image
-          source={
-            dark
-              ? require("../../assets/today-twilight-lotus.jpg")
-              : require("../../assets/redesign-today-scene-light.jpg")
-          }
+          source={heroArtwork}
           accessible={false}
           resizeMode="cover"
           style={coverImageStyle}
@@ -58,36 +71,47 @@ export function SolaceHome() {
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            { backgroundColor: dark ? "#19122780" : "#22291D7A" },
+            artGradient(
+              dark
+                ? `linear-gradient(180deg, #17142BBA 0%, #17142B50 40%, #17142B28 62%, ${colors.bg} 100%)`
+                : `linear-gradient(180deg, #27382AB5 0%, #27382A00 30%, ${colors.bg}D8 58%, ${colors.bg} 100%)`,
+            ),
           ]}
         />
-        <View
-          style={[
-            styles.heroCopy,
-            { paddingTop: Math.min(top, 14) + spacing.card },
-          ]}
-        >
-          <Row style={styles.brand}>
-            <LotusMark size={29} />
-            <AppText variant="heading" color="#FFF7E9">
-              Solace
-            </AppText>
-          </Row>
+        <Row style={styles.brand}>
+          <LotusMark size={27} />
+          <AppText variant="heading" color="#FFF4EF" style={styles.brandName}>
+            Solace
+          </AppText>
+        </Row>
+        <View style={styles.intro}>
           <AppText
             variant="display"
             accessibilityRole="header"
-            color="#FFF7E9"
+            color={dark ? "#FFF4EF" : colors.text}
             style={styles.title}
           >
-            Make a little space.
+            Solace
           </AppText>
-          <AppText color="#FFF7E9" style={styles.heroSubtitle}>
-            Talk through what’s on your mind or write in a quiet space of your
-            own.
+          <AppText
+            color={dark ? "#F3EAF6" : colors.text}
+            style={styles.subtitle}
+          >
+            Your space to talk, reflect, and feel lighter.
           </AppText>
         </View>
       </View>
       <View style={styles.choices}>
+        <BotanicalBackdrop
+          variant="footer"
+          style={{
+            bottom: -77,
+            right: -42,
+            width: 200,
+            height: 142,
+            opacity: dark ? 0.38 : 0.3,
+          }}
+        />
         {choices.map((choice) => (
           <Pressable
             key={choice.mode}
@@ -98,22 +122,35 @@ export function SolaceHome() {
             style={({ pressed }) => [
               styles.card,
               {
+                minHeight: compact ? 161 : 194,
                 backgroundColor: colors.surface,
-                borderColor: colors.border,
-                opacity: pressed ? 0.83 : 1,
+                borderColor: colors.heroBorder,
+                opacity: pressed ? 0.84 : 1,
               },
             ]}
           >
-            <Image
-              source={choice.image}
-              accessible={false}
-              resizeMode="cover"
-              style={[styles.cardArt, compact && styles.compactArt]}
-            />
+            <View pointerEvents="none" style={styles.cardArt}>
+              <Image
+                source={choice[resolved]}
+                accessible={false}
+                resizeMode="cover"
+                style={coverImageStyle}
+              />
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  artGradient(
+                    `linear-gradient(180deg, ${colors.surface}00 24%, ${colors.surface}62 49%, ${colors.surface}F2 79%, ${colors.surface} 100%)`,
+                  ),
+                ]}
+              />
+            </View>
             <Row style={styles.cardContent}>
               <View style={styles.cardText}>
-                <AppText variant="heading">{choice.title}</AppText>
-                <AppText variant="caption" color={colors.muted}>
+                <AppText variant="heading" style={styles.cardTitle}>
+                  {choice.title}
+                </AppText>
+                <AppText color={colors.muted} style={styles.cardDescription}>
                   {choice.description}
                 </AppText>
               </View>
@@ -121,20 +158,14 @@ export function SolaceHome() {
                 style={[
                   styles.arrow,
                   {
-                    backgroundColor:
-                      choice.mode === "journal"
-                        ? colors.lavenderSurface
-                        : colors.peachSurface,
+                    backgroundColor: dark ? colors.peach : colors.peachSurface,
                   },
                 ]}
               >
                 <Icon
                   name="arrow-forward"
-                  color={
-                    choice.mode === "journal"
-                      ? colors.lavenderText
-                      : colors.peachText
-                  }
+                  size={21}
+                  color={dark ? colors.primaryText : colors.peachText}
                 />
               </View>
             </Row>
@@ -146,35 +177,35 @@ export function SolaceHome() {
 }
 
 const styles = StyleSheet.create({
+  screen: { paddingTop: 0 },
   hero: {
-    borderRadius: 24,
     overflow: "hidden",
-    minHeight: 225,
-    justifyContent: "flex-end",
+    paddingBottom: 15,
+    justifyContent: "space-between",
+    gap: 14,
   },
-  heroCopy: {
-    paddingHorizontal: spacing.card,
-    paddingBottom: spacing.card,
-    gap: 5,
-  },
-  compactHero: { minHeight: 185 },
-  brand: { gap: 7 },
-  title: { maxWidth: 255 },
-  heroSubtitle: { maxWidth: 260 },
-  choices: { marginTop: spacing.card, gap: spacing.card },
+  brand: { gap: 6 },
+  brandName: { fontSize: 24, lineHeight: 28 },
+  intro: { gap: 4, maxWidth: 210 },
+  title: { fontSize: 46, lineHeight: 49 },
+  subtitle: { fontSize: 16, lineHeight: 22, maxWidth: 180 },
+  choices: { gap: spacing.row, paddingBottom: 8 },
   card: {
     overflow: "hidden",
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  cardArt: { width: "100%", height: 114 },
-  compactArt: { height: 72 },
-  cardContent: { padding: spacing.card, gap: spacing.compact },
-  cardText: { flex: 1, gap: 3 },
-  arrow: {
-    width: 44,
-    height: 44,
     borderRadius: 22,
+    borderWidth: 1,
+    justifyContent: "flex-end",
+    paddingTop: 68,
+  },
+  cardArt: { position: "absolute", top: 0, left: 0, right: 0, bottom: 34 },
+  cardContent: { padding: 15, gap: 10, alignItems: "flex-end" },
+  cardText: { flex: 1, minWidth: 0, gap: 3 },
+  cardTitle: { fontSize: 28, lineHeight: 31 },
+  cardDescription: { fontSize: 14, lineHeight: 19 },
+  arrow: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
   },

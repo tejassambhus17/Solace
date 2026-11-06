@@ -35,6 +35,7 @@ import {
 } from "../moments";
 import type { SolaceMoment } from "../../server/src/moment-contract";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { GuidedBreathingPlayer } from "./GuidedBreathingPlayer";
 
 const errorText = (error: unknown) =>
   error instanceof Error
@@ -595,8 +596,9 @@ function PlayableMoment({
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const guidedBreathing = !!technique && activity.type === "breathing";
   const [environment, setEnvironment] = useState<MomentEnvironment>(
-    activity.environment,
+    guidedBreathing ? "twilight" : activity.environment,
   );
   const [sound, setSound] = useState(false);
   const [running, setRunning] = useState(false);
@@ -760,6 +762,43 @@ function PlayableMoment({
       setSaving(false);
     }
   }
+  if (guidedBreathing && !finished)
+    return (
+      <GuidedBreathingPlayer
+        activity={activity}
+        position={position}
+        rhythm={rhythm}
+        elapsedMs={elapsedMs}
+        environment={environment}
+        running={running}
+        started={started}
+        sound={sound}
+        toggleSound={() => setSound(!sound)}
+        notice={notice}
+        togglePlay={() => (running ? pause() : resume())}
+        restart={restart}
+        leave={leave}
+        exit={
+          exitConfirmation
+            ? {
+                resume: resumeAfterExit.current,
+                dismiss: dismissExit,
+                confirm: app.back,
+              }
+            : undefined
+        }
+      >
+        <EnvironmentOptions value={environment} onChange={setEnvironment}>
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={{ marginTop: 8 }}
+          >
+            {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
+          </AppText>
+        </EnvironmentOptions>
+      </GuidedBreathingPlayer>
+    );
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Screen

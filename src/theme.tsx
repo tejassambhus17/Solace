@@ -5,7 +5,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { useColorScheme } from "react-native";
+import { Platform, useColorScheme, type ViewStyle } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const lightColors = {
@@ -101,3 +101,53 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export const useTheme = () => useContext(Context);
+
+const experienceDarkColors: typeof lightColors = {
+  ...darkColors,
+  bg: "#141225",
+  surface: "#231D36",
+  surface2: "#2C2440",
+  text: "#F7EFF8",
+  muted: "#CDC1D7",
+  primary: "#FFD0AC",
+  primaryText: "#332127",
+  border: "#524261",
+  accent: "#CEB38B",
+  lavender: "#D6A9F7",
+  lavenderSurface: "#3C2A53",
+  lavenderText: "#E9CCFF",
+  tabActiveSurface: "#D7A5F4",
+  tabActiveText: "#30203C",
+  peach: "#FFD0AC",
+  peachSurface: "#4B313C",
+  peachText: "#FFDBC4",
+  sageSurface: "#253735",
+  heroSurface: "#19162D",
+  heroMuted: "#D9CCDF",
+  heroBorder: "#524261",
+};
+
+export function ExperienceTheme({
+  children,
+  enabled = true,
+}: {
+  children: React.ReactNode;
+  enabled?: boolean;
+}) {
+  const theme = useTheme();
+  const value = useMemo(
+    () =>
+      enabled && theme.resolved === "dark"
+        ? { ...theme, colors: experienceDarkColors }
+        : theme,
+    [enabled, theme],
+  );
+  return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+
+export function artGradient(value: string): ViewStyle {
+  return Platform.select<ViewStyle>({
+    web: { backgroundImage: value } as ViewStyle,
+    default: { experimental_backgroundImage: value },
+  })!;
+}

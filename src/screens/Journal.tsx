@@ -8,10 +8,10 @@ import {
   View,
 } from "react-native";
 import { localDay } from "../content";
-import { spacing } from "../layout";
+import { spacing, useScreenGutter } from "../layout";
 import { isRecordId, routes } from "../routes";
 import { type EditorDraft, type Item, useApp } from "../store";
-import { useTheme } from "../theme";
+import { artGradient, useTheme } from "../theme";
 import {
   AppText,
   Button,
@@ -27,9 +27,10 @@ import {
 import { SolaceModeSwitcher } from "./SolaceModeSwitcher";
 
 const notebook = require("../../assets/redesign-explore-reflect.jpg");
+const twilightNotebook = require("../../assets/solace-journal-twilight.jpg");
 const landscapes = {
   light: require("../../assets/profile-mountains-light.jpg"),
-  dark: require("../../assets/profile-mountains-dark.jpg"),
+  dark: require("../../assets/redesign-explore-scene-dark.jpg"),
 };
 
 const writing = (record?: Item) =>
@@ -65,6 +66,78 @@ const tagsOf = (record?: Item) =>
     : [];
 const failure = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+const enteredTags = (value: string) => [
+  ...new Set(
+    value
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  ),
+];
+
+function JournalHeader({
+  title,
+  back,
+  backLabel = "Go back",
+  children,
+}: {
+  title: string;
+  back: () => void;
+  backLabel?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Row style={styles.header}>
+      <IconButton name="chevron-back" label={backLabel} onPress={back} />
+      <AppText
+        variant="heading"
+        accessibilityRole="header"
+        style={styles.headerTitle}
+      >
+        {title}
+      </AppText>
+      {children}
+    </Row>
+  );
+}
+
+function JournalHeaderAction(props: React.ComponentProps<typeof IconButton>) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.headerAction, { backgroundColor: colors.surface }]}>
+      <IconButton {...props} />
+    </View>
+  );
+}
+
+function JournalPrivacyMarkers() {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.markers}>
+      {(
+        [
+          ["lock-closed-outline", "Private by default"],
+          ["leaf-outline", "Track your mood"],
+          ["sparkles-outline", "Optional AI insights"],
+        ] as const
+      ).map(([icon, label]) => (
+        <View key={label} style={styles.marker}>
+          <View
+            style={[
+              styles.markerIcon,
+              { borderColor: colors.border, backgroundColor: colors.surface },
+            ]}
+          >
+            <Icon name={icon} size={18} color={colors.lavenderText} />
+          </View>
+          <AppText variant="caption" style={styles.markerLabel}>
+            {label}
+          </AppText>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 function JournalNotice({
   children,
@@ -189,13 +262,18 @@ function useBookmark() {
 function JournalLibrary() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const gutter = useScreenGutter();
   const bookmark = useBookmark();
   const records = app.data.reflections.filter(isJournal);
   const query = typeof app.params.query === "string" ? app.params.query : "";
   const favorites = app.params.favorites === true;
+  const moodOnly = app.params.moodOnly === true;
   const mood = moodOf(app.params.mood);
   const oldest = app.params.oldest === true;
+  const [showSearch, setShowSearch] = useState(!!query);
+  const focusSearch = useRef(false);
   const [showFilters, setShowFilters] = useState(!!mood || oldest);
+  const [showModes, setShowModes] = useState(false);
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const scrollY = useRef(0);
   const restoreScroll = useRef(Number(app.params.scrollY) || 0);
@@ -203,6 +281,7 @@ function JournalLibrary() {
   const needle = query.trim().toLocaleLowerCase();
   const filtered = records
     .filter((record) => !favorites || record.bookmarked === true)
+    .filter((record) => !moodOnly || !!moodOf(record.mood))
     .filter((record) => !mood || record.mood === mood)
     .filter(
       (record) =>
@@ -224,10 +303,12 @@ function JournalLibrary() {
     app.navigate(destination, params);
   };
   const write = () => open(routes.journalEditor);
+  const hasFilters = !!needle || !!mood || moodOnly;
+  const clearFilters = () =>
+    app.setParams({ query: "", mood: null, favorites: false, moodOnly: false });
   return (
     <Screen
-      title="My Journal"
-      style={styles.screen}
+      style={[styles.screen, styles.library]}
       scrollRef={scroll}
       onScroll={({ nativeEvent }) => {
         scrollY.current = nativeEvent.contentOffset.y;
@@ -242,27 +323,82 @@ function JournalLibrary() {
         }
       }}
     >
-      <SolaceModeSwitcher mode="journal" />
+      <JournalHeader
+        title="My Journal"
+        back={() => app.switchSolaceMode("companion")}
+        backLabel="Back to Companion"
+      >
+        {records.length ? (
+          <>
+            <JournalHeaderAction
+              name={showSearch ? "close" : "search-outline"}
+              label={showSearch ? "Close journal search" : "Search journal"}
+              onPress={() => {
+                if (showSearch) app.setParams({ query: "" });
+                focusSearch.current = !showSearch;
+                setShowSearch(!showSearch);
+              }}
+            />
+            <JournalHeaderAction
+              name={showFilters ? "options" : "options-outline"}
+              label={
+                showFilters
+                  ? "Hide mood and date filters"
+                  : "Show mood and date filters"
+              }
+              onPress={() => setShowFilters(!showFilters)}
+            />
+          </>
+        ) : (
+          <JournalHeaderAction
+            name="ellipsis-horizontal"
+            label={showModes ? "Close journal options" : "Journal options"}
+            onPress={() => setShowModes(!showModes)}
+          />
+        )}
+      </JournalHeader>
+      {showModes && !records.length && <SolaceModeSwitcher mode="journal" />}
       {!records.length ? (
         <>
           <View
             style={[
               styles.hero,
               {
-                backgroundColor: colors.lavenderSurface,
-                borderColor: colors.border,
+                backgroundColor: colors.bg,
+                marginHorizontal: -gutter,
               },
             ]}
           >
-            <View style={styles.heroArt}>
-              <Image
-                source={notebook}
-                style={coverImageStyle}
-                resizeMode="cover"
-                accessible={false}
-                fadeDuration={0}
-              />
-            </View>
+            {resolved === "dark" ? (
+              <>
+                <Image
+                  source={twilightNotebook}
+                  style={coverImageStyle}
+                  resizeMode="cover"
+                  accessible={false}
+                  fadeDuration={0}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFill,
+                    artGradient(
+                      `linear-gradient(180deg, ${colors.bg} 0%, ${colors.bg}00 16%, ${colors.bg}00 75%, ${colors.bg} 100%)`,
+                    ),
+                  ]}
+                />
+              </>
+            ) : (
+              <View style={styles.heroArt}>
+                <Image
+                  source={notebook}
+                  style={coverImageStyle}
+                  resizeMode="cover"
+                  accessible={false}
+                  fadeDuration={0}
+                />
+              </View>
+            )}
           </View>
           <View style={styles.welcome}>
             <AppText
@@ -280,23 +416,24 @@ function JournalLibrary() {
             title={hasDraft ? "Continue your draft" : "Write a new entry"}
             icon="create-outline"
             onPress={write}
+            style={[
+              styles.welcomeAction,
+              resolved === "dark" && { backgroundColor: colors.lavender },
+            ]}
           />
-          <View style={[styles.privacy, { borderColor: colors.border }]}>
-            <Icon
-              name="lock-closed-outline"
-              size={16}
-              color={colors.lavenderText}
-            />
-            <AppText variant="caption" color={colors.muted} style={styles.flex}>
-              Your journal is private. You choose whether to share an excerpt
-              with Solace.
-            </AppText>
-          </View>
+          <JournalPrivacyMarkers />
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={[styles.center, styles.privacyCopy]}
+          >
+            You choose whether to share an excerpt with Solace.
+          </AppText>
         </>
       ) : (
         <>
           <View style={styles.group}>
-            <Row>
+            {showSearch && (
               <Input
                 accessibilityLabel="Search journal entries"
                 placeholder="Search your entries"
@@ -304,29 +441,63 @@ function JournalLibrary() {
                 onChangeText={(value) => app.setParams({ query: value })}
                 returnKeyType="search"
                 autoCorrect={false}
-                style={styles.flex}
+                autoFocus={focusSearch.current}
+                style={styles.searchInput}
               />
-              <IconButton
-                name={showFilters ? "options" : "options-outline"}
-                label={
-                  showFilters
-                    ? "Hide mood and date filters"
-                    : "Show mood and date filters"
-                }
-                onPress={() => setShowFilters(!showFilters)}
-              />
-            </Row>
-            <View style={styles.wrap}>
-              <JournalChip
-                label="All entries"
-                selected={!favorites}
-                onPress={() => app.setParams({ favorites: false })}
-              />
-              <JournalChip
-                label="Favorites"
-                selected={favorites}
-                onPress={() => app.setParams({ favorites: true })}
-              />
+            )}
+            <View
+              style={[
+                styles.filterRail,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              {[
+                {
+                  label: "All entries",
+                  selected: !favorites && !moodOnly,
+                  filters: { favorites: false, moodOnly: false, mood: null },
+                },
+                {
+                  label: "By mood",
+                  selected: moodOnly,
+                  filters: { favorites: false, moodOnly: true, mood: null },
+                },
+                {
+                  label: "Favorites",
+                  selected: favorites,
+                  filters: { favorites: true, moodOnly: false, mood: null },
+                },
+              ].map(({ label, selected, filters }) => (
+                <Pressable
+                  key={label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  aria-pressed={selected}
+                  onPress={() => {
+                    app.setParams(filters);
+                    if (label === "By mood") setShowFilters(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.filterSegment,
+                    selected && { backgroundColor: colors.lavender },
+                    { opacity: pressed ? 0.8 : 1 },
+                  ]}
+                >
+                  <AppText
+                    variant="caption"
+                    style={styles.center}
+                    color={
+                      selected
+                        ? resolved === "dark"
+                          ? "#24182E"
+                          : colors.lavenderText
+                        : colors.text
+                    }
+                  >
+                    {label}
+                  </AppText>
+                </Pressable>
+              ))}
             </View>
             {showFilters && (
               <View style={styles.group}>
@@ -365,11 +536,6 @@ function JournalLibrary() {
           {bookmark.error && (
             <JournalNotice error>{bookmark.error}</JournalNotice>
           )}
-          <Button
-            title={hasDraft ? "Continue your draft" : "Write a new entry"}
-            icon="create-outline"
-            onPress={write}
-          />
           <View style={styles.group}>
             {filtered.length ? (
               filtered.map((record) => (
@@ -408,7 +574,11 @@ function JournalLibrary() {
                       fadeDuration={0}
                     />
                     <View style={styles.entryCopy}>
-                      <AppText variant="heading" numberOfLines={2}>
+                      <AppText
+                        variant="heading"
+                        numberOfLines={2}
+                        style={styles.cardTitle}
+                      >
                         {titleOf(record)}
                       </AppText>
                       <AppText
@@ -442,25 +612,29 @@ function JournalLibrary() {
                 ]}
               >
                 <AppText variant="heading">
-                  {needle || mood ? "No matching entries" : "No favorites yet"}
+                  {hasFilters ? "No matching entries" : "No favorites yet"}
                 </AppText>
                 <JournalNotice>
-                  {needle || mood
+                  {hasFilters
                     ? "Try a different search or clear your filters."
                     : "Bookmark an entry to find it here again."}
                 </JournalNotice>
-                {(needle || mood) && (
+                {hasFilters && (
                   <Button
                     title="Clear filters"
                     variant="secondary"
-                    onPress={() =>
-                      app.setParams({ query: "", mood: null, favorites: false })
-                    }
+                    onPress={clearFilters}
                   />
                 )}
               </View>
             )}
           </View>
+          <Button
+            title={hasDraft ? "Continue your draft" : "Write a new entry"}
+            icon="create-outline"
+            onPress={write}
+            style={styles.libraryAction}
+          />
         </>
       )}
     </Screen>
@@ -483,8 +657,11 @@ function JournalEditor({ record }: { record?: Item }) {
   const value = draft ?? fieldsFrom(record);
   const latest = useRef(value);
   latest.current = value;
-  const [height, setHeight] = useState(224);
+  const [height, setHeight] = useState(188);
   const [writingFocused, setWritingFocused] = useState(false);
+  const [showMood, setShowMood] = useState(false);
+  const [showInsightInfo, setShowInsightInfo] = useState(false);
+  const [showDraftInfo, setShowDraftInfo] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const savingRef = useRef(false);
@@ -497,6 +674,7 @@ function JournalEditor({ record }: { record?: Item }) {
       ? app.params.prompt.trim().slice(0, 500)
       : "";
   const open = useRef(true);
+  const tags = enteredTags(value.tags);
   useLayoutEffect(() => {
     open.current = true;
     return () => {
@@ -540,14 +718,7 @@ function JournalEditor({ record }: { record?: Item }) {
           title: submitted.title.trim(),
           text: submitted.text,
           mood: moodOf(submitted.mood) ?? null,
-          tags: [
-            ...new Set(
-              submitted.tags
-                .split(",")
-                .map((tag) => tag.trim())
-                .filter(Boolean),
-            ),
-          ],
+          tags: enteredTags(submitted.tags),
           bookmarked: submitted.bookmarked === "yes",
         },
         { key, value: submitted },
@@ -569,11 +740,19 @@ function JournalEditor({ record }: { record?: Item }) {
     }
   };
   return (
-    <Screen
-      title={record ? "Edit journal entry" : "New journal entry"}
-      back={app.back}
-      style={styles.screen}
-    >
+    <Screen style={[styles.screen, styles.editor]}>
+      <JournalHeader
+        title={record ? "Edit Journal Entry" : "New Journal Entry"}
+        back={app.back}
+      >
+        <JournalHeaderAction
+          name="ellipsis-horizontal"
+          label={
+            showDraftInfo ? "Hide draft information" : "Show draft information"
+          }
+          onPress={() => setShowDraftInfo(!showDraftInfo)}
+        />
+      </JournalHeader>
       {!!prompt && (
         <View
           style={[
@@ -623,7 +802,7 @@ function JournalEditor({ record }: { record?: Item }) {
           textAlignVertical="top"
           editable={!saving}
           onContentSizeChange={({ nativeEvent }) =>
-            setHeight(Math.max(224, Math.ceil(nativeEvent.contentSize.height)))
+            setHeight(Math.max(188, Math.ceil(nativeEvent.contentSize.height)))
           }
           style={[
             styles.bodyInput,
@@ -631,55 +810,176 @@ function JournalEditor({ record }: { record?: Item }) {
           ]}
         />
       </View>
-      <View style={styles.group}>
-        <AppText variant="label">Mood (optional)</AppText>
-        <View style={styles.wrap}>
-          {moodPetals.map((choice) => (
-            <JournalChip
-              key={choice.mood}
-              label={choice.mood}
-              petal={choice.image}
-              selected={value.mood === choice.mood}
-              onPress={() =>
-                change("mood", value.mood === choice.mood ? "" : choice.mood)
-              }
-            />
-          ))}
-        </View>
+      <View
+        style={[
+          styles.metaPanel,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Choose mood"
+          accessibilityState={{ expanded: showMood, disabled: saving }}
+          disabled={saving}
+          onPress={() => setShowMood(!showMood)}
+        >
+          <Row style={styles.metaControl}>
+            <Icon name="happy-outline" size={18} color={colors.peach} />
+            <AppText variant="label" style={styles.flex}>
+              Mood (optional)
+            </AppText>
+            <Row style={[styles.valuePill, { borderColor: colors.border }]}>
+              <AppText variant="caption" color={colors.muted}>
+                {value.mood || "Choose"}
+              </AppText>
+              <Icon
+                name={showMood ? "chevron-up" : "chevron-down"}
+                size={13}
+                color={colors.muted}
+              />
+            </Row>
+          </Row>
+        </Pressable>
+        {showMood && (
+          <View style={[styles.wrap, styles.metadataInset]}>
+            {moodPetals.map((choice) => (
+              <JournalChip
+                key={choice.mood}
+                label={choice.mood}
+                petal={choice.image}
+                selected={value.mood === choice.mood}
+                onPress={() => {
+                  change("mood", value.mood === choice.mood ? "" : choice.mood);
+                  setShowMood(false);
+                }}
+              />
+            ))}
+          </View>
+        )}
       </View>
-      <View style={styles.group}>
-        <AppText variant="label">Tags (optional)</AppText>
+      <View
+        style={[
+          styles.metaPanel,
+          styles.tagsPanel,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <Row>
+          <Icon name="pricetag-outline" size={16} color={colors.lavenderText} />
+          <AppText variant="label">Tags (optional)</AppText>
+        </Row>
         <Input
           accessibilityLabel="Entry tags, separated by commas"
-          placeholder="Work, rest, gratitude"
+          placeholder="Separate tags with commas"
           value={value.tags}
           onChangeText={(tags) => change("tags", tags)}
           editable={!saving}
+          style={styles.tagsInput}
         />
-        <JournalNotice>Separate tags with commas.</JournalNotice>
+        {!!tags.length && (
+          <View style={styles.wrap}>
+            {tags.map((tag) => (
+              <Pressable
+                key={tag}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove tag ${tag}`}
+                disabled={saving}
+                onPress={() =>
+                  change(
+                    "tags",
+                    tags.filter((value) => value !== tag).join(", "),
+                  )
+                }
+                style={[
+                  styles.removableTag,
+                  {
+                    backgroundColor: colors.lavenderSurface,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <AppText
+                  variant="caption"
+                  color={colors.lavenderText}
+                  style={styles.flexShrink}
+                >
+                  {tag}
+                </AppText>
+                <Icon name="close" size={14} color={colors.lavenderText} />
+              </Pressable>
+            ))}
+          </View>
+        )}
       </View>
-      <JournalNotice>
-        {record?.localOnly
-          ? "This entry is waiting to sync. You can keep editing the draft while it waits."
-          : app.draftProtection === "device"
-            ? "Drafts autosave to protected storage on this device."
-            : "Drafts stay in this browser tab until you reload or close it."}
-      </JournalNotice>
+      <View
+        style={[
+          styles.metaPanel,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="About optional AI insights"
+          accessibilityState={{ expanded: showInsightInfo }}
+          onPress={() => setShowInsightInfo(!showInsightInfo)}
+        >
+          <Row style={styles.metaControl}>
+            <Icon name="sparkles-outline" size={20} color={colors.peach} />
+            <View style={styles.flex}>
+              <AppText variant="label">Reflect with Solace</AppText>
+              <AppText variant="caption" color={colors.muted}>
+                Choose an excerpt after saving.
+              </AppText>
+            </View>
+            <Icon
+              name={
+                showInsightInfo ? "chevron-up" : "information-circle-outline"
+              }
+              size={18}
+              color={colors.lavenderText}
+            />
+          </Row>
+        </Pressable>
+        {showInsightInfo && (
+          <View style={styles.metadataInset}>
+            <JournalNotice>
+              Your writing stays private until you choose an excerpt and confirm
+              that you want to share it with the AI service.
+            </JournalNotice>
+          </View>
+        )}
+      </View>
+      {(showDraftInfo || record?.localOnly) && (
+        <JournalNotice>
+          {record?.localOnly
+            ? "This entry is waiting to sync. You can keep editing the draft while it waits."
+            : app.draftProtection === "device"
+              ? "Drafts autosave to protected storage on this device."
+              : "Drafts stay in this browser tab until you reload or close it."}
+        </JournalNotice>
+      )}
       {app.offlineError && draft && (
         <JournalNotice error>{app.offlineError}</JournalNotice>
       )}
       {error && <JournalNotice error>{error}</JournalNotice>}
-      <Row>
-        <IconButton
-          name={value.bookmarked === "yes" ? "bookmark" : "bookmark-outline"}
-          label={
-            value.bookmarked === "yes" ? "Remove bookmark" : "Bookmark entry"
-          }
-          disabled={saving}
-          onPress={() =>
-            change("bookmarked", value.bookmarked === "yes" ? "no" : "yes")
-          }
-        />
+      <Row style={styles.editorAction}>
+        <View
+          style={[
+            styles.bookmarkFrame,
+            { borderColor: colors.border, backgroundColor: colors.surface },
+          ]}
+        >
+          <IconButton
+            name={value.bookmarked === "yes" ? "bookmark" : "bookmark-outline"}
+            label={
+              value.bookmarked === "yes" ? "Remove bookmark" : "Bookmark entry"
+            }
+            disabled={saving}
+            onPress={() =>
+              change("bookmarked", value.bookmarked === "yes" ? "no" : "yes")
+            }
+          />
+        </View>
         <Button
           title={saving ? "Saving entry" : "Save entry"}
           icon="checkmark"
@@ -735,14 +1035,16 @@ function JournalDetail({ record }: { record?: Item }) {
   };
   if (!record)
     return (
-      <Screen title="My Journal" back={app.back}>
+      <Screen style={styles.screen}>
+        <JournalHeader title="My Journal" back={app.back} />
         <JournalNotice>
           {deleting ? "Deleting entry…" : "This entry is no longer available."}
         </JournalNotice>
       </Screen>
     );
   return (
-    <Screen title="My Journal" back={app.back} style={styles.screen}>
+    <Screen style={styles.screen}>
+      <JournalHeader title="My Journal" back={app.back} />
       <View
         style={[
           styles.panel,
@@ -913,24 +1215,40 @@ export function JournalScreen({ name }: { name: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { gap: spacing.card },
-  welcome: { gap: spacing.compact },
+  screen: { gap: spacing.row, paddingTop: 10 },
+  library: { flexGrow: 1 },
+  editor: { flexGrow: 1, gap: spacing.compact },
+  header: { gap: 4, marginHorizontal: -8, marginBottom: 1 },
+  headerTitle: { flex: 1, fontSize: 25, lineHeight: 32 },
+  headerAction: { borderRadius: 22 },
+  welcome: { gap: 5, marginHorizontal: 10, marginTop: 4 },
   hero: {
-    aspectRatio: 1.52,
-    borderRadius: 24,
-    borderWidth: 1,
+    aspectRatio: 1.65,
     overflow: "hidden",
   },
   heroArt: { position: "absolute", top: 0, width: "100%", aspectRatio: 1 },
   center: { textAlign: "center" },
-  privacy: {
+  welcomeAction: { alignSelf: "center", minWidth: "70%", marginTop: 12 },
+  privacyCopy: { marginTop: 2 },
+  markers: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    justifyContent: "center",
     gap: spacing.compact,
-    borderTopWidth: 1,
-    paddingTop: spacing.card,
+    marginTop: 14,
   },
+  marker: { flex: 1, maxWidth: 100, alignItems: "center", gap: 7 },
+  markerIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  markerLabel: { textAlign: "center", maxWidth: 83 },
   flex: { flex: 1 },
+  flexShrink: { flexShrink: 1 },
   group: { gap: spacing.row },
   wrap: {
     flexDirection: "row",
@@ -951,22 +1269,43 @@ const styles = StyleSheet.create({
   petal: { width: 20, height: 20 },
   metaItem: { gap: 4 },
   moodLabel: { borderRadius: 12, paddingHorizontal: 5, paddingVertical: 1 },
+  searchInput: { minHeight: 44, paddingVertical: 8 },
+  filterRail: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 3,
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 3,
+  },
+  filterSegment: {
+    flex: 1,
+    minWidth: 70,
+    minHeight: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    paddingHorizontal: 5,
+    paddingVertical: 5,
+  },
+  libraryAction: { marginTop: "auto" },
   entryCard: {
     flexDirection: "row",
     alignItems: "flex-start",
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: 15,
   },
   entryContent: {
     flexDirection: "row",
     flex: 1,
     alignItems: "flex-start",
     minWidth: 0,
-    paddingVertical: spacing.row,
-    paddingLeft: spacing.row,
+    paddingVertical: spacing.compact,
+    paddingLeft: spacing.compact,
     gap: spacing.row,
   },
-  thumbnail: { width: 54, height: 72, borderRadius: 11 },
+  thumbnail: { width: 65, height: 84, borderRadius: 10 },
+  cardTitle: { fontSize: 23, lineHeight: 28 },
   entryCopy: { flex: 1, minWidth: 0, gap: 4 },
   panel: {
     gap: spacing.row,
@@ -974,20 +1313,61 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
-  writingPanel: { borderRadius: 20, borderWidth: 1, overflow: "hidden" },
+  writingPanel: { borderRadius: 15, borderWidth: 1, overflow: "hidden" },
   titleInput: {
     borderWidth: 0,
     fontFamily: "CormorantGaramond_600SemiBold",
     fontSize: 25,
     lineHeight: 32,
+    minHeight: 48,
+    paddingVertical: 7,
   },
   divider: { height: StyleSheet.hairlineWidth, marginHorizontal: spacing.card },
   bodyInput: {
     borderWidth: 0,
-    paddingTop: spacing.card,
-    paddingBottom: spacing.card,
-    lineHeight: 24,
+    paddingTop: spacing.row,
+    paddingBottom: spacing.row,
+    lineHeight: 23,
   },
+  metaPanel: { borderWidth: 1, borderRadius: 16 },
+  metaControl: {
+    minHeight: 51,
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
+    gap: spacing.compact,
+  },
+  metadataInset: { paddingHorizontal: spacing.row, paddingBottom: spacing.row },
+  valuePill: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    gap: 6,
+  },
+  tagsPanel: {
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
+    gap: 5,
+  },
+  tagsInput: {
+    borderWidth: 0,
+    minHeight: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 5,
+    backgroundColor: "transparent",
+  },
+  removableTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    minHeight: 44,
+    maxWidth: "100%",
+    borderWidth: 1,
+    borderRadius: 22,
+    paddingHorizontal: 9,
+  },
+  bookmarkFrame: { borderWidth: 1, borderRadius: 22 },
+  editorAction: { marginTop: "auto", paddingTop: spacing.compact },
   entryText: { marginTop: spacing.compact, lineHeight: 26 },
   tag: { paddingVertical: 4, paddingHorizontal: 9, borderRadius: 12 },
 });

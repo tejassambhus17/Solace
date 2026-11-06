@@ -23,7 +23,7 @@ import { useFonts } from "expo-font";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { CormorantGaramond_600SemiBold } from "@expo-google-fonts/cormorant-garamond/600SemiBold";
-import { ThemeProvider, useTheme } from "./src/theme";
+import { ExperienceTheme, ThemeProvider, useTheme } from "./src/theme";
 import {
   AppProvider,
   AppRouteScope,
@@ -98,12 +98,27 @@ const wellnessScreens = new Set([
 ]);
 const retainedRoots = {
   today: TodayScreen,
-  [routes.journal]: () => <JournalScreen name={routes.journal} />,
+  [routes.journal]: () => (
+    <ExperienceTheme>
+      <JournalScreen name={routes.journal} />
+    </ExperienceTheme>
+  ),
   explore: ExploreScreen,
   journey: JourneyScreen,
   profile: () => <ProfileScreen name="profile" />,
 };
 type RetainedRoot = keyof typeof retainedRoots;
+const cinematicRoutes = new Set<string>([
+  routes.solace,
+  routes.companion,
+  routes.voice,
+  routes.history,
+  routes.journalEditor,
+  routes.journalEntry,
+  routes.journalReflect,
+  routes.techniques,
+  routes.technique,
+]);
 
 const RetainedScreen = React.memo(function RetainedScreen({
   route,
@@ -331,7 +346,16 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
                   app={activeRoot === route ? app : null}
                 />
               ))}
-            {content}
+            <ExperienceTheme
+              enabled={
+                authenticated &&
+                (cinematicRoutes.has(app.route) ||
+                  (app.route === routes.momentPlayer &&
+                    !!app.params.techniqueId))
+              }
+            >
+              {content}
+            </ExperienceTheme>
             {authenticated && <MilestoneCelebration allowed={showNavigation} />}
             {showNavigation && (
               <TabBar

@@ -2,16 +2,10 @@ import React from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 import { Companion, type CompanionState } from "../Companion";
 import { spacing } from "../layout";
-import { useTheme } from "../theme";
-import { AppText, coverImageStyle, Icon, Row } from "../ui";
+import { artGradient, useTheme } from "../theme";
+import { AppText, coverImageStyle, Icon, LotusMark, Row } from "../ui";
 
-export function ChatScene({
-  height,
-  children,
-}: {
-  height: number;
-  children: React.ReactNode;
-}) {
+export function ChatScene({ height }: { height: number }) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
   return (
@@ -19,8 +13,8 @@ export function ChatScene({
       style={[
         styles.scene,
         {
-          minHeight: height,
-          backgroundColor: dark ? colors.heroSurface : "#343E27",
+          height,
+          backgroundColor: colors.bg,
         },
       ]}
     >
@@ -28,7 +22,7 @@ export function ChatScene({
         <Image
           source={
             dark
-              ? require("../../assets/redesign-chat-scene-dark.jpg")
+              ? require("../../assets/solace-companion-twilight.jpg")
               : require("../../assets/redesign-chat-scene-light.jpg")
           }
           accessible={false}
@@ -40,13 +34,12 @@ export function ChatScene({
         <View
           style={[
             StyleSheet.absoluteFill,
-            {
-              backgroundImage: `linear-gradient(180deg, #10160FC7 0%, #10160F48 25%, transparent 45%, transparent 64%, ${colors.bg} 100%)`,
-            },
+            artGradient(
+              `linear-gradient(180deg, ${colors.bg} 0%, transparent 16%, transparent 72%, ${colors.bg} 100%)`,
+            ),
           ]}
         />
       </View>
-      {children}
     </View>
   );
 }
@@ -56,22 +49,22 @@ export function ChatHeaderButton({
   label,
   onPress,
   disabled,
-  featured,
-  scenic,
+  variant = "plain",
+  expanded,
 }: {
   icon: string;
   label: string;
   onPress: () => void;
   disabled: boolean;
-  featured?: boolean;
-  scenic?: boolean;
+  variant?: "plain" | "filled";
+  expanded?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
+      accessibilityState={{ disabled, expanded }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
@@ -86,18 +79,12 @@ export function ChatHeaderButton({
         style={[
           styles.headerIcon,
           {
-            backgroundColor: scenic
-              ? featured
-                ? "#FAE7BE45"
-                : "#FAE7BE24"
-              : featured
-                ? colors.sageSurface
-                : colors.surface,
-            borderColor: scenic ? "#FFF4D978" : colors.border,
+            backgroundColor:
+              variant === "filled" ? colors.surface2 : "transparent",
           },
         ]}
       >
-        <Icon name={icon} color={scenic ? "#FFF7E9" : colors.text} size={20} />
+        <Icon name={icon} color={colors.text} size={21} />
       </View>
     </Pressable>
   );
@@ -146,6 +133,7 @@ export const ChatBubble = React.memo(function ChatBubble({
   createdAt,
   avatar = false,
   avatarState = "idle",
+  intro = false,
 }: {
   children: string;
   user?: boolean;
@@ -153,6 +141,7 @@ export const ChatBubble = React.memo(function ChatBubble({
   createdAt?: string;
   avatar?: boolean;
   avatarState?: CompanionState;
+  intro?: boolean;
 }) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
@@ -168,26 +157,37 @@ export const ChatBubble = React.memo(function ChatBubble({
     <View style={[styles.turn, user && styles.userTurn]}>
       {!user && avatar && (
         <View style={styles.turnAvatar}>
-          <ChatAvatar state={avatarState} />
+          <ChatAvatar size={intro ? 32 : undefined} state={avatarState} />
         </View>
       )}
       <View style={styles.turnContent}>
         <View
           style={[
             styles.bubble,
+            intro && styles.introBubble,
             {
               backgroundColor: user
                 ? dark
-                  ? "#304739"
+                  ? colors.lavenderSurface
                   : "#35533F"
                 : dark
-                  ? "#221F1DF7"
+                  ? colors.surface
                   : "#FFF7EDF5",
-              borderColor: user ? "#99AE8C" : dark ? "#605249" : "#FFFCF4",
+              borderColor: dark
+                ? intro
+                  ? "#775C73"
+                  : colors.border
+                : user
+                  ? "#99AE8C"
+                  : colors.border,
             },
           ]}
         >
-          <AppText selectable color={user ? "#FFF9EE" : colors.text}>
+          <AppText
+            selectable
+            color={user && !dark ? "#FFF9EE" : colors.text}
+            style={intro && styles.introText}
+          >
             {children}
           </AppText>
         </View>
@@ -196,7 +196,7 @@ export const ChatBubble = React.memo(function ChatBubble({
             style={[
               styles.turnMeta,
               user && styles.userMeta,
-              { backgroundColor: dark ? "#121211F2" : "#FBF0E8F2" },
+              { backgroundColor: colors.bg },
             ]}
           >
             {label && (
@@ -232,19 +232,21 @@ export const ChatBubble = React.memo(function ChatBubble({
 });
 
 export function ChatWelcome({
+  name,
   mood,
   state,
 }: {
+  name?: string;
   mood?: string;
   state: CompanionState;
 }) {
   const { colors } = useTheme();
+  const firstName =
+    typeof name === "string" ? name.trim().split(/\s+/u)[0] : "";
   return (
     <>
-      <ChatBubble avatar avatarState={state}>
-        {
-          "Hi there, I’m Solace.\nI’m here to listen, support, and help you find a little calm whenever you need it."
-        }
+      <ChatBubble avatar avatarState={state} intro>
+        {`Hi ${firstName || "there"}, I’m Solace.\nI’m here to listen, support, and help you feel a little more balanced. How are you feeling today?`}
       </ChatBubble>
       {!!mood && (
         <AppText
@@ -260,12 +262,10 @@ export function ChatWelcome({
 }
 
 export function ChatQuickReplies({
-  onActivity,
-  onTalk,
+  onPrompt,
   disabled,
 }: {
-  onActivity: () => void;
-  onTalk: () => void;
+  onPrompt: (prompt: string) => void;
   disabled: boolean;
 }) {
   const { colors } = useTheme();
@@ -273,27 +273,31 @@ export function ChatQuickReplies({
     <Row style={styles.replies}>
       {[
         {
-          title: "Try a quick reset",
+          title: "I’m feeling stressed",
           icon: "leaf-outline",
           background: colors.sageSurface,
           color: colors.sageText,
-          onPress: onActivity,
         },
         {
-          title: "I’d like to talk",
-          icon: "ellipsis-horizontal",
-          background: colors.surface,
-          color: colors.text,
-          onPress: onTalk,
+          title: "I want to sleep better",
+          icon: "moon-outline",
+          background: colors.lavenderSurface,
+          color: colors.lavenderText,
         },
-      ].map(({ title, icon, background, color, onPress }) => (
+        {
+          title: "I need to focus",
+          icon: "sparkles-outline",
+          background: colors.peachSurface,
+          color: colors.peachText,
+        },
+      ].map(({ title, icon, background, color }) => (
         <Pressable
           key={title}
           accessibilityRole="button"
           accessibilityLabel={title}
           accessibilityState={{ disabled }}
           disabled={disabled}
-          onPress={onPress}
+          onPress={() => onPrompt(title)}
           style={({ pressed }) => [
             styles.reply,
             {
@@ -338,20 +342,27 @@ export function ChatResetCard({
       />
       <View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFill, styles.resetScrim]}
+        style={[
+          StyleSheet.absoluteFill,
+          artGradient(
+            "linear-gradient(90deg, #20192CDE 0%, #241B38AA 45%, #322B1B09 100%)",
+          ),
+        ]}
       />
-      <Icon name="leaf-outline" size={23} color="#FFF7E9" />
       <View style={styles.resetCopy}>
-        <AppText
-          variant="heading"
-          accessibilityRole="header"
-          color="#FFF7E9"
-          style={styles.resetHeading}
-        >
-          Guided Breath
-        </AppText>
+        <Row style={styles.resetTitle}>
+          <LotusMark size={21} />
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            color="#FFF7E9"
+            style={styles.resetHeading}
+          >
+            A Quick Reset
+          </AppText>
+        </Row>
         <AppText color="#FFF7E9" style={styles.resetDescription}>
-          A 2-minute reset to take a breath and find your footing.
+          A 3-minute breathing practice to slow down and feel calmer.
         </AppText>
       </View>
       <Row style={styles.resetActions}>
@@ -368,17 +379,11 @@ export function ChatResetCard({
             },
           ]}
         >
-          <Icon name="play" size={16} color="#21352A" />
-          <AppText variant="label" color="#21352A">
+          <Icon name="play" size={15} color="#2D2042" />
+          <AppText variant="label" color="#2D2042">
             Start Now
           </AppText>
         </Pressable>
-        <Row style={styles.duration}>
-          <Icon name="timer-outline" size={15} color="#FFF7E9" />
-          <AppText variant="caption" color="#FFF7E9">
-            2 min
-          </AppText>
-        </Row>
       </Row>
     </View>
   );
@@ -389,10 +394,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   headerIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -419,6 +423,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     boxShadow: "0 8px 20px #271C1314",
   },
+  introBubble: {
+    paddingVertical: 10,
+    paddingHorizontal: 11,
+    borderRadius: 15,
+    boxShadow: undefined,
+  },
+  introText: { fontSize: 15, lineHeight: 21 },
   turnMeta: {
     gap: 6,
     alignSelf: "flex-start",
@@ -430,38 +441,37 @@ const styles = StyleSheet.create({
   userMeta: { alignSelf: "flex-end" },
   replyLabel: { fontSize: 11, lineHeight: 16 },
   moodContext: { marginLeft: 42, fontSize: 12, lineHeight: 17 },
-  replies: { gap: spacing.compact, alignItems: "stretch" },
+  replies: { gap: 7, alignItems: "stretch" },
   reply: {
     flex: 1,
     minWidth: 0,
-    minHeight: 62,
+    minHeight: 80,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.compact,
-    gap: 5,
-    borderRadius: 22,
+    paddingHorizontal: 5,
+    paddingVertical: spacing.compact,
+    gap: 4,
+    borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  replyCopy: { textAlign: "center", fontSize: 13, lineHeight: 19 },
+  replyCopy: { textAlign: "center", fontSize: 12, lineHeight: 16 },
   resetCard: {
     position: "relative",
-    borderRadius: 25,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#FFE4BD",
-    backgroundColor: "#292C24",
+    borderColor: "#805F71",
+    backgroundColor: "#242031",
     overflow: "hidden",
-    padding: 16,
+    padding: 11,
+    minHeight: 148,
+    justifyContent: "center",
   },
-  resetScrim: {
-    backgroundImage:
-      "linear-gradient(90deg, #161910DD 0%, #242219B0 46%, #322B1B20 100%)",
-  },
-  resetCopy: { width: "78%" },
-  resetHeading: { fontSize: 30, lineHeight: 34 },
-  resetDescription: { fontSize: 13, lineHeight: 18, marginTop: 3 },
+  resetCopy: { maxWidth: "77%" },
+  resetTitle: { gap: 5 },
+  resetHeading: { flexShrink: 1, fontSize: 24, lineHeight: 30 },
+  resetDescription: { fontSize: 13, lineHeight: 17, marginTop: 1 },
   resetActions: {
-    marginTop: 12,
-    justifyContent: "space-between",
+    marginTop: 8,
     flexWrap: "wrap",
     gap: 7,
   },
@@ -470,18 +480,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     minHeight: 44,
-    paddingHorizontal: 15,
+    paddingHorizontal: 14,
     borderRadius: 24,
     gap: 8,
-    backgroundColor: "#FFF3E3",
-  },
-  duration: {
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 13,
-    backgroundColor: "#232318B3",
-    borderColor: "#FBEAC16B",
-    borderWidth: 1,
+    backgroundColor: "#FFDDC2",
   },
 });

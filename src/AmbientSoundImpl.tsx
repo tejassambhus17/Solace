@@ -16,11 +16,13 @@ export function AmbientSoundImpl({
   running,
   enabled,
   onToggle,
+  compact = false,
 }: {
   environment: MomentEnvironment;
   running: boolean;
   enabled: boolean;
   onToggle: () => void;
+  compact?: boolean;
 }) {
   const { colors } = useTheme();
   const player = useAudioPlayer(audioSources[environment], {
@@ -65,10 +67,17 @@ export function AmbientSoundImpl({
         : "Ambient sound paused"
     : "Ambient sound off";
   return (
-    <View>
+    <View
+      style={
+        compact
+          ? { minWidth: 44, alignItems: "flex-end", zIndex: 1 }
+          : undefined
+      }
+    >
       <Pressable
         accessibilityRole="switch"
         accessibilityLabel="Ambient sound"
+        accessibilityHint={compact ? label : undefined}
         accessibilityState={{ checked: enabled }}
         aria-checked={enabled}
         onPress={() => {
@@ -81,24 +90,51 @@ export function AmbientSoundImpl({
           alignItems: "center",
           justifyContent: "center",
           minHeight: 48,
+          ...(compact && {
+            width: 44,
+            minHeight: 44,
+            backgroundColor: colors.surface,
+            borderRadius: 22,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }),
           opacity: pressed ? 0.6 : 1,
         })}
       >
         <Icon
           name={
-            status.playing && enabled
+            enabled && (compact || status.playing)
               ? "volume-medium-outline"
               : "volume-mute-outline"
           }
           size={18}
           color={colors.muted}
         />
-        <AppText variant="caption" color={colors.muted}>
-          {label}
-        </AppText>
+        {!compact && (
+          <AppText variant="caption" color={colors.muted}>
+            {label}
+          </AppText>
+        )}
       </Pressable>
       {!!(status.error || error) && (
-        <AppText variant="caption" color={colors.danger}>
+        <AppText
+          variant="caption"
+          color={colors.danger}
+          accessibilityRole="alert"
+          style={
+            compact
+              ? {
+                  position: "absolute",
+                  top: 48,
+                  right: 0,
+                  width: 200,
+                  padding: 10,
+                  backgroundColor: colors.surface,
+                  borderRadius: 12,
+                }
+              : undefined
+          }
+        >
           {error ||
             "Sound couldn't load. Turn sound off and on to retry, or continue quietly."}
         </AppText>
