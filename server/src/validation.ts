@@ -57,6 +57,24 @@ const base = z
     day: day.optional(),
   })
   .passthrough();
+const journalEntry = base.extend({
+  kind: z.literal("journal"),
+  title: z.string().trim().max(240).optional(),
+  text: z
+    .string()
+    .refine(
+      (value) => value.trim().length > 0,
+      "Write an entry before saving.",
+    ),
+  mood: z
+    .enum(["Okay", "Calm", "Low", "Stressed", "Great"])
+    .nullable()
+    .optional(),
+  tags: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  bookmarked: z.boolean().optional(),
+  weeklyPeriod: z.never().optional(),
+  weeklyProvider: z.never().optional(),
+});
 export const registerSchema = z.object({
   name: z.string().trim().min(1).max(80),
   email: z
@@ -293,10 +311,12 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
   }),
 };
 export function parseRecord(collection: Collection, value: unknown) {
-  const parsed = recordSchemas[collection].parse(value) as Record<
-    string,
-    unknown
-  >;
+  const schema =
+    collection === "reflections" &&
+    (value as { kind?: unknown } | null | undefined)?.kind === "journal"
+      ? journalEntry
+      : recordSchemas[collection];
+  const parsed = schema.parse(value) as Record<string, unknown>;
   if (JSON.stringify(parsed).length > 100000)
     throw new Error("RECORD_TOO_LARGE");
   if (

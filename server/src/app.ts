@@ -49,6 +49,14 @@ import {
 } from "./weekly.js";
 import { savedWeeklyStory } from "./weekly-facts.js";
 import { transcribeAudio, voiceAvailable, audioTypes } from "./voice.js";
+import {
+  journalDiscussionRequest,
+  journalDiscussionSchema,
+  journalExcerpt,
+  journalReflectionSchema,
+  reflectOnJournal,
+} from "./journal-ai.js";
+import type { JournalSource } from "./journal-contract.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
@@ -481,6 +489,7 @@ export function createApp(config: AppConfig) {
       delete parsed.contextResetMessageCount;
       delete parsed.contextResetAt;
       delete parsed.contextResetId;
+      delete parsed.journalSource;
       parsed.conversationInstanceId = randomUUID();
     }
     const record: RecordData = {
@@ -492,6 +501,9 @@ export function createApp(config: AppConfig) {
       createdAt:
         (parsed.createdAt as string | undefined) ?? new Date().toISOString(),
     };
+    if (collection === "reflections" && record.kind === "journal") {
+      record.updatedAt = record.createdAt;
+    }
     if (collection === "sessions" && !validSessionSource(user(req).id, record))
       return apiError(
         res,
@@ -531,7 +543,8 @@ export function createApp(config: AppConfig) {
         collection === "goals" ||
         collection === "sessions" ||
         collection === "reminders" ||
-        (collection === "reflections" && record.weeklyPeriod) ||
+        (collection === "reflections" &&
+          (record.weeklyPeriod || record.kind === "journal")) ||
         (collection === "memories" &&
           record.sourceType === "session" &&
           record.id === `memory-${record.sourceId}` &&
@@ -564,6 +577,19 @@ export function createApp(config: AppConfig) {
     const existing = get(user(req).id, collection, id);
     if (!existing)
       return apiError(res, 404, "This item was not found.", "NOT_FOUND");
+    if (
+      collection === "reflections" &&
+      ((existing.kind === "journal" &&
+        req.body?.kind !== undefined &&
+        req.body.kind !== "journal") ||
+        (existing.weeklyPeriod && req.body?.kind === "journal"))
+    )
+      return apiError(
+        res,
+        409,
+        "The saved reflection type cannot be changed.",
+        "REFLECTION_TYPE_LOCKED",
+      );
     if (collection === "conversations") {
       const { title, messages } = z
         .object({
@@ -679,6 +705,24 @@ export function createApp(config: AppConfig) {
         "DELETE FROM records WHERE user_id=? AND collection=? AND id=?",
         [user(req).id, collection, id],
       );
+      if (collection === "reflections") {
+        const owner = user(req).id;
+        const resetAt = new Date().toISOString();
+        for (const { journalSource, ...conversation } of list(
+          owner,
+          "conversations",
+        )) {
+          if ((journalSource as JournalSource | undefined)?.id !== id) continue;
+          put(owner, "conversations", {
+            ...conversation,
+            contextResetMessageCount: Array.isArray(conversation.messages)
+              ? conversation.messages.length
+              : 0,
+            contextResetAt: resetAt,
+            contextResetId: randomUUID(),
+          });
+        }
+      }
       if (collection === "conversations" || collection === "sessions")
         for (const memory of list(user(req).id, "memories")) {
           const linked =
@@ -1002,21 +1046,106 @@ export function createApp(config: AppConfig) {
       }
     }),
   );
+  const journalChanged = (res: Response) =>
+    apiError(
+      res,
+      409,
+      "This entry changed. Reopen it and choose an excerpt again.",
+      "JOURNAL_CHANGED",
+    );
+  const journalMissing = (res: Response) =>
+    apiError(res, 404, "This journal entry was not found.", "NOT_FOUND");
+  const journalReflectionLocks = new Set<string>();
+  app.post(
+    "/api/journal/:journalId/reflect",
+    asyncRoute(async (req, res) => {
+      const owner = user(req).id;
+      const id = idSchema.parse(req.params.journalId);
+      const { action, ...selection } = journalReflectionSchema.parse(req.body);
+      const record = get(owner, "reflections", id);
+      if (!record) return journalMissing(res);
+      const excerpt = journalExcerpt(record, selection);
+      if (!excerpt) return journalChanged(res);
+      const locked = !isUrgent(excerpt);
+      if (locked && journalReflectionLocks.has(owner))
+        return apiError(
+          res,
+          409,
+          "Please wait for your current reflection to finish.",
+          "JOURNAL_BUSY",
+        );
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      res.once("close", cancel);
+      if (locked) journalReflectionLocks.add(owner);
+      try {
+        const reflection = await reflectOnJournal(
+          config.ai,
+          excerpt,
+          action,
+          controller.signal,
+        );
+        if (res.destroyed) return;
+        if (!currentAccount(req))
+          return apiError(
+            res,
+            401,
+            "Your account is no longer available.",
+            "UNAUTHORIZED",
+          );
+        if (
+          journalExcerpt(get(owner, "reflections", id), selection) !== excerpt
+        )
+          return journalChanged(res);
+        return res.json(reflection);
+      } finally {
+        res.off("close", cancel);
+        if (locked) journalReflectionLocks.delete(owner);
+      }
+    }),
+  );
+  const chatInputSchema = z.object({
+    text: z.string().trim().min(1).max(4000),
+    conversationId: idSchema.optional(),
+    requestId: z
+      .uuid()
+      .transform((value) => value.toLowerCase())
+      .optional(),
+  });
   const chatLocks = new Map<string, string | undefined>();
   app.post(
-    "/api/chat",
+    ["/api/chat", "/api/journal/:journalId/discuss"],
     asyncRoute(async (req, res) => {
-      const input = z
-        .object({
-          text: z.string().trim().min(1).max(4000),
-          conversationId: idSchema.optional(),
-          requestId: z
-            .uuid()
-            .transform((value) => value.toLowerCase())
-            .optional(),
-        })
-        .parse(req.body);
       const owner = user(req).id;
+      const journalId =
+        req.params.journalId === undefined
+          ? undefined
+          : idSchema.parse(req.params.journalId);
+      const discussion = journalId
+        ? journalDiscussionSchema.parse(req.body)
+        : undefined;
+      const journalSource: JournalSource | undefined =
+        journalId && discussion
+          ? {
+              id: journalId,
+              start: discussion.start,
+              end: discussion.end,
+              revision: discussion.revision,
+            }
+          : undefined;
+      const journalEntry =
+        journalSource && get(owner, "reflections", journalSource.id);
+      if (journalSource && !journalEntry) return journalMissing(res);
+      const excerpt =
+        journalSource && journalExcerpt(journalEntry, journalSource);
+      if (journalSource && !excerpt) return journalChanged(res);
+      const input = discussion
+        ? {
+            text: journalDiscussionRequest,
+            conversationId: undefined,
+            requestId: discussion.requestId,
+          }
+        : chatInputSchema.parse(req.body);
       if (input.requestId) {
         const receipt = store.one<ChatReceipt>(
           "SELECT conversation_id,assistant_message_id,source_conversation_id FROM chat_requests WHERE user_id=? AND id=? AND expires_at>?",
@@ -1044,7 +1173,9 @@ export function createApp(config: AppConfig) {
             );
           if (
             (input.conversationId ?? null) !== receipt.source_conversation_id ||
-            input.text !== question.content
+            input.text !== question.content ||
+            (!receipt.source_conversation_id &&
+              !isDeepStrictEqual(journalSource, conversation.journalSource))
           )
             return apiError(
               res,
@@ -1062,7 +1193,9 @@ export function createApp(config: AppConfig) {
           });
         }
       }
-      const urgent = isUrgent(input.text);
+      const urgent = isUrgent(excerpt ?? input.text);
+      if (journalSource && !urgent && provider(config.ai) !== "live")
+        throw new Error("AI_NOT_CONFIGURED");
       const busy = chatLocks.has(owner);
       if (
         busy &&
@@ -1108,6 +1241,9 @@ export function createApp(config: AppConfig) {
         Math.max(0, Math.min(history.length, resetCount)),
       );
       if (!busy) chatLocks.set(owner, input.requestId);
+      const controller = journalSource ? new AbortController() : undefined;
+      const cancel = () => controller?.abort();
+      if (controller) res.once("close", cancel);
       try {
         const evidenceAt = Date.now();
         const chatPersonalization = (account: UserRow) => {
@@ -1131,7 +1267,8 @@ export function createApp(config: AppConfig) {
             ),
           };
         };
-        const personalization = urgent ? null : chatPersonalization(user(req));
+        const personalization =
+          urgent || journalSource ? null : chatPersonalization(user(req));
         const memories =
           personalization?.memories.map((memory) => memory.text) || [];
         const context =
@@ -1151,14 +1288,18 @@ export function createApp(config: AppConfig) {
           current?.contextResetMessageCount ===
             previous?.contextResetMessageCount;
         const reply = await getReply(
-          config.ai,
+          journalSource || previous?.journalSource
+            ? { ...config.ai, openAIFallback: false }
+            : config.ai,
           {
             text: input.text,
-            name: user(req).name,
+            name: journalSource ? "there" : user(req).name,
             history: providerHistory,
             memories,
             context,
             evidence: personalization?.evidence,
+            journalExcerpt: excerpt,
+            signal: controller?.signal,
           },
           () => {
             const account = currentAccount(req);
@@ -1175,6 +1316,7 @@ export function createApp(config: AppConfig) {
             );
           },
         );
+        if (journalSource && res.destroyed) return;
         // A revoked session or deleted account cannot receive/persist a late reply.
         const currentUser = currentAccount(req);
         if (!currentUser)
@@ -1184,6 +1326,14 @@ export function createApp(config: AppConfig) {
             "Your account is no longer available.",
             "UNAUTHORIZED",
           );
+        if (
+          journalSource &&
+          journalExcerpt(
+            get(owner, "reflections", journalSource.id),
+            journalSource,
+          ) !== excerpt
+        )
+          return journalChanged(res);
         // Deleted/corrected memories and revoked consent take effect before a
         // pending personalized response can become another active source.
         if (!samePersonalization(currentUser))
@@ -1226,9 +1376,14 @@ export function createApp(config: AppConfig) {
           id: current?.id ?? randomUUID(),
           conversationInstanceId:
             current?.conversationInstanceId ?? randomUUID(),
+          ...(journalSource ? { journalSource } : {}),
           title:
             current?.title ??
-            (urgent ? "Support right now" : input.text.slice(0, 60)),
+            (urgent
+              ? "Support right now"
+              : journalSource
+                ? "Journal discussion"
+                : input.text.slice(0, 60)),
           createdAt: current?.createdAt ?? now,
           updatedAt: now,
           messages: [
@@ -1276,6 +1431,7 @@ export function createApp(config: AppConfig) {
         });
         return res.json({ conversation, ...reply });
       } finally {
+        if (controller) res.off("close", cancel);
         if (!busy) chatLocks.delete(owner);
       }
     }),
@@ -1284,7 +1440,8 @@ export function createApp(config: AppConfig) {
     apiError(res, 404, "This API route was not found.", "NOT_FOUND"),
   );
   app.use(
-    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    (error: unknown, req: Request, res: Response, _next: NextFunction) => {
+      if (res.destroyed) return;
       if (error instanceof ZodError)
         return res.status(400).json({
           error: "Please check the information you entered.",
@@ -1304,6 +1461,7 @@ export function createApp(config: AppConfig) {
           error.code,
         );
       const message = error instanceof Error ? error.message : "";
+      const journalRequest = req.path.startsWith("/api/journal/");
       if (message === "VOICE_NOT_CONFIGURED")
         return apiError(
           res,
@@ -1329,7 +1487,9 @@ export function createApp(config: AppConfig) {
         return apiError(
           res,
           503,
-          "Live AI is not configured. Ask the app owner to configure the server key.",
+          journalRequest
+            ? "Live journal support is unavailable right now. You can keep writing in your journal."
+            : "Live AI is not configured. Ask the app owner to configure the server key.",
           "AI_NOT_CONFIGURED",
         );
       if (message === "AI_PROVIDER_429")
@@ -1343,7 +1503,9 @@ export function createApp(config: AppConfig) {
         return apiError(
           res,
           502,
-          "Solace could not reach the AI service. Your conversation is safe; please try again.",
+          journalRequest
+            ? "Solace could not get a reply from the AI service. Please try again."
+            : "Solace could not reach the AI service. Your conversation is safe; please try again.",
           "AI_UNAVAILABLE",
         );
       if (message === "RECORD_TOO_LARGE")

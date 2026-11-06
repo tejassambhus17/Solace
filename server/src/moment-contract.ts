@@ -7,7 +7,12 @@ export type SolaceMoment = {
   description: string;
   durationSec: number;
   steps: { title: string; instruction: string; durationSec: number }[];
-  breathing: { inhale: number; hold: number; exhale: number } | null;
+  breathing: {
+    inhale: number;
+    hold: number;
+    exhale: number;
+    rest?: number;
+  } | null;
   reflectionPrompts: string[];
   environment: MomentEnvironment;
 };

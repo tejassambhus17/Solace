@@ -15,6 +15,13 @@ export type {
   MomentResult,
 } from "./moment-contract.js";
 const boundedText = (length: number) => z.string().trim().min(1).max(length);
+const breathingSchema = z
+  .object({
+    inhale: z.number().int().min(2).max(6),
+    hold: z.number().int().min(0).max(4),
+    exhale: z.number().int().min(2).max(8),
+  })
+  .strict();
 const rawMomentSchema = z
   .object({
     version: z.literal(1),
@@ -39,51 +46,50 @@ const rawMomentSchema = z
       )
       .min(1)
       .max(8),
-    breathing: z
-      .object({
-        inhale: z.number().int().min(2).max(6),
-        hold: z.number().int().min(0).max(4),
-        exhale: z.number().int().min(2).max(8),
-      })
-      .strict()
-      .nullable(),
+    breathing: breathingSchema.nullable(),
     reflectionPrompts: z.array(boundedText(240)).max(3),
     environment: z.enum(environments),
   })
   .strict();
-export const momentSchema = rawMomentSchema.superRefine((activity, context) => {
-  if (
-    activity.steps.reduce((sum, step) => sum + step.durationSec, 0) !==
-    activity.durationSec
-  )
-    context.addIssue({
-      code: "custom",
-      path: ["steps"],
-      message: "Step durations must equal the activity duration.",
-    });
-  if ((activity.type === "breathing") !== (activity.breathing !== null))
-    context.addIssue({
-      code: "custom",
-      path: ["breathing"],
-      message: "Only a breathing activity has a breathing rhythm.",
-    });
-  const words = JSON.stringify([
-    activity.title,
-    activity.description,
-    activity.steps,
-    activity.reflectionPrompts,
-  ]);
-  if (
-    /\b(?:diagnos(?:e|is|tic)|cure|treat(?:ment)?|guarantee(?:d)?|hyperventilat(?:e|ion)|hold your breath for|stop (?:your )?medication)\b/i.test(
-      words,
+export const momentSchema = rawMomentSchema
+  .extend({
+    breathing: breathingSchema
+      .extend({ rest: z.number().int().min(0).max(4).optional() })
+      .nullable(),
+  })
+  .superRefine((activity, context) => {
+    if (
+      activity.steps.reduce((sum, step) => sum + step.durationSec, 0) !==
+      activity.durationSec
     )
-  )
-    context.addIssue({
-      code: "custom",
-      path: ["description"],
-      message: "Keep guidance within gentle, optional wellness activities.",
-    });
-});
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: "Step durations must equal the activity duration.",
+      });
+    if ((activity.type === "breathing") !== (activity.breathing !== null))
+      context.addIssue({
+        code: "custom",
+        path: ["breathing"],
+        message: "Only a breathing activity has a breathing rhythm.",
+      });
+    const words = JSON.stringify([
+      activity.title,
+      activity.description,
+      activity.steps,
+      activity.reflectionPrompts,
+    ]);
+    if (
+      /\b(?:diagnos(?:e|is|tic)|cure|treat(?:ment)?|guarantee(?:d)?|hyperventilat(?:e|ion)|hold your breath for|stop (?:your )?medication)\b/i.test(
+        words,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["description"],
+        message: "Keep guidance within gentle, optional wellness activities.",
+      });
+  });
 export type MomentMemory = { id: string; text: string };
 
 export const urgentMessage =
@@ -315,6 +321,7 @@ export async function generateMoment(
   const activity = parsed.data;
   if (
     activity.type !== base.type ||
+    activity.breathing?.rest !== undefined ||
     activity.durationSec !== base.durationSec ||
     activity.environment !== environment ||
     activity.steps.length !== base.steps.length ||
