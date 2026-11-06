@@ -40,6 +40,7 @@ const {
   journeyRange,
   journeyReport,
   journeyWeek,
+  nextMilestoneCelebration,
 } = load("src/journey-analytics.ts", {
   "./content": content,
   "./progress": progress,
@@ -52,6 +53,42 @@ const { journeyGoalProgress } = load("src/journey-goals.ts", {
 });
 const now = () => new Date(2026, 10, 5, 12);
 const item = (id, day, extra = {}) => ({ id, day, ...extra });
+
+test("milestone celebrations use saved records and survive re-reading the account marker", () => {
+  const checkins = [
+    item("one", "2026-11-01"),
+    item("two", "2026-11-02"),
+    item("three", "2026-11-03"),
+  ];
+  const sessions = [
+    item("device-only", "2026-11-04", { completed: true, localOnly: true }),
+  ];
+  const data = { checkins, sessions };
+  const first = nextMilestoneCelebration(
+    journeyAnalytics(data, now()).milestones,
+    [],
+    false,
+  );
+  assert.equal(first.id, "first-checkin");
+  assert.equal(first.earnedDay, "2026-11-01");
+  const restored = JSON.parse(JSON.stringify([first.id]));
+  assert.equal(
+    nextMilestoneCelebration(
+      journeyAnalytics(data, now()).milestones,
+      restored,
+      false,
+    ),
+    undefined,
+  );
+  assert.equal(
+    nextMilestoneCelebration(
+      journeyAnalytics(data, now()).milestones,
+      restored,
+      true,
+    ).id,
+    "three-day-streak",
+  );
+});
 
 test("a new journey has no earned milestone, mood, duration or streak", () => {
   const summary = journeySummary({}, now());

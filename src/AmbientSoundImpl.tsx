@@ -30,12 +30,18 @@ export function AmbientSoundImpl({
   const [error, setError] = useState("");
   const soundState = useRef({ running, enabled, onToggle });
   soundState.current = { running, enabled, onToggle };
-  useEffect(() => registerAmbientPlayback(() => {
-    const state = soundState.current;
-    if (!state.running || !state.enabled) return;
-    try { player.pause(); } catch {}
-    state.onToggle();
-  }), [player]);
+  useEffect(
+    () =>
+      registerAmbientPlayback(() => {
+        const state = soundState.current;
+        if (!state.running || !state.enabled) return;
+        try {
+          player.pause();
+        } catch {}
+        state.onToggle();
+      }),
+    [player],
+  );
   useEffect(() => {
     try {
       player.loop = true;

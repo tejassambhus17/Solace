@@ -45,6 +45,8 @@ import {
 import { JourneyGoalScreen } from "./src/screens/JourneyGoal";
 import { MomentsScreen, MomentPlayerScreen } from "./src/screens/Moments";
 import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
+import { AmbientMixerScreen } from "./src/screens/AmbientMixer";
+import { MilestoneCelebration } from "./src/MilestoneCelebration";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
@@ -221,6 +223,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   else if (app.route === "chat" || app.route === "solace")
     content = <ChatScreen scrollMemory={chatPositions.current} />;
   else if (app.route === "voice-talk") content = <VoiceTalkScreen />;
+  else if (app.route === "ambient-mixer") content = <AmbientMixerScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey-activity")
     content = <JourneyActivityScreen />;
@@ -298,6 +301,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
                 />
               ))}
             {content}
+            {authenticated && <MilestoneCelebration allowed={showNavigation} />}
             {showNavigation && (
               <TabBar
                 activeTab={app.activeTab}

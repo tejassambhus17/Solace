@@ -19,3 +19,11 @@ Journey shows the week's actual check-ins, completed Moments, minutes and helpfu
 “Why Solace suggested this” uses verified evidence references. Consent, current ownership and source revision are checked before a personalized reason appears. The sheet routes to the existing memory controls. Live Gemini suggested breathing for a synthetic conversation, and a second live turn used an approved grounding preference. Deleting that preference removed the personalized reason. The authenticated tests also covered forged provider choices, consent and deleted sources.
 
 [Empty dark weekly story](screenshots/premium-expansion/weekly-story-empty-dark-320.png) · [Populated light weekly story](screenshots/premium-expansion/weekly-story-populated-light-430.png)
+
+## Milestone 4 · Sound mixer and milestones
+
+Explore opens the ambient mixer with four original loops, independent volumes, master playback, one saved favorite and an optional stop timer. The favorite uses a validated account-scoped preference record. App backgrounding, screen exit and voice audio release the mixer. Playback starts only after an explicit action.
+
+The browser played two decoded layers with advancing audio clocks and independent gains, saved and restored a favorite after reload, and stopped both layers when hidden or when leaving. The 15-minute timer scheduled 900,000 ms. The browser test accelerated that one timeout and verified both layers stopped. Desktop drag and keyboard adjustment updated the visible and accessible slider values. A separate dark viewport test saved one real check-in, displayed the earned date and dismissed its celebration. Reload retained the milestone and did not replay the dialog. Existing qualification rules and local dates remain the source of truth. Celebration dismissal is remembered on the device for that account.
+
+[Playing mix in light mode](screenshots/premium-expansion/ambient-mixer-playback-light-430.png) · [Desktop volume slider](screenshots/premium-expansion/ambient-mixer-range-desktop-900.png) · [First Check-in in dark mode](screenshots/premium-expansion/milestone-first-checkin-dark-320.png)

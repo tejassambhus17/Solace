@@ -150,6 +150,13 @@ const forYou: FeaturedTile[] = [
 
 const extraTools: ExploreItem[] = [
   {
+    title: "Ambient Sound Mixer",
+    detail: "Layer rain, waves, forest air, and soft wind.",
+    icon: "musical-notes-outline",
+    categories: ["sleep", "focus"],
+    destination: { route: "ambient-mixer" },
+  },
+  {
     title: "Solace Moments",
     detail: "Choose a guided activity for how you feel.",
     icon: "sparkles-outline",

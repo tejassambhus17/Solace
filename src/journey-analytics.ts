@@ -314,6 +314,17 @@ export function journeyAnalytics(
 
 type JourneyAnalytics = ReturnType<typeof journeyAnalytics>;
 
+export function nextMilestoneCelebration(
+  milestones: JourneyAnalytics["milestones"],
+  seen: readonly string[],
+  streaks: boolean,
+) {
+  return milestones.find(
+    ({ id, earned }) =>
+      earned && !seen.includes(id) && (streaks || !id.endsWith("-streak")),
+  );
+}
+
 export function journeyReport(
   analytics: JourneyAnalytics,
   period: JourneyPeriod,

@@ -2,7 +2,9 @@ const ambientPlayers = new Set<() => void>();
 
 export function registerAmbientPlayback(stop: () => void) {
   ambientPlayers.add(stop);
-  return () => { ambientPlayers.delete(stop); };
+  return () => {
+    ambientPlayers.delete(stop);
+  };
 }
 
 export function interruptAmbientPlayback() {

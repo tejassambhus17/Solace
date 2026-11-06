@@ -13,7 +13,8 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { savedWeeklyStory } from "../../server/src/weekly-facts";
-import { useReducedMotion, Companion } from "../Companion";
+import { useReducedMotion } from "../Companion";
+import { MilestoneArt } from "../MilestoneCelebration";
 import { localDay } from "../content";
 import {
   adjacentJourneyDay,
@@ -104,6 +105,7 @@ const formatDay = (
 function useJourneyClock() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
+    setNow(new Date());
     const timer = setInterval(() => setNow(new Date()), 60_000);
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "active") setNow(new Date());
@@ -530,11 +532,7 @@ export function JourneyMilestonesScreen() {
     return (
       <Screen title={milestone.title} back={app.back}>
         <View style={styles.milestoneDetail}>
-          {milestone.earned ? (
-            <Companion state="happy" size={112} />
-          ) : (
-            <Icon name={milestone.icon} size={55} color={colors.muted} />
-          )}
+          <MilestoneArt {...milestone} />
           <AppText variant="heading">
             {milestone.earned
               ? "A little milestone earned"
@@ -595,11 +593,7 @@ export function JourneyMilestonesScreen() {
               },
             ]}
           >
-            <Icon
-              name={item.icon}
-              color={item.earned ? colors.primary : colors.muted}
-              size={23}
-            />
+            <MilestoneArt {...item} size={46} />
             <View style={styles.flex}>
               <AppText variant="label">{item.title}</AppText>
               <AppText variant="caption" color={colors.muted}>
@@ -670,7 +664,10 @@ export function JourneyScreen() {
   const progressTrack = dark ? "#51405F" : colors.border;
   const periodName = period === "week" ? "week" : "month";
   const selectedWeek = journeyWeek(selectedDay);
-  const savedStory = savedWeeklyStory(app.data.reflections, selectedWeek.endDay);
+  const savedStory = savedWeeklyStory(
+    app.data.reflections,
+    selectedWeek.endDay,
+  );
   const story = [
     {
       label: "Reflections",

@@ -4,6 +4,7 @@ import { MESSAGE_MAX_LENGTH } from "./ai.js";
 import { chatPracticeIds } from "./chat-practice.js";
 import { chatEvidenceKinds } from "./chat-evidence.js";
 import { weeklyPeriodSchema } from "./weekly.js";
+import { ambientTracks } from "./ambient-contract.js";
 import { ritualActivities, ritualDurations } from "./ritual-contract.js";
 import {
   goalMetrics,
@@ -73,22 +74,44 @@ const goalBase = base.extend({
   active: z.boolean().default(true),
 });
 const legacyGoalTarget = z.number().int().min(5).max(210);
+const volume = z.number().int().min(0).max(100);
+const ambientMixRecord = base
+  .extend({
+    id: z.literal("ambient-mix"),
+    volumes: z
+      .object(Object.fromEntries(ambientTracks.map((track) => [track, volume])))
+      .strict(),
+    masterVolume: volume,
+    timerMinutes: z.union([
+      z.literal(0),
+      z.literal(15),
+      z.literal(30),
+      z.literal(60),
+    ]),
+  })
+  .strict();
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
-  preferences: base
-    .extend({
-      id: z.literal("wellness"),
-      environment: z.enum(environments).optional(),
-      ambientEnabled: z.boolean().optional(),
-      streaksEnabled: z.boolean().optional(),
-      dailyRitual: z.object({
-        enabled: z.boolean(),
-        day,
-        skipPractice: z.boolean(),
-        activity: z.enum(ritualActivities).optional(),
-        durationMinutes: z.literal(ritualDurations).optional(),
-      }).strict().optional(),
-    })
-    .strict(),
+  preferences: z.union([
+    ambientMixRecord,
+    base
+      .extend({
+        id: z.literal("wellness"),
+        environment: z.enum(environments).optional(),
+        ambientEnabled: z.boolean().optional(),
+        streaksEnabled: z.boolean().optional(),
+        dailyRitual: z
+          .object({
+            enabled: z.boolean(),
+            day,
+            skipPractice: z.boolean(),
+            activity: z.enum(ritualActivities).optional(),
+            durationMinutes: z.literal(ritualDurations).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+  ]),
   goals: z.union([
     goalBase
       .extend({
