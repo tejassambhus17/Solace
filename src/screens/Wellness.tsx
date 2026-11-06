@@ -12,9 +12,10 @@ import {
   View,
 } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useApp } from "../store";
+import { useApp, type WeeklyReflectionResult } from "../store";
 import { useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
+import { journeyWeek } from "../journey-analytics";
 import {
   Screen,
   Card,
@@ -178,6 +179,7 @@ function Field({
   minHeight = 100,
   label,
   editable = true,
+  maxLength = 3000,
 }: {
   value: string;
   onChangeText: (v: string) => void;
@@ -185,6 +187,7 @@ function Field({
   minHeight?: number;
   label?: string;
   editable?: boolean;
+  maxLength?: number;
 }) {
   const { colors, resolved } = useTheme();
   const [focused, setFocused] = useState(false);
@@ -196,7 +199,7 @@ function Field({
       onChangeText={onChangeText}
       multiline
       textAlignVertical="top"
-      maxLength={3000}
+      maxLength={maxLength}
       placeholder={placeholder}
       placeholderTextColor={colors.muted}
       selectionColor={colors.primary}
@@ -1858,25 +1861,159 @@ function Feedback({ params }: { params: AnyRecord }) {
   );
 }
 
+function selectedReflectionWeek(day: unknown) {
+  if (typeof day !== "string") return undefined;
+  try {
+    const { startDay, endDay } = journeyWeek(day);
+    if (day === endDay) return { start: startDay, end: endDay };
+  } catch {
+    // Other routes can open the journal without a valid Journey week.
+  }
+}
+
+function reflectionPeriodLabel(period: { start: string; end: string }) {
+  const format = (day: string, year: boolean) =>
+    new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      ...(year ? { year: "numeric" } : {}),
+    });
+  return `${format(period.start, period.start.slice(0, 4) !== period.end.slice(0, 4))} to ${format(period.end, true)}`;
+}
+
 function Reflection() {
   const app = useApp();
   const { colors, resolved } = useTheme();
-  const draftKey = "reflection:new";
+  const editId = typeof app.params?.id === "string" ? app.params.id : undefined;
+  const existing = editId
+    ? app.data.reflections.find((entry) => entry.id === editId)
+    : undefined;
+  const week = editId ? undefined : selectedReflectionWeek(app.params?.weekEnd);
+  const draftKey = editId
+    ? `reflection:edit:${editId}`
+    : week
+      ? `reflection:weekly:${week.end}`
+      : "reflection:new";
   const draft = app.editorDrafts[draftKey];
-  const [text, setText] = useState(draft?.text || "");
-  const [need, setNeed] = useState(draft?.need || "");
-  const [expanded, setExpanded] = useState(!!draft?.need);
+  const [text, setText] = useState(
+    draft?.text ??
+      String(existing?.text || existing?.content || existing?.note || ""),
+  );
+  const [need, setNeed] = useState(draft?.need ?? String(existing?.need || ""));
+  const [expanded, setExpanded] = useState(!!need);
+  const [showEditor, setShowEditor] = useState(!week || !!draft?.text);
+  const [weeklyProvider, setWeeklyProvider] = useState(
+    draft?.weeklyProvider === "live" || draft?.weeklyProvider === "offline"
+      ? draft.weeklyProvider
+      : undefined,
+  );
+  const [suggestion, setSuggestion] = useState<WeeklyReflectionResult | null>(
+    null,
+  );
+  const [guidedPrompt, setGuidedPrompt] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+  const generation = useRef<AbortController | null>(null);
   const [discarding, setDiscarding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
   const saveLock = useRef(false);
-  function writeDraft(nextText = text, nextNeed = need) {
+  const maxLength = editId ? 10000 : 3000;
+  useEffect(() => () => generation.current?.abort(), []);
+  function cancelSuggestion() {
+    const pending = generation.current;
+    generation.current = null;
+    pending?.abort();
+    setGenerating(false);
+  }
+  async function generateSuggestion() {
+    if (!week || generation.current) return;
+    const pending = new AbortController();
+    generation.current = pending;
+    setGenerating(true);
+    setGenerationError("");
+    setSuggestion(null);
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const result = await app.weeklyReflection(week.end, {
+        today: localDay(),
+        timeZone,
+        signal: pending.signal,
+      });
+      if (generation.current !== pending || pending.signal.aborted) return;
+      if (
+        result?.period?.start !== week.start ||
+        result?.period?.end !== week.end ||
+        (result.provider !== "live" && result.provider !== "offline") ||
+        typeof result.hasActivity !== "boolean" ||
+        typeof result.prompt !== "string" ||
+        !result.prompt.trim() ||
+        typeof result.reflection !== "string" ||
+        !result.reflection.trim() ||
+        result.reflection.length > maxLength
+      )
+        throw new Error(
+          "The reflection draft could not be read. Please try again.",
+        );
+      setSuggestion(result);
+    } catch (e) {
+      if (generation.current === pending && !pending.signal.aborted)
+        setGenerationError(errText(e));
+    } finally {
+      if (generation.current === pending) {
+        generation.current = null;
+        setGenerating(false);
+      }
+    }
+  }
+  function draftFields(
+    nextText: string,
+    nextNeed: string,
+    provider = weeklyProvider,
+  ) {
+    return {
+      text: nextText,
+      need: nextNeed,
+      ...(provider ? { weeklyProvider: provider } : {}),
+    };
+  }
+  function writeDraft(
+    nextText = text,
+    nextNeed = need,
+    provider = weeklyProvider,
+  ) {
     if (saveLock.current) return;
     setText(nextText);
     setNeed(nextNeed);
-    app.setEditorDraft(draftKey, { text: nextText, need: nextNeed });
+    setWeeklyProvider(provider);
+    app.setEditorDraft(draftKey, draftFields(nextText, nextNeed, provider));
+  }
+  function useSuggestion() {
+    if (!suggestion) return;
+    if (!suggestion.hasActivity) {
+      setGuidedPrompt(suggestion.prompt);
+    } else {
+      const next = text.trim()
+        ? `${text}\n\n${suggestion.reflection}`
+        : suggestion.reflection;
+      if (next.length > maxLength) {
+        setGenerationError(
+          "This suggestion is too long to add to your draft. You can keep writing below.",
+        );
+        setShowEditor(true);
+        return;
+      }
+      writeDraft(
+        next,
+        need,
+        weeklyProvider === "live" ? "live" : suggestion.provider,
+      );
+    }
+    setSuggestion(null);
+    setGenerationError("");
+    setShowEditor(true);
   }
   async function save() {
     if (saveLock.current) return;
@@ -1885,18 +2022,26 @@ function Reflection() {
       return;
     }
     saveLock.current = true;
-    const submittedDraft = { text, need };
+    const submittedDraft = draftFields(text, need);
     app.setEditorDraft(draftKey, submittedDraft);
     setSaving(true);
     setError("");
     try {
       const result = await app.save("reflections", {
+        ...(editId ? { id: editId } : {}),
         text: text.trim(),
         need: need.trim(),
-        ...(app.params?.conversationId
+        ...(!editId && app.params?.conversationId
           ? { sourceConversationId: app.params.conversationId }
           : {}),
-        createdAt: stamp(),
+        ...(!editId ? { createdAt: stamp() } : {}),
+        ...(!editId && week
+          ? {
+              day: localDay(),
+              weeklyPeriod: week,
+              ...(weeklyProvider ? { weeklyProvider } : {}),
+            }
+          : {}),
       });
       setSavedId(String(result.id));
       app.setEditorDraft(draftKey, null, submittedDraft);
@@ -1912,7 +2057,9 @@ function Reflection() {
     return (
       <Screen>
         <Header />
-        <PageIntro title="A little space, for you">
+        <PageIntro
+          title={editId ? "Reflection updated" : "A little space, for you"}
+        >
           {app.pendingWrites.some((entry) => entry.id === savedId)
             ? app.draftProtection === "device"
               ? "Your reflection is saved securely on this device. It is waiting to sync to your account."
@@ -1938,10 +2085,14 @@ function Reflection() {
             />
           </View>
         )}
-        <Button
-          title="View my Journey"
-          onPress={() => app.navigate("journey")}
-        />
+        {editId ? (
+          <Button title="Back to reflection" onPress={app.back} />
+        ) : (
+          <Button
+            title="View my Journey"
+            onPress={week ? app.back : () => app.navigate("journey")}
+          />
+        )}
         <Button
           title="Back to Today"
           variant="secondary"
@@ -1961,102 +2112,203 @@ function Reflection() {
   return (
     <Screen>
       <Header />
-      <PageIntro title={"A moment\nto reflect"}>
-        A guided journal to notice, process, and make space for what is on your
-        mind.
-      </PageIntro>
-      {!!app.params?.prompt && <Hint>{String(app.params.prompt)}</Hint>}
-      <SaveToToolkit
-        kind="reflection"
-        targetId="reflection"
-        title="A moment to reflect"
-      />
-      <Card
-        style={{
-          padding: 16,
-          backgroundColor:
-            resolved === "dark" ? colors.surface : colors.lavenderSurface,
-          borderColor:
-            resolved === "dark" ? colors.border : colors.lavenderSurface,
-        }}
+      <PageIntro
+        title={
+          editId
+            ? "Edit your reflection"
+            : week
+              ? "Your weekly reflection"
+              : "A moment\nto reflect"
+        }
       >
-        <Heading small style={{ color: colors.lavenderText }}>
-          What has been on your mind?
-        </Heading>
-        <Field
-          value={text}
-          onChangeText={(value) => writeDraft(value, need)}
-          editable={!saving}
-          placeholder="Write your reflection here…"
-          minHeight={180}
-        />
-      </Card>
-      <Action
-        title="What might you need?"
-        description="If it feels helpful, explore what you need more of right now. (Optional)"
-        onPress={() => setExpanded(!expanded)}
-      />
-      {expanded && (
-        <Field
-          value={need}
-          onChangeText={(value) => writeDraft(text, value)}
-          editable={!saving}
-          placeholder="Perhaps rest, reassurance, connection, or something else…"
-          minHeight={100}
-        />
+        {week
+          ? reflectionPeriodLabel(week)
+          : "A guided journal to notice, process, and make space for what is on your mind."}
+      </PageIntro>
+      {editId && (!existing || existing.localOnly) && (
+        <Hint>
+          {existing
+            ? "Sync this reflection before editing it."
+            : "This reflection is no longer available."}
+        </Hint>
       )}
-      <Copy muted style={{ fontSize: 12, marginTop: 14, marginBottom: 14 }}>
-        {app.draftProtection === "device"
-          ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
-          : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
-      </Copy>
-      <ErrorNote error={app.offlineError || ""} />
-      <ErrorNote error={error} />
-      <Button
-        title={saving ? "Saving…" : "Save reflection"}
-        onPress={save}
-        disabled={saving}
-      />
-      <Button
-        title="Keep draft and leave"
-        variant="ghost"
-        onPress={app.back}
-        disabled={saving}
-        style={{ marginTop: 10 }}
-      />
-      {!!(text || need) && !discarding && (
-        <Button
-          title="Discard draft…"
-          variant="ghost"
-          disabled={saving}
-          onPress={() => setDiscarding(true)}
-        />
-      )}
-      {discarding && (
-        <Card style={{ marginTop: 12 }}>
-          <Heading small>Discard this draft?</Heading>
-          <Copy style={{ marginTop: 7, marginBottom: 12 }}>
-            This removes the writing you have not saved. You can keep writing
-            instead.
+      {week && (
+        <Card style={{ padding: 16, marginBottom: 18, gap: 10 }}>
+          <Heading small>Look back on your week</Heading>
+          <Copy muted>
+            Use saved activity from this week as a starting point, or write in
+            your own words.
           </Copy>
-          <Button
-            title="Keep writing"
-            variant="secondary"
-            onPress={() => setDiscarding(false)}
-          />
-          <Button
-            title="Discard draft"
-            variant="ghost"
-            onPress={() => {
-              setText("");
-              setNeed("");
-              app.setEditorDraft(draftKey, null);
-              setExpanded(false);
-              setDiscarding(false);
-              setError("");
-            }}
-          />
+          {generating ? (
+            <>
+              <Copy accessibilityLiveRegion="polite">
+                Preparing your reflection draft…
+              </Copy>
+              <Button
+                title="Cancel generation"
+                variant="secondary"
+                onPress={cancelSuggestion}
+              />
+            </>
+          ) : (
+            <Button
+              title={
+                generationError
+                  ? "Retry reflection draft"
+                  : "Create an AI-assisted draft"
+              }
+              onPress={generateSuggestion}
+              disabled={saving}
+            />
+          )}
+          {!showEditor && (
+            <Button
+              title="Write my own reflection"
+              variant="secondary"
+              onPress={() => {
+                cancelSuggestion();
+                setSuggestion(null);
+                setGenerationError("");
+                setShowEditor(true);
+              }}
+            />
+          )}
+          <ErrorNote error={generationError} />
+          {suggestion && (
+            <>
+              <Heading small>
+                {suggestion.provider === "live"
+                  ? "AI-assisted draft"
+                  : suggestion.hasActivity
+                    ? "Recorded summary"
+                    : "A guided prompt"}
+              </Heading>
+              <Copy selectable>
+                {suggestion.hasActivity
+                  ? suggestion.reflection
+                  : suggestion.prompt}
+              </Copy>
+              <Copy muted style={{ fontSize: 12 }}>
+                {suggestion.explanation}
+              </Copy>
+              <Button
+                title={
+                  suggestion.hasActivity
+                    ? text.trim()
+                      ? "Add to my draft"
+                      : "Use this draft"
+                    : "Write with this prompt"
+                }
+                onPress={useSuggestion}
+                variant="secondary"
+                disabled={saving}
+              />
+            </>
+          )}
         </Card>
+      )}
+      {showEditor && (!editId || (existing && !existing.localOnly)) && (
+        <>
+          {!!guidedPrompt && <Hint>{guidedPrompt}</Hint>}
+          {!!app.params?.prompt && <Hint>{String(app.params.prompt)}</Hint>}
+          {!week && !editId && (
+            <SaveToToolkit
+              kind="reflection"
+              targetId="reflection"
+              title="A moment to reflect"
+            />
+          )}
+          <Card
+            style={{
+              padding: 16,
+              backgroundColor:
+                resolved === "dark" ? colors.surface : colors.lavenderSurface,
+              borderColor:
+                resolved === "dark" ? colors.border : colors.lavenderSurface,
+            }}
+          >
+            <Heading small style={{ color: colors.lavenderText }}>
+              What has been on your mind?
+            </Heading>
+            <Field
+              value={text}
+              onChangeText={(value) => writeDraft(value, need)}
+              editable={!saving}
+              placeholder="Write your reflection here…"
+              minHeight={180}
+              maxLength={maxLength}
+            />
+          </Card>
+          <Action
+            title="What might you need?"
+            description="If it feels helpful, explore what you need more of right now. (Optional)"
+            onPress={() => setExpanded(!expanded)}
+          />
+          {expanded && (
+            <Field
+              value={need}
+              onChangeText={(value) => writeDraft(text, value)}
+              editable={!saving}
+              placeholder="Perhaps rest, reassurance, connection, or something else…"
+              minHeight={100}
+              maxLength={maxLength}
+            />
+          )}
+          <Copy muted style={{ fontSize: 12, marginTop: 14, marginBottom: 14 }}>
+            {app.draftProtection === "device"
+              ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
+              : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
+          </Copy>
+          <ErrorNote error={app.offlineError || ""} />
+          <ErrorNote error={error} />
+          <Button
+            title={saving ? "Saving…" : "Save reflection"}
+            onPress={save}
+            disabled={saving}
+          />
+          <Button
+            title="Keep draft and leave"
+            variant="ghost"
+            onPress={app.back}
+            disabled={saving}
+            style={{ marginTop: 10 }}
+          />
+          {!!(text || need) && !discarding && (
+            <Button
+              title="Discard draft…"
+              variant="ghost"
+              disabled={saving}
+              onPress={() => setDiscarding(true)}
+            />
+          )}
+          {discarding && (
+            <Card style={{ marginTop: 12 }}>
+              <Heading small>Discard this draft?</Heading>
+              <Copy style={{ marginTop: 7, marginBottom: 12 }}>
+                This removes the writing you have not saved. You can keep
+                writing instead.
+              </Copy>
+              <Button
+                title="Keep writing"
+                variant="secondary"
+                onPress={() => setDiscarding(false)}
+              />
+              <Button
+                title="Discard draft"
+                variant="ghost"
+                onPress={() => {
+                  setText("");
+                  setNeed("");
+                  setWeeklyProvider(undefined);
+                  app.setEditorDraft(draftKey, null);
+                  setExpanded(false);
+                  setDiscarding(false);
+                  setError("");
+                }}
+              />
+            </Card>
+          )}
+        </>
       )}
     </Screen>
   );
@@ -2083,10 +2335,14 @@ function Reflections() {
           records.map((record: AnyRecord) => (
             <Action
               key={record.id}
-              title={new Date(record.createdAt).toLocaleDateString(undefined, {
-                month: "long",
-                day: "numeric",
-              })}
+              title={
+                record.weeklyPeriod
+                  ? "Weekly reflection"
+                  : new Date(record.createdAt).toLocaleDateString(undefined, {
+                      month: "long",
+                      day: "numeric",
+                    })
+              }
               description={`${record.localOnly ? "Waiting to sync · " : ""}${String(
                 record.text ||
                   record.content ||
@@ -2134,14 +2390,20 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
   return (
     <Screen>
       <Header />
-      <PageIntro title="Your reflection">
-        {record
-          ? new Date(record.createdAt).toLocaleDateString(undefined, {
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-            })
-          : "This reflection is no longer available."}
+      <PageIntro
+        title={
+          record?.weeklyPeriod ? "Your weekly reflection" : "Your reflection"
+        }
+      >
+        {record?.weeklyPeriod
+          ? reflectionPeriodLabel(record.weeklyPeriod)
+          : record
+            ? new Date(record.createdAt).toLocaleDateString(undefined, {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })
+            : "This reflection is no longer available."}
       </PageIntro>
       {!!record?.localOnly && (
         <Hint>
@@ -2166,6 +2428,15 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
             )}
           </Card>
           <View style={{ marginTop: 20 }}>
+            {!record.localOnly && (
+              <Button
+                title="Edit reflection"
+                icon="create-outline"
+                onPress={() => app.navigate("reflection", { id: record.id })}
+                disabled={deleting}
+                style={{ marginBottom: 8 }}
+              />
+            )}
             <Button
               title={confirmDelete ? "Keep reflection" : "Delete reflection"}
               variant="secondary"

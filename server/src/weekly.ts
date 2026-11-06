@@ -21,6 +21,62 @@ export const calendarDay = z
       date.toISOString().slice(0, 10) === value
     );
   }, "Enter a valid calendar day.");
+
+export const weeklyTimeZone = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((zone) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: zone });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Choose a valid time zone.");
+
+function calendarOffset(day: string, days: number) {
+  const date = new Date(`${day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export const weeklyPeriodSchema = z
+  .object({ start: calendarDay, end: calendarDay })
+  .strict()
+  .refine(
+    ({ start, end }) =>
+      new Date(`${end}T12:00:00Z`).getUTCDay() === 0 &&
+      calendarOffset(end, -6) === start,
+    "Choose a Monday-to-Sunday reflection week.",
+  );
+
+export function lastVisibleWeekEnd(today: string) {
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+  return calendarOffset(today, (7 - weekday) % 7);
+}
+
+function dateFormatter(timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function formattedDay(date: Date, formatter?: Intl.DateTimeFormat) {
+  if (!formatter) return date.toISOString().slice(0, 10);
+  const parts = formatter.formatToParts(date);
+  const value = (type: "year" | "month" | "day") =>
+    parts.find((part) => part.type === type)?.value;
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+export function weeklyLocalToday(now: Date, timeZone?: string) {
+  return formattedDay(now, timeZone ? dateFormatter(timeZone) : undefined);
+}
+
 export function weeklyFacts(
   data: {
     checkins: WellnessRecord[];
@@ -29,38 +85,47 @@ export function weeklyFacts(
   },
   endDate: string,
   now = new Date(),
+  view: { today?: string; timeZone?: string } = {},
 ) {
   const end = calendarDay.parse(endDate);
-  const startDate = new Date(`${end}T12:00:00Z`);
-  startDate.setUTCDate(startDate.getUTCDate() - 6);
-  const start = startDate.toISOString().slice(0, 10);
-  const within = (records: WellnessRecord[]) =>
-    records.filter((record) => {
+  const start = calendarOffset(end, -6);
+  const formatter = view.timeZone ? dateFormatter(view.timeZone) : undefined;
+  const within = (records: WellnessRecord[]) => {
+    const seen = new Set<string>();
+    return records.flatMap((record) => {
       const timestamp =
         typeof record.createdAt === "string"
           ? Date.parse(record.createdAt)
           : NaN;
-      if (!Number.isFinite(timestamp) || timestamp > now.valueOf())
-        return false;
+      if (!Number.isFinite(timestamp) || timestamp > now.valueOf()) return [];
       const day =
         typeof record.day === "string" &&
         calendarDay.safeParse(record.day).success
           ? record.day
-          : new Date(timestamp).toISOString().slice(0, 10);
-      return day >= start && day <= end;
+          : formattedDay(new Date(timestamp), formatter);
+      if (day < start || day > end || (view.today && day > view.today))
+        return [];
+      if (typeof record.id === "string" && record.id) {
+        if (seen.has(record.id)) return [];
+        seen.add(record.id);
+      }
+      return [{ record, day }];
     });
+  };
   const checkins = within(data.checkins);
   const completed = within(data.sessions).filter(
-    (record) => record.completed === true,
+    ({ record }) => record.completed === true,
   );
-  const seconds = completed.reduce((sum, record) => {
-    const duration = Number(
-      record.durationSec ?? record.durationSeconds ?? record.duration ?? 0,
-    );
+  const seconds = completed.reduce((sum, { record }) => {
+    const duration =
+      record.durationSec ?? record.durationSeconds ?? record.duration;
     return (
       sum +
-      (Number.isFinite(duration) && duration >= 0
-        ? Math.min(7200, duration)
+      (typeof duration === "number" &&
+      Number.isFinite(duration) &&
+      duration >= 0 &&
+      duration <= 7200
+        ? duration
         : 0)
     );
   }, 0);
@@ -70,24 +135,17 @@ export function weeklyFacts(
     minutes: Math.floor(seconds / 60),
     reflections: within(data.reflections).length,
     helpfulSessions: completed.filter(
-      (record) =>
+      ({ record }) =>
         record.feedback === "Helped" || record.feedback === "A little",
     ).length,
-    days: [
-      ...new Set(
-        checkins.map((record) =>
-          typeof record.day === "string"
-            ? record.day
-            : String(record.createdAt).slice(0, 10),
-        ),
-      ),
-    ].sort(),
+    days: [...new Set(checkins.map(({ day }) => day))].sort(),
   };
   return { facts, period: { start, end } };
 }
 export async function weeklyReflection(
   config: AIConfig,
   summary: ReturnType<typeof weeklyFacts>,
+  signal?: AbortSignal,
 ) {
   const { facts, period } = summary;
   const hasData =
@@ -105,18 +163,23 @@ export async function weeklyReflection(
       .strict();
     const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
     delete jsonSchema.$schema;
+    const { days: _days, ...counts } = facts;
     const output = await structuredOutput(
       config,
       "solace_weekly_invitation",
       jsonSchema,
       "Write one optional, gentle reflection question from the supplied participation counts. No claims about mood, improvement, decline, health, diagnosis, emotional patterns, reasons or outcomes. Do not repeat or introduce numbers, dates or trends. Do not summarize private writing or invent memories. Ask what the person noticed or wants to make room for, without judging how much they did.",
-      facts,
+      counts,
       250,
+      signal,
     );
     const parsed = schema.safeParse(output);
     if (
       !parsed.success ||
-      /\d|\b(?:diagnos|depress|disorder|improv|declin|recover|clinical|cure|treat|pattern|trend|better|worse)/i.test(
+      !/^(?:what|which|how|is there|would you|if you)\b[^.!?\r\n]*\?$/i.test(
+        parsed.data.invitation,
+      ) ||
+      /\d|\b(?:diagnos|depress|disorder|improv|declin|recover|clinical|cure|treat|pattern|trend|better|worse|must|should|fail|lazy|missed|blame)/i.test(
         parsed.data.invitation,
       )
     )
@@ -127,12 +190,16 @@ export async function weeklyReflection(
     throw new Error("AI_NOT_CONFIGURED");
   return {
     provider: mode,
+    hasActivity: hasData,
+    prompt: invitation,
     reflection: `${factual}\n\n${invitation}`,
     facts,
     period,
     explanation:
       mode === "live"
         ? "The counts come from your saved records. AI helped phrase the optional reflection question; it does not assess your mental health."
-        : "A factual summary of your saved records with a built-in reflection prompt. Live AI is off or there is not yet recorded activity to reflect on.",
+        : hasData
+          ? "The counts come from your saved records. The reflection question is built into Solace."
+          : "A guided prompt to help you get started. As you save activity, you can return here for a weekly summary.",
   };
 }

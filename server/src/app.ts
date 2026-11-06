@@ -38,7 +38,14 @@ import {
 } from "./ai.js";
 import { AvatarError, prepareAvatar } from "./avatar.js";
 import { generateMoment, environments, type MomentMemory } from "./moments.js";
-import { calendarDay, weeklyFacts, weeklyReflection } from "./weekly.js";
+import {
+  calendarDay,
+  lastVisibleWeekEnd,
+  weeklyFacts,
+  weeklyLocalToday,
+  weeklyReflection,
+  weeklyTimeZone,
+} from "./weekly.js";
 import { transcribeAudio, voiceAvailable, audioTypes } from "./voice.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
@@ -453,6 +460,21 @@ export function createApp(config: AppConfig) {
   app.post("/api/records/:collection", (req: AuthRequest, res) => {
     const collection = collectionSchema.parse(req.params.collection);
     const parsed = parseRecord(collection, req.body);
+    if (collection === "reflections" && parsed.weeklyPeriod) {
+      const { start } = parsed.weeklyPeriod as { start: string; end: string };
+      const tomorrow = new Date();
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+      if (
+        start > weeklyLocalToday(tomorrow) ||
+        (typeof parsed.day === "string" && start > parsed.day)
+      )
+        return apiError(
+          res,
+          400,
+          "Choose this week or an earlier week.",
+          "VALIDATION_ERROR",
+        );
+    }
     if (collection === "conversations") {
       delete parsed.contextResetMessageCount;
       delete parsed.contextResetAt;
@@ -562,6 +584,17 @@ export function createApp(config: AppConfig) {
       createdAt: existing.createdAt,
       updatedAt: new Date().toISOString(),
     };
+    if (
+      collection === "reflections" &&
+      (!isDeepStrictEqual(record.weeklyPeriod, existing.weeklyPeriod) ||
+        record.weeklyProvider !== existing.weeklyProvider)
+    )
+      return apiError(
+        res,
+        409,
+        "A saved reflection keeps its original week and source.",
+        "REFLECTION_WEEK_LOCKED",
+      );
     if (
       collection === "favorites" &&
       (record.kind !== existing.kind || record.targetId !== existing.targetId)
@@ -756,14 +789,41 @@ export function createApp(config: AppConfig) {
     "/api/insights/weekly",
     asyncRoute(async (req, res) => {
       const input = z
-        .object({ endDate: calendarDay.optional() })
+        .object({
+          endDate: calendarDay.optional(),
+          today: calendarDay.optional(),
+          timeZone: weeklyTimeZone.optional(),
+        })
         .strict()
         .parse(req.body ?? {});
       const owner = user(req).id;
-      const endDate = input.endDate || new Date().toISOString().slice(0, 10);
-      const tomorrow = new Date();
+      const now = new Date();
+      const utcToday = weeklyLocalToday(now);
+      const tomorrow = new Date(now);
       tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      if (endDate > tomorrow.toISOString().slice(0, 10))
+      const yesterday = new Date(now);
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      const latestLegacyDay = weeklyLocalToday(tomorrow);
+      if (
+        input.today &&
+        (input.today < weeklyLocalToday(yesterday) ||
+          input.today > latestLegacyDay)
+      )
+        return apiError(
+          res,
+          400,
+          "Refresh Journey to reflect on your current calendar.",
+          "VALIDATION_ERROR",
+        );
+      const today = input.timeZone
+        ? weeklyLocalToday(now, input.timeZone)
+        : input.today;
+      const visibleEnd = today ? lastVisibleWeekEnd(today) : latestLegacyDay;
+      const endDate = input.endDate || (today ? visibleEnd : utcToday);
+      if (
+        endDate > visibleEnd ||
+        (today && new Date(`${endDate}T12:00:00Z`).getUTCDay() !== 0)
+      )
         return apiError(
           res,
           400,
@@ -785,11 +845,21 @@ export function createApp(config: AppConfig) {
             reflections: list(owner, "reflections"),
           },
           endDate,
+          now,
+          { today, timeZone: input.timeZone },
         );
       const initial = summary();
       weeklyLocks.add(owner);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      res.once("close", cancel);
       try {
-        const result = await weeklyReflection(config.ai, initial);
+        const result = await weeklyReflection(
+          config.ai,
+          initial,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
         if (!currentAccount(req))
           return apiError(
             res,
@@ -805,7 +875,10 @@ export function createApp(config: AppConfig) {
             "WEEKLY_CHANGED",
           );
         return res.json(result);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
       } finally {
+        res.off("close", cancel);
         weeklyLocks.delete(owner);
       }
     }),

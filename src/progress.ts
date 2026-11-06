@@ -27,41 +27,51 @@ export function journeyRecords(
 ) {
   if (Number.isNaN(now.valueOf()))
     throw new RangeError("A valid date is required.");
-  const today = localDay(now);
   const result = {} as Record<(typeof categories)[number], RecordItem[]>;
   for (const collection of categories) {
-    const seen = new Set<string>();
-    result[collection] = (
-      Array.isArray(data[collection]) ? [...data[collection]!] : []
-    )
-      .filter((item) => {
-        if (
-          !item ||
-          typeof item !== "object" ||
-          (!includePending && item.localOnly === true)
-        )
-          return false;
-        const day = recordDay(item);
-        const timestamp = Date.parse(item.createdAt);
-        if (
-          !day ||
-          day > today ||
-          (!Number.isNaN(timestamp) && timestamp > now.valueOf())
-        )
-          return false;
-        if (typeof item.id === "string" && item.id) {
-          if (seen.has(item.id)) return false;
-          seen.add(item.id);
-        }
-        return true;
-      })
-      .sort((a, b) =>
-        String(b.createdAt || recordDay(b)).localeCompare(
-          String(a.createdAt || recordDay(a)),
-        ),
-      );
+    result[collection] = visibleJourneyRecords(
+      data[collection],
+      now,
+      includePending,
+    );
   }
   return result;
+}
+
+export function visibleJourneyRecords(
+  items: readonly RecordItem[] | undefined,
+  now: Date,
+  includePending = false,
+) {
+  const today = localDay(now);
+  const seen = new Set<string>();
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => {
+      if (
+        !item ||
+        typeof item !== "object" ||
+        (!includePending && item.localOnly === true)
+      )
+        return false;
+      const day = recordDay(item);
+      const timestamp = Date.parse(item.createdAt);
+      if (
+        !day ||
+        day > today ||
+        (!Number.isNaN(timestamp) && timestamp > now.valueOf())
+      )
+        return false;
+      if (typeof item.id === "string" && item.id) {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+      }
+      return true;
+    })
+    .sort((a, b) =>
+      String(b.createdAt || recordDay(b)).localeCompare(
+        String(a.createdAt || recordDay(a)),
+      ),
+    );
 }
 
 export function activeSeconds(session: RecordItem) {
@@ -156,12 +166,7 @@ export function journeySummary(data: JourneyData, now = new Date()) {
   };
 }
 
-export function calendarMonth(
-  year: number,
-  month: number,
-  data: JourneyData,
-  now = new Date(),
-) {
+export function calendarMonthDays(year: number, month: number) {
   if (
     !Number.isInteger(year) ||
     !Number.isInteger(month) ||
@@ -171,9 +176,27 @@ export function calendarMonth(
     month > 11
   )
     throw new RangeError("Choose a valid calendar month.");
-  const records = journeyRecords(data, now);
   const first = new Date(year, month, 1, 12);
-  const prefix = localDay(first).slice(0, 7);
+  const offset = (first.getDay() + 6) % 7;
+  const length = new Date(year, month + 1, 0, 12).getDate();
+  const cells = Math.ceil((offset + length) / 7) * 7;
+  return Array.from({ length: cells }, (_, index) => {
+    const day = index - offset + 1;
+    return day < 1 || day > length
+      ? null
+      : localDay(new Date(year, month, day, 12));
+  });
+}
+
+export function calendarMonth(
+  year: number,
+  month: number,
+  data: JourneyData,
+  now = new Date(),
+) {
+  const calendar = calendarMonthDays(year, month);
+  const records = journeyRecords(data, now);
+  const prefix = localDay(new Date(year, month, 1, 12)).slice(0, 7);
   const today = localDay(now);
   const entries = new Map<string, { count: number; mood: string | null }>();
   for (const collection of categories) {
@@ -189,18 +212,12 @@ export function calendarMonth(
         });
     }
   }
-  const offset = (first.getDay() + 6) % 7;
-  const length = new Date(year, month + 1, 0, 12).getDate();
-  const cells = Math.ceil((offset + length) / 7) * 7;
-  return Array.from({ length: cells }, (_, index) => {
-    const day = index - offset + 1;
-    if (day < 1 || day > length) return null;
-    const date = new Date(year, month, day, 12);
-    const key = localDay(date);
+  return calendar.map((key) => {
+    if (!key) return null;
     const entry = entries.get(key);
     return {
       key,
-      day,
+      day: Number(key.slice(-2)),
       mood: entry?.mood ?? null,
       count: entry?.count ?? 0,
       future: key > today,

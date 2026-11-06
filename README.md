@@ -44,9 +44,11 @@ Recommendations name the approved memory used when it influences a suggestion. T
 
 ## Journey, goals and gentle milestones
 
-Journey includes a selectable monthly calendar, day-by-day mood/activity history, completed-practice minutes, saved reflections and self-reported helpfulness. The seven-day review uses actual account records. The weekly-reflection adapter can summarize those facts with a configured AI provider; the local recorded summary is labeled when live AI is off. Neither route supplies diagnoses, invented mood patterns or a wellbeing score.
+Journey opens with a weekly view and remembers each account's Week, Month or All time preference on this device. Its calendar opens day-by-day history, and the summaries count distinct check-in days, completed Moments and actual active time. Prior-period comparisons appear when the previous period has activity. The saved story opens reflections, affirmations and check-ins.
 
-Personal weekly time goals can be changed, paused and resumed. Check-in streaks are optional. Milestones include a first Moment, three reflections, five mindful pauses and seven distinct check-in days; they come from real saved records. Quiet days never delete achievements. Unsynced writing stays visible with a waiting-to-sync label but does not earn account milestones. Celebrations acknowledge an earned milestone, not a fabricated achievement.
+Choose a calendar week to write a reflection or request an editable draft based on your saved activity and feedback. The local recorded summary is labeled when live AI is off. A configured provider receives counts to suggest a question. When there is no activity to summarize, Journey offers a guided prompt. Weekly reflections are only saved when you choose to save, and you can reopen, edit or delete them.
+
+Set a goal for check-in days, completed Moments, mindful minutes or saved reflections, over a week, month or all time. Goals can be edited, paused, resumed or removed. Milestones such as the first check-in, three- and seven-day streaks, and first weekly reflection derive from saved records. Unsynced writing is marked as waiting to sync and does not count toward account milestones.
 
 ## Existing foundations retained
 

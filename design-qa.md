@@ -99,3 +99,9 @@ Added three purpose-generated assets on the neutral black/charcoal palette: tran
 The initial batched review covered phone dark flows and light supporting surfaces. Adjustments bounded light illustration away from text and moved weekly reflection above XP in Journey. The confirmation covered persisted toolkit data, saved/incomplete grounding counts and the wide layout. Dark surfaces remain neutral, and the four required tabs preserve their order and originating detail state. No horizontal document overflow or final browser console errors were recorded. Raw evidence and a viewport-only contact sheet are in docs/screenshots/premium-*.png.
 
 The browser is a preview of shared mobile source. Native accessibility, background delivery and performance require the installed final build; no claim of class-leading performance or complete release readiness is made from visual review alone.
+
+## Journey redesign — 6 November 2026
+
+Compared the light and dark references side by side with the 394 × 852 browser preview. The result follows the mountain header, segmented reporting switch, three metric cards, week calendar, lotus reflection banner, goal, milestone row and saved story. Existing Solace assets supply the landscape and lotus. Milestones use the app's icon set, and the phone mockup's fixed values are replaced by the signed-in account's actual data. The captures use a synthetic account.
+
+The tested 320 and 430 pixel viewports had no horizontal overflow. Longer calendars and larger text can scroll above the existing bottom navigation. The Android debug check reached the saved-story links by scrolling. The browser does not establish iPhone safe areas, Dynamic Type, VoiceOver or Liquid Glass appearance; the native navigation source was unchanged.

@@ -25,7 +25,12 @@ import {
   TodayScreen,
   ExploreScreen,
 } from "./src/screens/Core";
-import { JourneyScreen } from "./src/screens/Journey";
+import {
+  JourneyActivityScreen,
+  JourneyMilestonesScreen,
+  JourneyScreen,
+} from "./src/screens/Journey";
+import { JourneyGoalScreen } from "./src/screens/JourneyGoal";
 import { MomentsScreen, MomentPlayerScreen } from "./src/screens/Moments";
 import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
 import WellnessScreen from "./src/screens/Wellness";
@@ -165,6 +170,11 @@ function Shell() {
   else if (app.route === "voice-talk") content = <VoiceTalkScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
   else if (app.route === "journey") content = <JourneyScreen />;
+  else if (app.route === "journey-activity")
+    content = <JourneyActivityScreen />;
+  else if (app.route === "journey-milestones")
+    content = <JourneyMilestonesScreen />;
+  else if (app.route === "journey-goal") content = <JourneyGoalScreen />;
   else if (app.route === "explore") content = <ExploreScreen />;
   else if (app.route === "moments") content = <MomentsScreen />;
   else if (app.route === "moment-player")

@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { momentSchema, environments } from "./moments.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
+import { weeklyPeriodSchema } from "./weekly.js";
+import {
+  goalMetrics,
+  goalPeriods,
+  goalTargetBounds,
+  validGoalTarget,
+} from "./goal-contract.js";
 
 export const collections = [
   "checkins",
@@ -58,6 +65,11 @@ export const registerSchema = z.object({
 });
 export const loginSchema = registerSchema.omit({ name: true });
 export const conversationTitle = z.string().trim().min(1).max(160);
+const goalBase = base.extend({
+  title: z.string().trim().min(1).max(120),
+  active: z.boolean().default(true),
+});
+const legacyGoalTarget = z.number().int().min(5).max(210);
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
   preferences: base
     .extend({
@@ -67,13 +79,28 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
       streaksEnabled: z.boolean().optional(),
     })
     .strict(),
-  goals: base
-    .extend({
-      title: z.string().trim().min(1).max(120),
-      targetMinutesPerWeek: z.number().int().min(5).max(210),
-      active: z.boolean().default(true),
-    })
-    .strict(),
+  goals: z.union([
+    goalBase
+      .extend({
+        metric: z.enum(goalMetrics),
+        period: z.enum(goalPeriods),
+        target: z.number().int(),
+        // The generic PATCH merges old fields before validating the record.
+        targetMinutesPerWeek: legacyGoalTarget.optional(),
+      })
+      .strict()
+      .superRefine(({ metric, period, target }, context) => {
+        if (validGoalTarget(metric, period, target)) return;
+        const { min, max } = goalTargetBounds(metric, period);
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: `Choose a whole number from ${min} to ${max}.`,
+        });
+      })
+      .transform(({ targetMinutesPerWeek, ...record }) => record),
+    goalBase.extend({ targetMinutesPerWeek: legacyGoalTarget }).strict(),
+  ]),
   favorites: base
     .extend({
       kind: z.enum(["resource", "breathing", "reflection", "grounding"]),
@@ -155,6 +182,8 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
     content: text.optional(),
     note: text.optional(),
     need: text.optional(),
+    weeklyPeriod: weeklyPeriodSchema.optional(),
+    weeklyProvider: z.enum(["live", "offline"]).optional(),
     answers: z
       .union([z.array(text).max(10), z.record(z.string(), text)])
       .optional(),
@@ -250,6 +279,19 @@ export function parseRecord(collection: Collection, value: unknown) {
         code: "custom",
         path: ["text"],
         message: "Write a reflection before saving.",
+      },
+    ]);
+  }
+  if (
+    collection === "reflections" &&
+    parsed.weeklyProvider !== undefined &&
+    parsed.weeklyPeriod === undefined
+  ) {
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["weeklyPeriod"],
+        message: "Choose the week for an assisted reflection.",
       },
     ]);
   }

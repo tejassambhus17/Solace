@@ -269,13 +269,15 @@ export async function structuredOutput(
   instructions: string,
   input: unknown,
   maxTokens = 1800,
+  signal?: AbortSignal,
 ) {
   if (!config.apiKey) throw new Error("AI_NOT_CONFIGURED");
   let response: Response;
+  const timeout = AbortSignal.timeout(30000);
   try {
     response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/responses`, {
       method: "POST",
-      signal: AbortSignal.timeout(30000),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",

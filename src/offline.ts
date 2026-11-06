@@ -26,6 +26,14 @@ const draftFields: Record<string, string[]> = {
   "checkin:new": ["mood", "tags", "note"],
   "reflection:new": ["text", "need"],
 };
+const fieldsForDraft = (key: string) => {
+  if (Object.hasOwn(draftFields, key)) return draftFields[key];
+  if (/^reflection:weekly:\d{4}-\d{2}-\d{2}$/.test(key))
+    return ["text", "need", "weeklyProvider"];
+  if (/^reflection:edit:[A-Za-z0-9_-]{1,100}$/.test(key))
+    return ["text", "need"];
+  return undefined;
+};
 const recordFields: Record<WritingCollection, string[]> = {
   checkins: ["id", "mood", "tags", "note", "day", "createdAt"],
   reflections: [
@@ -35,6 +43,8 @@ const recordFields: Record<WritingCollection, string[]> = {
     "day",
     "createdAt",
     "sourceConversationId",
+    "weeklyPeriod",
+    "weeklyProvider",
   ],
 };
 const fresh = (): OfflineSnapshot => ({ pending: [], drafts: {} });
@@ -47,7 +57,8 @@ const byteSize = (value: string) => {
   }
   return size;
 };
-export const isProtectedDraft = (key: string) => key in draftFields;
+export const isProtectedDraft = (key: string) =>
+  fieldsForDraft(key) !== undefined;
 export function writingRecord(
   collection: WritingCollection,
   record: WritingRecord,
@@ -93,11 +104,12 @@ function checked(value: OfflineSnapshot): OfflineSnapshot {
       record: writingRecord(entry.collection, entry.record),
     });
   }
-  for (const [key, fields] of Object.entries(draftFields)) {
-    if (!value.drafts[key]) continue;
+  for (const [key, draft] of Object.entries(value.drafts)) {
+    const fields = fieldsForDraft(key);
+    if (!fields || !draft || typeof draft !== "object") continue;
     next.drafts[key] = {};
     for (const field of fields) {
-      const text = value.drafts[key][field];
+      const text = draft[field];
       if (typeof text === "string") next.drafts[key][field] = text;
     }
   }

@@ -83,6 +83,34 @@ test("account partitions never expose another account's writing", async () => {
   );
 });
 
+test("a weekly reflection keeps its selected dates and protected draft during an offline retry", async () => {
+  const storage = protectedStorage();
+  const vault = createOfflineVault(storage);
+  const weeklyPeriod = { start: "2026-11-02", end: "2026-11-08" };
+  const weekKey = "reflection:weekly:2026-11-08";
+  const editingKey = "reflection:edit:entry-one";
+  const pending = entry();
+  pending.record = writingRecord("reflections", {
+    ...pending.record,
+    weeklyPeriod,
+    weeklyProvider: "offline",
+  });
+  await vault.update("account-a", () => ({
+    pending: [pending],
+    drafts: {
+      [weekKey]: { text: "My revised week", weeklyProvider: "offline" },
+      [editingKey]: { text: "My saved entry edit" },
+    },
+  }));
+  const restored = await createOfflineVault(storage).read("account-a");
+  assert.deepEqual(restored.pending[0].record.weeklyPeriod, weeklyPeriod);
+  assert.equal(restored.pending[0].record.weeklyProvider, "offline");
+  assert.equal(restored.drafts[weekKey].text, "My revised week");
+  assert.equal(restored.drafts[editingKey].text, "My saved entry edit");
+  assert.equal(matchesPending(restored.pending[0], pending.record), true);
+  assert.deepEqual(await vault.read("account-b"), { pending: [], drafts: {} });
+});
+
 test("interrupted staging preserves the previous committed generation", async () => {
   const storage = protectedStorage();
   const vault = createOfflineVault(storage);

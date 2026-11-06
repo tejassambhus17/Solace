@@ -31,6 +31,8 @@ export type MomentResult = {
 };
 export type WeeklyReflectionResult = {
   provider: "live" | "offline";
+  hasActivity: boolean;
+  prompt: string;
   reflection: string;
   facts: {
     checkins: number;
@@ -42,6 +44,11 @@ export type WeeklyReflectionResult = {
   };
   period: { start: string; end: string };
   explanation: string;
+};
+type WeeklyReflectionOptions = {
+  today?: string;
+  timeZone?: string;
+  signal?: AbortSignal;
 };
 
 export type Item = Record<string, any> & { id?: string };
@@ -153,7 +160,10 @@ export type AppState = {
     feeling: string,
     environment?: "forest" | "ocean" | "twilight",
   ) => Promise<MomentResult>;
-  weeklyReflection: (endDate?: string) => Promise<WeeklyReflectionResult>;
+  weeklyReflection: (
+    endDate?: string,
+    options?: WeeklyReflectionOptions,
+  ) => Promise<WeeklyReflectionResult>;
   capabilities: () => Promise<{
     voiceTranscription: boolean;
     aiProvider: "live" | "offline";
@@ -177,6 +187,10 @@ async function request(
       apiConfiguration.error || "Solace's API address is not configured.",
     );
   const controller = new AbortController();
+  const externalSignal = options.signal;
+  const cancel = () => controller.abort();
+  if (externalSignal?.aborted) cancel();
+  else externalSignal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(
     () => controller.abort(),
     [
@@ -203,6 +217,8 @@ async function request(
       });
       text = await response.text();
     } catch {
+      if (externalSignal?.aborted)
+        throw new Error("The request was cancelled.");
       const error = new Error(
         apiConnectionError(apiConfiguration, controller.signal.aborted),
       ) as Error & { connection: boolean };
@@ -235,6 +251,7 @@ async function request(
       );
     return body;
   } finally {
+    externalSignal?.removeEventListener("abort", cancel);
     clearTimeout(timer);
   }
 }
@@ -1017,10 +1034,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   const weeklyReflection = (
     endDate?: string,
+    { today, timeZone, signal }: WeeklyReflectionOptions = {},
   ): Promise<WeeklyReflectionResult> =>
     featureRequest("/insights/weekly", {
       method: "POST",
-      body: JSON.stringify({ endDate }),
+      body: JSON.stringify({ endDate, today, timeZone }),
+      signal,
     });
   const capabilities = () => featureRequest("/capabilities");
   const transcribeVoice = (audio: ArrayBuffer, contentType: string) =>

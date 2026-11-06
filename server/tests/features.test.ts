@@ -3,11 +3,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import request from "supertest";
 import { Store } from "../src/database.js";
 import { createApp } from "../src/app.js";
 import { curatedMoment, momentSchema } from "../src/moments.js";
-import { weeklyFacts } from "../src/weekly.js";
+import {
+  lastVisibleWeekEnd,
+  weeklyFacts,
+  weeklyLocalToday,
+} from "../src/weekly.js";
 import { isUrgent, type AIConfig } from "../src/ai.js";
 import { AUDIO_MAX_BYTES } from "../src/voice.js";
 const offline: AIConfig = {
@@ -500,6 +505,40 @@ test("weekly facts use actual local-day records and exclude future or incomplete
     days: ["2026-11-05"],
   });
 });
+test("a calendar-week review uses the viewer's zone for older timestamps and excludes future days", () => {
+  const now = new Date("2027-01-06T01:00:00.000Z");
+  const timeZone = "America/Los_Angeles";
+  const today = weeklyLocalToday(now, timeZone);
+  assert.equal(today, "2027-01-05");
+  assert.equal(lastVisibleWeekEnd(today), "2027-01-10");
+  const result = weeklyFacts(
+    {
+      checkins: [
+        { id: "prior-week", createdAt: "2027-01-04T03:30:00.000Z" },
+        { id: "monday", createdAt: "2027-01-04T10:00:00.000Z" },
+        { id: "monday", createdAt: "2027-01-04T10:00:00.000Z" },
+        {
+          id: "tuesday",
+          createdAt: "2027-01-06T00:30:00.000Z",
+          day: "2027-01-05",
+        },
+        {
+          id: "future-day",
+          createdAt: "2027-01-06T00:30:00.000Z",
+          day: "2027-01-06",
+        },
+      ],
+      sessions: [],
+      reflections: [],
+    },
+    "2027-01-10",
+    now,
+    { today, timeZone },
+  );
+  assert.deepEqual(result.period, { start: "2027-01-04", end: "2027-01-10" });
+  assert.equal(result.facts.checkins, 2);
+  assert.deepEqual(result.facts.days, ["2027-01-04", "2027-01-05"]);
+});
 test("weekly reflection reports only owned persisted facts and has a useful empty state", async () => {
   const { app, store, create } = await fixture();
   try {
@@ -513,6 +552,8 @@ test("weekly reflection reports only owned persisted facts and has a useful empt
     assert.equal(empty.body.facts.checkins, 0);
     assert.match(empty.body.reflection, /fresh page/);
     assert.equal(empty.body.provider, "offline");
+    assert.equal(empty.body.hasActivity, false);
+    assert.equal(typeof empty.body.prompt, "string");
     await request(app)
       .post("/api/records/checkins")
       .auth(a.token, { type: "bearer" })
@@ -551,6 +592,102 @@ test("weekly reflection reports only owned persisted facts and has a useful empt
     store.close();
   }
 });
+test("a selected calendar week can be reviewed, saved, edited and deleted by its owner", async () => {
+  const { app, store, create } = await fixture();
+  try {
+    const a = await create();
+    const b = await create("weekly-private@solace.test");
+    const timeZone = "Asia/Kolkata";
+    const today = weeklyLocalToday(new Date(), timeZone);
+    const endDate = lastVisibleWeekEnd(today);
+    await request(app)
+      .post("/api/records/checkins")
+      .auth(a.token, { type: "bearer" })
+      .send({ mood: "Calm", day: today })
+      .expect(201);
+    const draft = await request(app)
+      .post("/api/insights/weekly")
+      .auth(a.token, { type: "bearer" })
+      .send({ endDate, today, timeZone })
+      .expect(200);
+    assert.equal(draft.body.hasActivity, true);
+    assert.equal(draft.body.period.end, endDate);
+    assert.equal(draft.body.facts.checkins, 1);
+    const saved = await request(app)
+      .post("/api/records/reflections")
+      .auth(a.token, { type: "bearer" })
+      .send({
+        text: "I chose to pause for a minute.",
+        day: today,
+        weeklyPeriod: draft.body.period,
+        weeklyProvider: draft.body.provider,
+      })
+      .expect(201);
+    const path = `/api/records/reflections/${saved.body.record.id}`;
+    const changed = await request(app)
+      .patch(path)
+      .auth(a.token, { type: "bearer" })
+      .send({ text: "I chose to pause and listen." })
+      .expect(200);
+    assert.equal(changed.body.record.text, "I chose to pause and listen.");
+    assert.deepEqual(changed.body.record.weeklyPeriod, draft.body.period);
+    assert.equal(changed.body.record.weeklyProvider, "offline");
+    await request(app)
+      .patch(path)
+      .auth(a.token, { type: "bearer" })
+      .send({
+        weeklyPeriod: { start: "2026-11-02", end: "2026-11-08" },
+        weeklyProvider: "live",
+      })
+      .expect(409);
+    await request(app)
+      .post("/api/records/reflections")
+      .auth(a.token, { type: "bearer" })
+      .send({
+        text: "Invalid period",
+        weeklyPeriod: { start: today, end: "2026-02-30" },
+      })
+      .expect(400);
+    await request(app)
+      .post("/api/records/reflections")
+      .auth(a.token, { type: "bearer" })
+      .send({
+        text: "Future period",
+        weeklyPeriod: { start: "9999-12-20", end: "9999-12-26" },
+      })
+      .expect(400);
+    await request(app)
+      .post("/api/insights/weekly")
+      .auth(a.token, { type: "bearer" })
+      .send({ endDate: "9999-12-26", today, timeZone })
+      .expect(400);
+    await request(app)
+      .post("/api/insights/weekly")
+      .auth(a.token, { type: "bearer" })
+      .send({ endDate, today, timeZone: "Invalid/Zone" })
+      .expect(400);
+    await request(app)
+      .patch(path)
+      .auth(b.token, { type: "bearer" })
+      .send({ text: "Different account" })
+      .expect(404);
+    await request(app)
+      .delete(path)
+      .auth(b.token, { type: "bearer" })
+      .expect(404);
+    await request(app)
+      .delete(path)
+      .auth(a.token, { type: "bearer" })
+      .expect(204);
+    const state = await request(app)
+      .get("/api/state")
+      .auth(a.token, { type: "bearer" })
+      .expect(200);
+    assert.equal(state.body.data.reflections.length, 0);
+  } finally {
+    store.close();
+  }
+});
 test("AI-assisted weekly questions receive counts only and cannot replace factual totals", async () => {
   const { app, store, create } = await fixture(live);
   try {
@@ -566,6 +703,7 @@ test("AI-assisted weekly questions receive counts only and cannot replace factua
         assert.equal(body.store, false);
         assert.doesNotMatch(body.input, /private-writing-never-send/);
         assert.equal(JSON.parse(body.input).reflections, 1);
+        assert.equal(JSON.parse(body.input).days, undefined);
         return providerResponse({
           invitation: "What would you like to make a little room for next?",
         });
@@ -580,23 +718,112 @@ test("AI-assisted weekly questions receive counts only and cannot replace factua
         assert.match(result.body.reflection, /saved 1 reflection/);
       },
     );
-    await withFetch(
-      (async () =>
-        providerResponse({
-          invitation: "Your mood improved by 50 percent.",
-        })) as typeof fetch,
-      async () => {
-        await request(app)
-          .post("/api/insights/weekly")
-          .auth(a.token, { type: "bearer" })
-          .send({})
-          .expect(502);
-      },
-    );
+    for (const invitation of [
+      "Your mood improved by 50 percent.",
+      "You cannot make time for yourself. What would change that?",
+    ]) {
+      await withFetch(
+        (async () => providerResponse({ invitation })) as typeof fetch,
+        async () => {
+          await request(app)
+            .post("/api/insights/weekly")
+            .auth(a.token, { type: "bearer" })
+            .send({})
+            .expect(502);
+        },
+      );
+    }
   } finally {
     store.close();
   }
 });
+test(
+  "cancelled weekly drafting aborts the provider request and lets the owner retry",
+  { timeout: 5000 },
+  async () => {
+    const { app, store, create } = await fixture(live);
+    const server = app.listen(0, "127.0.0.1");
+    const controller = new AbortController();
+    try {
+      await once(server, "listening");
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      const a = await create();
+      await request(app)
+        .post("/api/records/checkins")
+        .auth(a.token, { type: "bearer" })
+        .send({ mood: "Calm" })
+        .expect(201);
+      const clientFetch = globalThis.fetch;
+      let notifyStart!: () => void;
+      let notifyAbort!: () => void;
+      const started = new Promise<void>((resolve) => {
+        notifyStart = resolve;
+      });
+      const aborted = new Promise<void>((resolve) => {
+        notifyAbort = resolve;
+      });
+      let calls = 0;
+      await withFetch(
+        (async (_url, init) => {
+          if (++calls > 1)
+            return providerResponse({
+              invitation: "What would you like to carry forward?",
+            });
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("Provider request aborted"));
+                notifyAbort();
+              },
+              { once: true },
+            );
+            notifyStart();
+          });
+        }) as typeof fetch,
+        async () => {
+          const cancelled = assert.rejects(
+            clientFetch(
+              `http://127.0.0.1:${address.port}/api/insights/weekly`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${a.token}`,
+                  "Content-Type": "application/json",
+                },
+                body: "{}",
+                signal: controller.signal,
+              },
+            ),
+            { name: "AbortError" },
+          );
+          await started;
+          controller.abort();
+          await cancelled;
+          await aborted;
+          const retry = await request(app)
+            .post("/api/insights/weekly")
+            .auth(a.token, { type: "bearer" })
+            .send({})
+            .expect(200);
+          assert.equal(retry.body.provider, "live");
+          assert.equal(calls, 2);
+          const state = await request(app)
+            .get("/api/state")
+            .auth(a.token, { type: "bearer" })
+            .expect(200);
+          assert.equal(state.body.data.reflections.length, 0);
+        },
+      );
+    } finally {
+      controller.abort();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      store.close();
+    }
+  },
+);
 test("voice capability is honest when unconfigured and private routes require authentication", async () => {
   const { app, store, create } = await fixture();
   try {
