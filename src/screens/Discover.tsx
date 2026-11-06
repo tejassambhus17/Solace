@@ -23,6 +23,8 @@ import { spacing, useScreenGutter } from "../layout";
 import { pickDailyRoutine } from "../routine";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
+import { DailyRitualOptions } from "./DailyRitualOptions";
+import { RecommendationExplanation } from "./RecommendationExplanation";
 import {
   AppText,
   coverImageStyle,
@@ -196,6 +198,7 @@ const dailyActions = {
 function useToday() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
+    setNow(new Date());
     const timer = setInterval(() => setNow(new Date()), 60_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setNow(new Date());
@@ -245,6 +248,15 @@ export function TodayScreen() {
         ? "Good Afternoon"
         : "Good Evening";
   const next = routine.nextStep;
+  const enabled = routine.settings.enabled;
+  const explanationBasis =
+    routine.source === "today-checkin"
+      ? "current-checkin"
+      : routine.source === "user-choice"
+        ? "your-choice"
+        : ["preference", "feedback", "goal"].includes(routine.source)
+          ? "personalized"
+          : "general";
   const stepCount = routine.steps.length;
   const progress = (routine.completedCount / stepCount) * 100;
   const stepLabel = `${routine.completedCount} of ${stepCount} steps`;
@@ -624,7 +636,11 @@ export function TodayScreen() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={"Your Journey. " + stepLabel + " completed today"}
+          accessibilityLabel={
+            enabled
+              ? `Your Journey. ${stepLabel} completed today`
+              : "Your Journey"
+          }
           onPress={() => app.navigate("journey")}
           style={({ pressed }) => [
             styles.journey,
@@ -654,33 +670,37 @@ export function TodayScreen() {
               color={secondary}
               style={styles.journeyDetail}
             >
-              Your Daily Pause progress
+              {enabled
+                ? "Your Daily Pause progress"
+                : "View your saved activity"}
             </AppText>
-            <Row style={styles.progressRow}>
-              <View
-                style={[
-                  styles.progressTrack,
-                  { backgroundColor: dark ? "#51455F" : colors.border },
-                ]}
-              >
+            {enabled && (
+              <Row style={styles.progressRow}>
                 <View
                   style={[
-                    styles.progressFill,
-                    {
-                      width: `${progress}%`,
-                      backgroundColor: dark ? "#C49AF5" : colors.primary,
-                    },
+                    styles.progressTrack,
+                    { backgroundColor: dark ? "#51455F" : colors.border },
                   ]}
-                />
-              </View>
-              <AppText
-                variant="caption"
-                color={secondary}
-                style={styles.progressText}
-              >
-                {stepLabel}
-              </AppText>
-            </Row>
+                >
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${progress}%`,
+                        backgroundColor: dark ? "#C49AF5" : colors.primary,
+                      },
+                    ]}
+                  />
+                </View>
+                <AppText
+                  variant="caption"
+                  color={secondary}
+                  style={styles.progressText}
+                >
+                  {stepLabel}
+                </AppText>
+              </Row>
+            )}
           </View>
           <Icon name="chevron-forward" size={17} />
         </Pressable>
@@ -787,149 +807,179 @@ export function TodayScreen() {
             </AppText>
           </Row>
           <AppText variant="caption" color={secondary}>
-            {next
-              ? "Make a little room for yourself today."
-              : "You made time for yourself today. Come back to any step anytime."}
+            {!enabled
+              ? "Daily Pause is off. You can turn it on whenever you’d like."
+              : routine.practiceSkipped
+                ? "Today’s Moment is skipped. Check in or reflect whenever you like."
+                : next
+                  ? "Make a little room for yourself today."
+                  : "You made time for yourself today. Come back to any step anytime."}
           </AppText>
-          <Row style={[styles.dailySteps, largeText && styles.stackedSteps]}>
-            {routine.steps.map((step, index) => {
-              const current = next?.id === step.id;
-              const status = step.complete
-                ? "Completed"
-                : current
-                  ? "Next step"
-                  : "Available";
-              const emphasis = current || step.complete;
-              const stepInk = current
-                ? dailyPrimaryInk
-                : emphasis
-                  ? colors.sageText
-                  : secondary;
-              const indicator = (
-                <View
-                  style={[
-                    styles.stepIndicator,
-                    {
-                      borderColor: emphasis ? "transparent" : panel.borderColor,
-                      backgroundColor: current
-                        ? dailyPrimary
-                        : step.complete
-                          ? colors.sageSurface
-                          : "transparent",
-                    },
-                  ]}
-                >
-                  {step.complete ? (
-                    <Icon name="checkmark" size={16} color={stepInk} />
-                  ) : (
+          {enabled && (
+            <>
+              <Row
+                style={[styles.dailySteps, largeText && styles.stackedSteps]}
+              >
+                {routine.steps.map((step, index) => {
+                  const current = next?.id === step.id;
+                  const skipped =
+                    step.id === "practice" && routine.practiceSkipped;
+                  const status = step.complete
+                    ? "Completed"
+                    : skipped
+                      ? "Skipped today"
+                      : current
+                        ? "Next step"
+                        : "Available";
+                  const emphasis = current || step.complete;
+                  const stepInk = current
+                    ? dailyPrimaryInk
+                    : emphasis
+                      ? colors.sageText
+                      : secondary;
+                  const indicator = (
+                    <View
+                      style={[
+                        styles.stepIndicator,
+                        {
+                          borderColor: emphasis
+                            ? "transparent"
+                            : panel.borderColor,
+                          backgroundColor: current
+                            ? dailyPrimary
+                            : step.complete
+                              ? colors.sageSurface
+                              : "transparent",
+                        },
+                      ]}
+                    >
+                      {step.complete ? (
+                        <Icon name="checkmark" size={16} color={stepInk} />
+                      ) : skipped ? (
+                        <Icon name="remove" size={16} color={stepInk} />
+                      ) : (
+                        <AppText
+                          variant="label"
+                          color={stepInk}
+                          style={styles.stepNumber}
+                        >
+                          {index + 1}
+                        </AppText>
+                      )}
+                    </View>
+                  );
+                  const stepStyle = [
+                    styles.dailyStep,
+                    largeText && styles.stackedStep,
+                  ];
+                  const label = (
                     <AppText
                       variant="label"
-                      color={stepInk}
-                      style={styles.stepNumber}
+                      style={[
+                        styles.stepLabel,
+                        largeText && styles.stackedStepLabel,
+                      ]}
                     >
-                      {index + 1}
+                      {skipped ? "Moment skipped" : step.title}
                     </AppText>
-                  )}
-                </View>
-              );
-              const stepStyle = [
-                styles.dailyStep,
-                largeText && styles.stackedStep,
-              ];
-              const label = (
-                <AppText
-                  variant="label"
-                  style={[
-                    styles.stepLabel,
-                    largeText && styles.stackedStepLabel,
-                  ]}
-                >
-                  {step.title}
+                  );
+                  return current || skipped ? (
+                    <View
+                      key={step.id}
+                      accessible
+                      accessibilityLabel={`${step.title}. ${status}`}
+                      style={stepStyle}
+                    >
+                      {indicator}
+                      {label}
+                    </View>
+                  ) : (
+                    <Pressable
+                      key={step.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${step.title}. ${status}`}
+                      onPress={() => app.navigate(step.route, step.params)}
+                      style={({ pressed }) => [
+                        stepStyle,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      {indicator}
+                      {label}
+                    </Pressable>
+                  );
+                })}
+              </Row>
+              {next?.id === "practice" && (
+                <AppText variant="caption" color={secondary}>
+                  {routine.suggestion.title} · {routine.suggestion.duration}
                 </AppText>
-              );
-              return current ? (
-                <View
-                  key={step.id}
-                  accessible
-                  accessibilityLabel={`${step.title}. ${status}`}
-                  style={stepStyle}
-                >
-                  {indicator}
-                  {label}
-                </View>
-              ) : (
-                <Pressable
-                  key={step.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${step.title}. ${status}`}
-                  onPress={() => app.navigate(step.route, step.params)}
-                  style={({ pressed }) => [
-                    stepStyle,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  {indicator}
-                  {label}
-                </Pressable>
-              );
-            })}
-          </Row>
-          {next?.id === "practice" && (
-            <AppText variant="caption" color={secondary}>
-              {routine.suggestion.title} · {routine.suggestion.duration}
-            </AppText>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() =>
-              next
-                ? app.navigate(next.route, next.params)
-                : app.navigate("journey-activity", { day: routine.day })
-            }
-            style={({ pressed }) => [
-              styles.dailyAction,
-              { backgroundColor: dailyPrimary },
-              pressed && styles.pressed,
-            ]}
-          >
-            <AppText
-              variant="label"
-              color={dailyPrimaryInk}
-              style={styles.startLabel}
-            >
-              {next ? dailyActions[next.id] : "View today’s pause"}
-            </AppText>
-            <Icon name="arrow-forward" size={16} color={dailyPrimaryInk} />
-          </Pressable>
-          {next?.id === "practice" && (
-            <>
+              )}
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ expanded: showReason }}
-                onPress={() => setShowReason((value) => !value)}
+                onPress={() =>
+                  next
+                    ? app.navigate(next.route, next.params)
+                    : app.navigate("journey-activity", { day: routine.day })
+                }
                 style={({ pressed }) => [
-                  styles.reason,
+                  styles.dailyAction,
+                  { backgroundColor: dailyPrimary },
                   pressed && styles.pressed,
                 ]}
               >
-                <AppText variant="caption" color={secondary}>
-                  Why this pause?
+                <AppText
+                  variant="label"
+                  color={dailyPrimaryInk}
+                  style={styles.startLabel}
+                >
+                  {next ? dailyActions[next.id] : "View today’s pause"}
                 </AppText>
-                <Icon
-                  name={showReason ? "chevron-up" : "chevron-down"}
-                  color={secondary}
-                  size={13}
-                />
+                <Icon name="arrow-forward" size={16} color={dailyPrimaryInk} />
               </Pressable>
-              {showReason && (
-                <AppText variant="caption" color={secondary}>
-                  {routine.suggestion.reason}
-                </AppText>
+              {next?.id === "practice" && (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setShowReason(true)}
+                  style={({ pressed }) => [
+                    styles.reason,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <AppText variant="caption" color={secondary}>
+                    Why Solace suggested this
+                  </AppText>
+                  <Icon
+                    name="information-circle-outline"
+                    color={secondary}
+                    size={13}
+                  />
+                </Pressable>
               )}
             </>
           )}
+          <DailyRitualOptions
+            key={routine.day}
+            settings={routine.settings}
+            canSkip={next?.id === "practice" || routine.practiceSkipped}
+          />
         </View>
       </View>
+      <RecommendationExplanation
+        open={showReason && enabled && next?.id === "practice"}
+        onClose={() => setShowReason(false)}
+        onManage={
+          explanationBasis === "personalized"
+            ? () => {
+                setShowReason(false);
+                app.navigate("memory");
+              }
+            : undefined
+        }
+        title={routine.suggestion.title}
+        reason={routine.suggestion.reason}
+        basis={explanationBasis}
+      />
     </Screen>
   );
 }

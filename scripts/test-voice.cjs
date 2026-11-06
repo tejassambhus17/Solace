@@ -13,7 +13,42 @@ const compiled = ts.transpileModule(
 ).outputText;
 const exported = { exports: {} };
 new Function("module", "exports", compiled)(exported, exported.exports);
-const { VoiceTurn, MAX_VOICE_BYTES, voiceContentType } = exported.exports;
+const { VoiceTurn, MAX_VOICE_BYTES, voiceContentType, voiceMeterLevel } =
+  exported.exports;
+
+test("recording visuals use bounded real samples and leave missing levels unavailable", () => {
+  assert.equal(voiceMeterLevel(undefined), null);
+  assert.equal(voiceMeterLevel(NaN), null);
+  assert.equal(voiceMeterLevel(Infinity), null);
+  assert.equal(voiceMeterLevel(-Infinity), 0);
+  assert.equal(voiceMeterLevel(-110), 0);
+  assert.equal(voiceMeterLevel(-27.5), 0.5);
+  assert.equal(voiceMeterLevel(2), 1);
+});
+test("ending a voice turn aborts the active upload and discards its audio", async () => {
+  let signal;
+  const fixtureVoice = fixture({
+    transcribe: (_audio, uploadSignal) => {
+      signal = uploadSignal;
+      return new Promise((_, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new Error("Upload cancelled")),
+          { once: true },
+        );
+      });
+    },
+  });
+  await fixtureVoice.turn.start();
+  const stop = fixtureVoice.turn.stop();
+  await Promise.resolve();
+  assert.equal(signal.aborted, false);
+  await fixtureVoice.turn.cancel();
+  await stop;
+  assert.equal(signal.aborted, true);
+  assert.equal(fixtureVoice.turn.canRetry, false);
+  assert.deepEqual(fixtureVoice.transcripts, []);
+});
 function fixture(overrides = {}) {
   const events = [],
     transcripts = [];

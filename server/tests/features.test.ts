@@ -173,7 +173,7 @@ test("Gemini uses schema-constrained Moments and receives only counts for weekly
       .expect(200);
     assert.deepEqual(capabilities.body, {
       aiProvider: "live",
-      voiceTranscription: false,
+      voiceTranscription: true,
     });
   } finally {
     store.close();

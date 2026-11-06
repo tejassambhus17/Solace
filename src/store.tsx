@@ -195,6 +195,7 @@ export type AppState = {
   transcribeVoice: (
     audio: ArrayBuffer,
     contentType: string,
+    signal?: AbortSignal,
   ) => Promise<{ text: string; provider: "live" }>;
   updateUser: (changes: Item) => Promise<void>;
   deleteAccount: () => Promise<void>;
@@ -1112,11 +1113,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       signal,
     });
   const capabilities = () => featureRequest("/capabilities");
-  const transcribeVoice = (audio: ArrayBuffer, contentType: string) =>
+  const transcribeVoice = (
+    audio: ArrayBuffer,
+    contentType: string,
+    signal?: AbortSignal,
+  ) =>
     featureRequest("/voice/transcribe", {
       method: "POST",
       headers: { "Content-Type": contentType },
       body: audio,
+      signal,
     });
   const updateUser = async (changes: Item) => {
     const version = draftGeneration;

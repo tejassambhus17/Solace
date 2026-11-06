@@ -31,6 +31,9 @@ const { pickDailyRoutine } = sourceModule("../src/routine.ts", {
   "./content": content,
   "./explore-practices": explore,
   "./progress": sourceModule("../src/progress.ts", { "./content": content }),
+  "../server/src/ritual-contract": sourceModule(
+    "../server/src/ritual-contract.ts",
+  ),
 });
 const now = () => new Date(2026, 10, 5, 12);
 const today = { createdAt: "2026-11-05T06:00:00.000Z", day: "2026-11-05" };
@@ -238,4 +241,91 @@ test("selection is deterministic and does not mutate account records", () => {
     pickDailyRoutine(data, { personalization: true }, now()),
   );
   assert.equal(JSON.stringify(data), before);
+});
+
+test("replacement and duration affect only the chosen day and launch an existing timed activity", () => {
+  const data = {
+    checkins: [{ ...today, mood: "Stressed" }],
+    preferences: [
+      {
+        id: "wellness",
+        dailyRitual: {
+          enabled: true,
+          day: today.day,
+          skipPractice: false,
+          activity: "reflection",
+          durationMinutes: 5,
+        },
+      },
+    ],
+  };
+  const current = pickDailyRoutine(data, null, now());
+  assert.equal(current.source, "user-choice");
+  assert.equal(current.suggestion.duration, "5 min");
+  assert.equal(current.nextStep.route, "moment-player");
+  assert.deepEqual(
+    current.nextStep.params.activity,
+    explore.createExplorePractice("reflect", 5),
+  );
+
+  const nextDay = pickDailyRoutine(data, null, new Date(2026, 10, 6, 19));
+  assert.equal(nextDay.suggestion.activity, "rest");
+  assert.equal(nextDay.source, "time-of-day");
+  assert.equal(nextDay.settings.durationMinutes, undefined);
+  assert.equal(nextDay.completedCount, 0);
+});
+
+test("skipping advances to reflection without incrementing or blocking actual Moment progress", () => {
+  const data = {
+    checkins: [{ ...today, mood: "Okay" }],
+    preferences: [
+      {
+        id: "wellness",
+        dailyRitual: {
+          enabled: true,
+          day: today.day,
+          skipPractice: true,
+        },
+      },
+    ],
+  };
+  const skipped = pickDailyRoutine(data, null, now());
+  assert.equal(skipped.practiceSkipped, true);
+  assert.equal(skipped.nextStep.id, "reflection");
+  assert.equal(skipped.completedCount, 1);
+  const completed = pickDailyRoutine(
+    {
+      ...data,
+      sessions: [{ ...today, type: "breathing", completed: true }],
+    },
+    null,
+    now(),
+  );
+  assert.equal(completed.practiceSkipped, false);
+  assert.equal(completed.completedCount, 2);
+});
+
+test("turning off persists past midnight while an opted-in goal can inform an enabled ritual", () => {
+  const data = {
+    goals: [{ ...today, metric: "reflections", active: true }],
+    preferences: [
+      {
+        id: "wellness",
+        dailyRitual: {
+          enabled: false,
+          day: today.day,
+          skipPractice: true,
+        },
+      },
+    ],
+  };
+  const tomorrow = new Date(2026, 10, 6, 12);
+  const disabled = pickDailyRoutine(data, { personalization: true }, tomorrow);
+  assert.equal(disabled.settings.enabled, false);
+  assert.equal(disabled.settings.skipPractice, false);
+  assert.equal(disabled.nextStep, null);
+  assert.equal(disabled.source, "goal");
+  assert.equal(disabled.suggestion.activity, "reflection");
+  const revoked = pickDailyRoutine(data, { personalization: false }, tomorrow);
+  assert.equal(revoked.source, "curated");
 });

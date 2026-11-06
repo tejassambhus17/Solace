@@ -3,6 +3,7 @@ import { momentSchema, environments } from "./moments.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
 import { chatPracticeIds } from "./chat-practice.js";
 import { weeklyPeriodSchema } from "./weekly.js";
+import { ritualActivities, ritualDurations } from "./ritual-contract.js";
 import {
   goalMetrics,
   goalPeriods,
@@ -78,6 +79,13 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
       environment: z.enum(environments).optional(),
       ambientEnabled: z.boolean().optional(),
       streaksEnabled: z.boolean().optional(),
+      dailyRitual: z.object({
+        enabled: z.boolean(),
+        day,
+        skipPractice: z.boolean(),
+        activity: z.enum(ritualActivities).optional(),
+        durationMinutes: z.literal(ritualDurations).optional(),
+      }).strict().optional(),
     })
     .strict(),
   goals: z.union([

@@ -7,7 +7,7 @@ export type VoiceIO = {
   start: () => Promise<void>;
   stop: () => Promise<ArrayBuffer>;
   cancel: () => Promise<void>;
-  transcribe: (audio: ArrayBuffer) => Promise<string>;
+  transcribe: (audio: ArrayBuffer, signal: AbortSignal) => Promise<string>;
   transcript: (text: string) => void;
   changed: (state: VoiceState, error: string) => void;
 };
@@ -20,6 +20,7 @@ export class VoiceTurn {
   private starting: Promise<void> | null = null;
   private stopping: Promise<ArrayBuffer> | null = null;
   private cancelling: Promise<void> | null = null;
+  private transcription: AbortController | null = null;
   state: VoiceState = "idle";
   constructor(private io: VoiceIO) {}
   private publish(state: VoiceState, error = "") {
@@ -113,8 +114,12 @@ export class VoiceTurn {
     }
   }
   private async convert(version: number) {
+    const controller = new AbortController();
+    this.transcription = controller;
     try {
-      const text = (await this.io.transcribe(this.audio!)).trim();
+      const text = (
+        await this.io.transcribe(this.audio!, controller.signal)
+      ).trim();
       if (!this.current(version)) return;
       if (!text || text.length > 4000)
         throw new Error(
@@ -131,6 +136,8 @@ export class VoiceTurn {
             ? error.message
             : "Transcription failed. Retry, or type your message.",
         );
+    } finally {
+      if (this.transcription === controller) this.transcription = null;
     }
   }
   get canRetry() {
@@ -139,6 +146,7 @@ export class VoiceTurn {
   cancel(message = ""): Promise<void> {
     if (this.cancelling) return this.cancelling;
     const version = ++this.version;
+    this.transcription?.abort();
     this.audio = null;
     this.publish("cancelling");
     const starting = this.starting;
@@ -161,4 +169,10 @@ export class VoiceTurn {
 export function voiceContentType(platform: string, uri = "") {
   if (/\.wav(?:$|\?)/i.test(uri)) return "audio/wav";
   return platform === "web" ? "audio/webm" : "audio/mp4";
+}
+
+export function voiceMeterLevel(decibels: number | undefined): number | null {
+  if (decibels === -Infinity) return 0;
+  if (decibels === undefined || !Number.isFinite(decibels)) return null;
+  return Math.min(1, Math.max(0, (decibels + 55) / 55));
 }

@@ -961,12 +961,17 @@ export function createApp(config: AppConfig) {
           "VOICE_INVALID_AUDIO",
         );
       voiceLocks.add(owner);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      res.once("close", cancel);
       try {
         const result = await transcribeAudio(
           config.ai,
           req.body,
           String(req.headers["content-type"]),
+          controller.signal,
         );
+        if (controller.signal.aborted) return;
         if (!currentAccount(req))
           return apiError(
             res,
@@ -975,7 +980,10 @@ export function createApp(config: AppConfig) {
             "UNAUTHORIZED",
           );
         return res.json(result);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
       } finally {
+        res.off("close", cancel);
         voiceLocks.delete(owner);
       }
     }),

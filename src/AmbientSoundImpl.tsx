@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
 import type { MomentEnvironment } from "./moments";
+import { registerAmbientPlayback } from "./audio-focus";
 const audioSources = {
   forest: require("../assets/ambient-forest.wav"),
   ocean: require("../assets/ambient-ocean.wav"),
@@ -27,6 +28,14 @@ export function AmbientSoundImpl({
   });
   const status = useAudioPlayerStatus(player);
   const [error, setError] = useState("");
+  const soundState = useRef({ running, enabled, onToggle });
+  soundState.current = { running, enabled, onToggle };
+  useEffect(() => registerAmbientPlayback(() => {
+    const state = soundState.current;
+    if (!state.running || !state.enabled) return;
+    try { player.pause(); } catch {}
+    state.onToggle();
+  }), [player]);
   useEffect(() => {
     try {
       player.loop = true;

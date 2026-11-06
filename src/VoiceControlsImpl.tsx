@@ -16,10 +16,16 @@ import {
 } from "expo-audio";
 import * as Speech from "expo-speech";
 import { File } from "expo-file-system";
+import { interruptAmbientPlayback } from "./audio-focus";
 import { useApp } from "./store";
 import { useTheme } from "./theme";
 import { AppText, Icon, IconButton, Row, Button } from "./ui";
-import { VoiceTurn, voiceContentType, type VoiceState } from "./voice-session";
+import {
+  VoiceTurn,
+  voiceContentType,
+  voiceMeterLevel,
+  type VoiceState,
+} from "./voice-session";
 
 export function VoiceControlsImpl({
   disabled,
@@ -29,6 +35,8 @@ export function VoiceControlsImpl({
   renderComposer,
   variant,
   autoReadKey,
+  muted = false,
+  onMeter,
 }: {
   disabled: boolean;
   reply: string;
@@ -40,6 +48,8 @@ export function VoiceControlsImpl({
   ) => React.ReactNode;
   variant?: "talk";
   autoReadKey?: string;
+  muted?: boolean;
+  onMeter?: (level: number | null) => void;
 }) {
   const app = useApp();
   const { colors, resolved } = useTheme();
@@ -63,8 +73,8 @@ export function VoiceControlsImpl({
   const [review, setReview] = useState("");
   const mounted = useRef(true);
   const speechVersion = useRef(0);
-  const latest = useRef({ app, onTranscript, onState, talk });
-  latest.current = { app, onTranscript, onState, talk };
+  const latest = useRef({ app, onTranscript, onState, onMeter, talk });
+  latest.current = { app, onTranscript, onState, onMeter, talk };
   const uri = useRef<string | null>(null);
   const requestingPermission = useRef(false);
   const mime = useRef(voiceContentType(Platform.OS));
@@ -72,6 +82,7 @@ export function VoiceControlsImpl({
   const recorder = useAudioRecorder(
     {
       ...RecordingPresets.HIGH_QUALITY,
+      isMeteringEnabled: talk,
       web: {
         ...RecordingPresets.HIGH_QUALITY.web,
         mimeType:
@@ -126,14 +137,25 @@ export function VoiceControlsImpl({
           setStartingSpeech(false);
         }
         await erase();
+        if (!mounted.current || turnRef.current?.state !== "preparing") return;
+        interruptAmbientPlayback();
         await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
+          interruptionMode: "doNotMix",
           allowsBackgroundRecording: false,
           shouldPlayInBackground: false,
         });
+        if (!mounted.current || turnRef.current?.state !== "preparing") return;
         await recorder.prepareToRecordAsync();
-        recorder.record({ forDuration: 60 });
+        // Expo's web recorder releases its microphone tracks on the stop event.
+        // If cancellation arrived during preparation, VoiceTurn immediately
+        // stops and discards this recording after start settles.
+        if (
+          Platform.OS === "web" ||
+          (mounted.current && turnRef.current?.state === "preparing")
+        )
+          recorder.record({ forDuration: 60 });
       },
       stop: async () => {
         if (recorder.getStatus().isRecording) await recorder.stop();
@@ -174,8 +196,9 @@ export function VoiceControlsImpl({
         await erase();
         await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
       },
-      transcribe: async (audio) =>
-        (await latest.current.app.transcribeVoice(audio, mime.current)).text,
+      transcribe: async (audio, signal) =>
+        (await latest.current.app.transcribeVoice(audio, mime.current, signal))
+          .text,
       transcript: (text) => {
         if (
           mounted.current &&
@@ -216,7 +239,7 @@ export function VoiceControlsImpl({
       setSpeaking(false);
       // The iOS permission sheet can make the app inactive before recording starts.
       if (next === "inactive" && requestingPermission.current) return;
-      if (turn.state !== "idle") {
+      if (turn.state !== "idle" || turn.canRetry) {
         void turn.cancel(
           turn.state === "transcribing"
             ? "Transcription was interrupted when you left the app. Try recording again, or type your message."
@@ -246,24 +269,32 @@ export function VoiceControlsImpl({
     );
   }, [state, speaking]);
   useEffect(() => {
-    if (state !== "listening") return;
+    if (state !== "listening") {
+      latest.current.onMeter?.(null);
+      return;
+    }
     let wasInactive = false;
-    const timer = setInterval(() => {
-      if (turn.state !== "listening") return;
-      const status = recorder.getStatus();
-      const inactive = !recorder.isRecording;
-      // Give the recorder's normal completion event time to arrive. A track
-      // revocation can stop the device without delivering that event.
-      if (status.mediaServicesDidReset || (inactive && wasInactive)) {
-        void turn.recorderEvent({ hasError: true });
-        return;
-      }
-      wasInactive = inactive;
-      if (!inactive && status.durationMillis >= 59_000) void turn.stop();
-      else setRecordingSeconds(Math.floor(status.durationMillis / 1000));
-    }, 250);
+    const timer = setInterval(
+      () => {
+        if (turn.state !== "listening") return;
+        const status = recorder.getStatus();
+        const inactive = !recorder.isRecording;
+        // Give the recorder's normal completion event time to arrive. A track
+        // revocation can stop the device without delivering that event.
+        if (status.mediaServicesDidReset || (inactive && wasInactive)) {
+          void turn.recorderEvent({ hasError: true });
+          return;
+        }
+        wasInactive = inactive;
+        if (!inactive && talk)
+          latest.current.onMeter?.(voiceMeterLevel(status.metering));
+        if (!inactive && status.durationMillis >= 59_000) void turn.stop();
+        else setRecordingSeconds(Math.floor(status.durationMillis / 1000));
+      },
+      talk ? 120 : 250,
+    );
     return () => clearInterval(timer);
-  }, [recorder, state, turn]);
+  }, [recorder, state, talk, turn]);
   useEffect(() => {
     ++speechVersion.current;
     clearSpeechWait();
@@ -279,11 +310,11 @@ export function VoiceControlsImpl({
       AppState.currentState !== "inactive"
     ) {
       lastAutoRead.current = autoReadKey;
-      void startSpeech();
+      if (!muted) void startSpeech();
     } else {
       void Speech.stop().catch(() => {});
     }
-  }, [reply, disabled, autoReadKey]);
+  }, [reply, disabled, autoReadKey, muted]);
   async function speak() {
     if (speaking || startingSpeech) {
       ++speechVersion.current;
@@ -293,7 +324,7 @@ export function VoiceControlsImpl({
       setSpeaking(false);
       return;
     }
-    if (!reply || disabled || state !== "idle") return;
+    if (!reply || disabled || muted || state !== "idle") return;
     await startSpeech();
   }
   async function startSpeech() {
@@ -302,9 +333,13 @@ export function VoiceControlsImpl({
     setStartingSpeech(true);
     try {
       await Speech.stop();
+      if (!mounted.current || speechVersion.current !== version) return;
+      interruptAmbientPlayback();
       await setAudioModeAsync({
         allowsRecording: false,
         playsInSilentMode: true,
+        interruptionMode: "doNotMix",
+        shouldPlayInBackground: false,
       });
       if (!mounted.current || speechVersion.current !== version) return;
       clearSpeechWait();
@@ -431,7 +466,7 @@ export function VoiceControlsImpl({
       />
     </Pressable>
   );
-  const playback = !!reply && (
+  const playback = !!reply && !muted && (
     <IconButton
       name={
         speaking || startingSpeech

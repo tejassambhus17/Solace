@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Companion, type CompanionState } from "../Companion";
+import { Companion, useReducedMotion, type CompanionState } from "../Companion";
 import { VoiceControls } from "../VoiceControls";
 import { spacing, useScreenGutter } from "../layout";
 import { useApp } from "../store";
@@ -40,6 +40,7 @@ export function VoiceTalkScreen() {
   const { colors, resolved } = useTheme();
   const gutter = useScreenGutter();
   const compact = useWindowDimensions().width < 360;
+  const reduceMotion = useReducedMotion();
   const initialId =
     typeof app.params.id === "string" ? app.params.id : undefined;
   const [id, setId] = useState(initialId);
@@ -50,9 +51,12 @@ export function VoiceTalkScreen() {
   const [draft, setDraft] = useState(app.chatDrafts[draftKey] || "");
   const draftRef = useRef(draft);
   const [recordedDraft, setRecordedDraft] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const pending = sendingMessage || !!app.chatPending[draftKey];
   const [failure, setFailure] = useState("");
   const [voiceState, setVoiceState] = useState<TalkState>("idle");
+  const [muted, setMuted] = useState(false);
+  const [samples, setSamples] = useState<number[]>([]);
   const [autoReadId, setAutoReadId] = useState<string>();
   const mounted = useRef(false);
   const sending = useRef(false);
@@ -86,7 +90,6 @@ export function VoiceTalkScreen() {
   const canSend = !!draft.trim() && !pending && !isRecordingOrTranscribing;
 
   close.current = () => {
-    if (sending.current) return;
     if (beganOnNewChat.current && currentId.current)
       app.navigate("chat", { id: currentId.current });
     else if (app.canGoBack) app.back();
@@ -126,9 +129,10 @@ export function VoiceTalkScreen() {
   async function send() {
     const savedDraft = draftRef.current;
     const text = savedDraft.trim();
-    if (!text || sending.current || isRecordingOrTranscribing) return;
+    if (!text || pending || sending.current || isRecordingOrTranscribing)
+      return;
     sending.current = true;
-    setPending(true);
+    setSendingMessage(true);
     setFailure("");
     Keyboard.dismiss();
     try {
@@ -160,7 +164,7 @@ export function VoiceTalkScreen() {
         );
     } finally {
       sending.current = false;
-      if (mounted.current) setPending(false);
+      if (mounted.current) setSendingMessage(false);
     }
   }
 
@@ -180,8 +184,8 @@ export function VoiceTalkScreen() {
       >
         <IconButton
           name="arrow-back"
-          label="Back to chat"
-          disabled={pending}
+          label="End voice talk and return to chat"
+          size={48}
           onPress={() => close.current()}
         />
         <AppText
@@ -191,7 +195,12 @@ export function VoiceTalkScreen() {
         >
           Voice talk
         </AppText>
-        <View style={{ width: 44 }} />
+        <IconButton
+          name={muted ? "volume-mute-outline" : "volume-medium-outline"}
+          label={muted ? "Unmute spoken replies" : "Mute spoken replies"}
+          size={48}
+          onPress={() => setMuted((current) => !current)}
+        />
       </Row>
       <ScrollView
         ref={scroll}
@@ -223,7 +232,32 @@ export function VoiceTalkScreen() {
           <Companion
             size={compact ? 76 : 96}
             state={pending ? "thinking" : voiceState}
+            soundLevel={voiceState === "listening" ? samples.at(-1) : undefined}
           />
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={{
+              flexDirection: "row",
+              height: 25,
+              alignItems: "center",
+              gap: 3,
+            }}
+          >
+            {voiceState === "listening" &&
+              !reduceMotion &&
+              samples.map((level, index) => (
+                <View
+                  key={index}
+                  style={{
+                    width: 3,
+                    height: 2 + level * 19,
+                    borderRadius: 2,
+                    backgroundColor: colors.lavenderText,
+                  }}
+                />
+              ))}
+          </View>
           <AppText
             variant="title"
             accessibilityRole="header"
@@ -242,13 +276,14 @@ export function VoiceTalkScreen() {
             color={resolved === "light" ? colors.peachText : colors.muted}
             style={{ textAlign: "center", marginTop: 8, maxWidth: 270 }}
           >
-            Record a short message, review the words, then send. Replies can
-            play aloud.
+            Record a short message, review the words, then send.{" "}
+            {muted ? "Spoken replies are muted." : "Replies can play aloud."}
           </AppText>
         </View>
         <VoiceControls
           variant="talk"
           disabled={pending}
+          muted={muted}
           reply={replyText}
           autoReadKey={
             autoReadId === latestReply?.id && !needsSupport
@@ -257,6 +292,11 @@ export function VoiceTalkScreen() {
           }
           onTranscript={useTranscript}
           onState={setVoiceState}
+          onMeter={(level) => {
+            if (level === null)
+              setSamples((current) => (current.length ? [] : current));
+            else setSamples((current) => [...current.slice(-12), level]);
+          }}
           renderComposer={(microphone, playback) => (
             <View style={{ gap: spacing.row }}>
               <View style={{ alignItems: "center", paddingBottom: 3 }}>
