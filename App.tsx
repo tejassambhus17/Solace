@@ -66,6 +66,9 @@ import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
 import { NavigationDetail, useIosEdgeBack } from "./src/NavigationDetail";
 import { useReducedMotion } from "./src/Companion";
+import { useOnboarding } from "./src/onboarding-state";
+import { OnboardingScreen } from "./src/screens/Onboarding";
+import { OnboardingPersonalization } from "./src/screens/OnboardingPersonalization";
 import { GoogleLinkProvider } from "./src/google-auth";
 import {
   subscribeNotificationNavigation,
@@ -158,6 +161,7 @@ const RetainedScreen = React.memo(function RetainedScreen({
 
 function Shell() {
   const app = useApp();
+  const onboarding = useOnboarding(app);
   const [pendingLink, setPendingLink] =
     useState<ReturnType<typeof experienceDestination>>(null);
   const currentApp = useRef(app);
@@ -187,6 +191,7 @@ function Shell() {
   }, []);
   const canOpenLink =
     !app.initializing &&
+    onboarding.stage === "app" &&
     !!app.user &&
     !app.sessionExpired &&
     !app.appLocked &&
@@ -216,7 +221,11 @@ function Shell() {
         {app.appLocked ? (
           <DeviceUnlockScreen scope="app" />
         ) : (
-          <AccountShell key={app.user?.id ?? "signed-out"} app={app} />
+          <AccountShell
+            key={app.user?.id ?? "signed-out"}
+            app={app}
+            onboarding={onboarding}
+          />
         )}
       </View>
       {app.privacyCovered && <DevicePrivacyCover />}
@@ -224,7 +233,13 @@ function Shell() {
   );
 }
 
-function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
+function AccountShell({
+  app,
+  onboarding,
+}: {
+  app: ReturnType<typeof useApp>;
+  onboarding: ReturnType<typeof useOnboarding>;
+}) {
   const { colors, resolved } = useTheme();
   const reducedMotion = useReducedMotion();
   const previousTab = useRef(app.activeTab);
@@ -246,7 +261,9 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
     !journalLocked && Object.hasOwn(retainedRoots, app.route)
       ? (app.route as RetainedRoot)
       : null;
-  const authenticated = !!app.user && !app.sessionExpired;
+  const authenticated =
+    !!app.user && !app.sessionExpired && onboarding.stage === "app";
+  const replayingIntro = authenticated && app.route === routes.onboarding;
   if (!authenticated) visitedRoots.clear();
   else if (activeRoot) visitedRoots.add(activeRoot);
   if (app.journalLocked) visitedRoots.delete(routes.journal);
@@ -268,19 +285,22 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
     };
   }, []);
   const showNavigation =
-    !!app.user &&
-    !app.sessionExpired &&
+    authenticated &&
+    !replayingIntro &&
     !keyboardOpen &&
     !immersiveRoutes.has(app.route);
   const canUseBack =
-    authenticated && app.canGoBack && !immersiveRoutes.has(app.route);
+    authenticated &&
+    !replayingIntro &&
+    app.canGoBack &&
+    !immersiveRoutes.has(app.route);
   const edgeBack = useIosEdgeBack(
     canUseBack && !keyboardOpen && !app.privacyCovered && !journalLocked
       ? app.back
       : undefined,
   );
   useEffect(() => {
-    if (!app.user || app.sessionExpired) return;
+    if (!authenticated || !app.user) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
       (error) =>
         console.warn(
@@ -292,7 +312,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
       navigate.current(routes.today);
       if (route !== routes.today) navigate.current(route);
     });
-  }, [app.user?.id, app.sessionExpired]);
+  }, [app.user?.id, authenticated]);
   useEffect(() => {
     if (!canUseBack) return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -331,7 +351,26 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
         />
       </Screen>
     );
-  else if (!app.user || app.sessionExpired) content = <AuthScreen />;
+  else if (onboarding.stage === "walkthrough")
+    content = (
+      <OnboardingScreen
+        onFinish={onboarding.finishWalkthrough}
+        finishing={onboarding.finishing}
+        error={onboarding.walkthroughError}
+      />
+    );
+  else if (!app.user || app.sessionExpired)
+    content = <AuthScreen initialPage={onboarding.authPage} />;
+  else if (onboarding.offer)
+    content = (
+      <OnboardingPersonalization
+        onChoose={onboarding.finishPersonalization}
+        saving={onboarding.offer.status === "saving"}
+        error={onboarding.offer.error}
+      />
+    );
+  else if (replayingIntro)
+    content = <OnboardingScreen onFinish={app.back} onBack={app.back} />;
   else if (journalLocked) content = <DeviceUnlockScreen scope="journal" />;
   else if (activeRoot) content = null;
   else if (app.route === routes.companion)
@@ -400,7 +439,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
             : {}),
         }}
       >
-        {app.initializing ? (
+        {app.initializing || onboarding.stage === "loading" ? (
           <View
             style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
           >
@@ -431,7 +470,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
                     key={route}
                     route={route}
                     app={activeRoot === route ? app : null}
-                    />
+                  />
                 ))}
               <ExperienceTheme
                 enabled={
@@ -441,7 +480,10 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
                       !!app.params.techniqueId))
                 }
               >
-                {content && authenticated && !journalLocked ? (
+                {content &&
+                authenticated &&
+                !journalLocked &&
+                !replayingIntro ? (
                   <NavigationDetail
                     key={`${app.route}:${app.params.id ?? ""}`}
                     reducedMotion={reducedMotion}

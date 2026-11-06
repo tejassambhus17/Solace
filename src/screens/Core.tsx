@@ -28,7 +28,8 @@ import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
 import { routes } from "../routes";
 import { useGoogleAuth } from "../google-auth";
-import { Companion, useReducedMotion } from "../Companion";
+import { useReducedMotion } from "../Companion";
+import type { AuthPage } from "../onboarding-state";
 import { localDay, recordDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
 import { VoiceControls } from "../VoiceControls";
@@ -54,7 +55,6 @@ import { GoogleAuthAction } from "./GoogleAuthAction";
 import { PasswordRecoveryScreen } from "./PasswordRecovery";
 import {
   AppText,
-  Artwork,
   BrandMark,
   BotanicalBackdrop,
   IconButton,
@@ -83,12 +83,15 @@ function confirmAction(title: string, message: string, action: () => void) {
       { text: "Delete", style: "destructive", onPress: action },
     ]);
 }
-export function AuthScreen() {
+export function AuthScreen({
+  initialPage = "login",
+}: {
+  initialPage?: AuthPage;
+}) {
   const app = useApp();
   const { colors } = useTheme();
-  const { height } = useWindowDimensions();
-  const [page, setPage] = useState<"welcome" | "intro" | "login" | "signup">(
-    app.sessionExpired ? "login" : "welcome",
+  const [page, setPage] = useState<AuthPage>(
+    app.sessionExpired ? "login" : initialPage,
   );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -96,15 +99,12 @@ export function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
   const [notice, setNotice] = useState("");
-  const google = useGoogleAuth(
-    "login",
-    !showRecovery && (page === "login" || page === "signup"),
-  );
+  const google = useGoogleAuth("login", !showRecovery);
   const authBusy = app.busy || google.busy;
   const submitting = useRef(false);
   const emailField = useRef<React.ComponentRef<typeof TextInput>>(null);
   const passwordField = useRef<React.ComponentRef<typeof TextInput>>(null);
-  function changePage(next: "welcome" | "intro" | "login" | "signup") {
+  function changePage(next: AuthPage) {
     if (submitting.current || google.pending.current || app.busy) return;
     setPage(next);
     setNotice("");
@@ -140,131 +140,6 @@ export function AuthScreen() {
         onBack={() => setShowRecovery(false)}
       />
     );
-  if (page === "welcome")
-    return (
-      <Screen style={{ flex: 1, paddingTop: 0, paddingBottom: 28 }}>
-        <BotanicalBackdrop
-          style={{
-            top: -20,
-            right: -110,
-            width: 320,
-            height: 280,
-            opacity: 0.42,
-          }}
-        />
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            minHeight: 380,
-            paddingTop: 28,
-          }}
-        >
-          <Artwork
-            kind="petal"
-            size={Math.max(200, Math.min(280, height * 0.33))}
-          />
-          <AppText
-            variant="display"
-            style={{ fontSize: 64, lineHeight: 70, marginTop: 5 }}
-          >
-            Solace
-          </AppText>
-          <AppText style={{ fontSize: 19, marginTop: 10, textAlign: "center" }}>
-            A little space for you.
-          </AppText>
-          <AppText
-            color={colors.muted}
-            style={{ textAlign: "center", maxWidth: 270, marginTop: 14 }}
-          >
-            Your AI companion to check in, talk things through, and find a
-            little calm.
-          </AppText>
-        </View>
-        <View style={{ gap: 12, paddingTop: 28 }}>
-          <Button
-            title="Get started"
-            icon="arrow-forward"
-            onPress={() => changePage("intro")}
-          />
-          <Button
-            title="Log in"
-            variant="secondary"
-            onPress={() => changePage("login")}
-          />
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ textAlign: "center", marginTop: 8 }}
-          >
-            Your space, at your pace.
-          </AppText>
-        </View>
-      </Screen>
-    );
-  if (page === "intro")
-    return (
-      <Screen title="A little space for you" back={() => changePage("welcome")}>
-        <View style={{ alignItems: "center", paddingVertical: 25 }}>
-          <Companion size={145} state="idle" />
-        </View>
-        <AppText variant="display">Care, at your pace.</AppText>
-        <AppText
-          color={colors.muted}
-          style={{ marginTop: 12, marginBottom: 25 }}
-        >
-          A few small ways to make room for yourself. Choose what feels useful
-          and leave the rest.
-        </AppText>
-        {[
-          {
-            icon: "chatbubble-ellipses-outline",
-            title: "Talk things through",
-            text: "Start with your own words. Solace is an AI wellness companion, not a therapist or emergency service.",
-          },
-          {
-            icon: "leaf-outline",
-            title: "Make a Moment",
-            text: "A feeling becomes a short breathing, grounding or reflection practice, in a space you choose.",
-          },
-          {
-            icon: "lock-closed-outline",
-            title: "Keep context on your terms",
-            text: "Personalization starts off. You choose which preferences to save and can edit or remove them whenever you like.",
-          },
-        ].map((item) => (
-          <Row
-            key={item.title}
-            style={{ alignItems: "flex-start", paddingVertical: 16, gap: 15 }}
-          >
-            <Icon name={item.icon} color={colors.accent} />
-            <View style={{ flex: 1 }}>
-              <AppText variant="label">{item.title}</AppText>
-              <AppText
-                variant="caption"
-                color={colors.muted}
-                style={{ marginTop: 5 }}
-              >
-                {item.text}
-              </AppText>
-            </View>
-          </Row>
-        ))}
-        <Button
-          title="Create my account"
-          icon="arrow-forward"
-          onPress={() => changePage("signup")}
-          style={{ marginTop: 25 }}
-        />
-        <Button
-          title="I already have an account"
-          variant="ghost"
-          onPress={() => changePage("login")}
-          style={{ marginTop: 8 }}
-        />
-      </Screen>
-    );
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -278,12 +153,16 @@ export function AuthScreen() {
         <BotanicalBackdrop
           style={{ top: -40, right: -120, width: 300, height: 300 }}
         />
-        <Row style={{ marginLeft: -10, marginBottom: 38 }}>
-          <IconButton
-            name="arrow-back"
-            label="Back to welcome"
-            onPress={() => changePage("welcome")}
-          />
+        <Row
+          style={{ marginLeft: page === "signup" ? -10 : 0, marginBottom: 38 }}
+        >
+          {page === "signup" && (
+            <IconButton
+              name="arrow-back"
+              label="Back to log in"
+              onPress={() => changePage("login")}
+            />
+          )}
           <BrandMark />
         </Row>
         <AppText variant="display">

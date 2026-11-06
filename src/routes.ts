@@ -16,6 +16,7 @@ export const routes = {
   journey: "journey",
   reflectionDetail: "reflection-detail",
   profile: "profile",
+  onboarding: "onboarding-replay",
   memory: "memory",
   support: "support",
 } as const;

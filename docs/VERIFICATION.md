@@ -1,5 +1,9 @@
 # Verification record
 
+## First-launch walkthrough — 7 November 2026
+
+[Onboarding, authentication, personalization and replay verification](ONBOARDING_QA.md).
+
 ## Gesture navigation pass — 7 November 2026
 
 [Gesture, route, profiler and build results](NAVIGATION_GESTURES_QA.md). The [physical navigation checklist](PHYSICAL_DEVICE_QA_CHECKLIST.md#gesture-navigation-and-nested-transitions) covers both Android system navigation modes and iOS leading-edge Back and Liquid Glass.

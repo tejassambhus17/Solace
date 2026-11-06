@@ -12,6 +12,7 @@ import {
 import Constants from "expo-constants";
 import { useTheme } from "../theme";
 import { useApp } from "../store";
+import { routes } from "../routes";
 import { chooseProfilePhoto } from "../photos";
 import { useReducedMotion } from "../Companion";
 import {
@@ -411,6 +412,13 @@ export default function ProfileScreen({ name }: { name: string }) {
             Version {Constants.expoConfig.version}
           </AppText>
         )}
+        <Button
+          title="Replay introduction"
+          variant="secondary"
+          icon="play-circle-outline"
+          onPress={() => app.navigate(routes.onboarding)}
+          style={{ marginBottom: 18 }}
+        />
         <Card style={{ marginBottom: 14 }}>
           <AppText variant="heading">Wellness and safety</AppText>
           <AppText style={{ marginTop: 8 }}>
