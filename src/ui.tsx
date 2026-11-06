@@ -84,6 +84,7 @@ export function Screen({
   onContentSizeChange,
   contentContainerStyle,
   edgeToEdge = false,
+  edgeToEdgeTop = false,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
@@ -94,6 +95,7 @@ export function Screen({
   onContentSizeChange?: ScrollViewProps["onContentSizeChange"];
   contentContainerStyle?: StyleProp<ViewStyle>;
   edgeToEdge?: boolean;
+  edgeToEdgeTop?: boolean;
 }) {
   const { colors } = useTheme();
   const navigationInset = useNavigationInset();
@@ -139,7 +141,7 @@ export function Screen({
   );
   return (
     <SafeAreaView
-      edges={edgeToEdge ? [] : ["top"]}
+      edges={edgeToEdge || edgeToEdgeTop ? [] : ["top"]}
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       {scroll ? (

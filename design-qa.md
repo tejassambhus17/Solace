@@ -2,6 +2,16 @@
 
 final result: passed
 
+## Compact Explore phone reference — 6 November 2026
+
+Compared the second supplied Explore image with the rendered dark screen at equivalent phone widths, below system chrome. Reviewed the light screen at 394 × 852 CSS pixels and checked the narrow and wide phone layouts at 320 and 430 pixels.
+
+- The first render cut off Move and let lower tools peek around the navigation. The final chip row shows all six options at 394 pixels. At 320 pixels it can scroll sideways without widening the page, and the recommendations stack. The Explore scroll area ends above the floating bar.
+- The twilight lotus, ring, and recommendation thumbnails use the existing art. Serif headings and compact controls preserve the reference hierarchy. A few recommendation titles can wrap, with room in the cards for both title and timing.
+- The recommendation timers, journal, category filter, search, planner, toolkit, check-in, and secondary practice builder opened their working routes. The three-day plan saved to the local test account.
+
+[Dark capture](docs/screenshots/explore-compact-dark.jpg) · [Light capture](docs/screenshots/explore-compact-light.jpg)
+
 ## Twilight Today phone reference — 6 November 2026
 
 Compared the second supplied image with the live dark Today screen. The source crop starts below the status bar, excludes the phone frame, and was resized to 393 pixels wide. The browser captures measured 394 × 852 CSS pixels. Compared the top artwork and greeting, mood panel and feature, and the Journey, Explore More, and navigation region side by side. The browser preview uses a test account with a real saved Calm check-in.

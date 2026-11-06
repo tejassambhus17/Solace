@@ -41,7 +41,7 @@ The user directed feature implementation to continue while deferring provider, h
 | Moments and Journey | Optional environment controls expand on demand. Changed feelings invalidate old previews. Canceling exit keeps a paused Moment paused. Calendar month and selected day stay in sync. | Focused helper tests and browser generation, pause, completion, feedback and calendar checks. |
 | Reminder preferences | Four-digit time input, clear edit/reset, explicit delete confirmation, serialized restore and edit, deduplicated tap routing. | Coordination tests and browser preference saving and editing. Native scheduling, delivery and tap acceptance remain separate. |
 | Preview and motion | Packaged web preview serves real audio MIME and byte ranges. Web motion uses its available driver, and mobile retains native animation. | Local HTTP smoke check, browser playback state and Expo exports. |
-| Explore library | Scenic header, category filters, search, saved toolkit, five-minute feature, illustrated shortcuts, timed practice builder, and more wellness tools. | Browser verified search, category, timer entry, and builder. Physical Android verified the Move filter and artwork. Moment tests cover each focus and duration. |
+| Explore library | Twilight hero, compact filters including Sleep, search and saved toolkit, a five-minute featured Moment, and four recommendations for breathing, grounding, journaling and relaxation. The plan banner opens the editable three-day plan. Explore More links to Guided Programs, Wellness Toolkit and Check-Ins, with the timed practice builder among the additional tools. | See [verification](VERIFICATION.md) for route and layout checks. Installed phone appearance is a separate check. |
 
 ## Current exclusions and limits
 

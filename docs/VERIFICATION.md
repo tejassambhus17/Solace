@@ -394,3 +394,10 @@ Native recording and audio playback, broader notification scenarios, iOS, and re
 [Dark capture](screenshots/twilight-today-dark.jpg) · [Light capture](screenshots/twilight-today-light.jpg) · [Design comparison notes](../design-qa.md)
 
 The connected Android display was off during the redesign check. Installed-device appearance, iPhone safe areas and iOS glass are pending.
+
+## Compact Explore phone layout — 6 November 2026
+
+- Compared the reference with the rendered Explore screen. Reviewed light and dark at 394 × 852 CSS pixels. Checked 320 and 430 pixel widths without page overflow and confirmed all six filters fit at 394 pixels.
+- Verified the featured and Five Senses timers opened at five minutes, Breath Reset at three minutes, and Sleep Wind Down at ten minutes. Quick Reflection opened the journal. Sleep filtered to the two sleep entries and search found Gentle Movement.
+- Saved the three-day plan from its banner on the isolated test account. Verified the toolkit and check-in routes, and started a ten-minute reflection from the secondary timed-practice builder. The preview reported no console errors during these route checks.
+- TypeScript, formatting, the web preview export, eight Moment tests, and 64 server integration tests passed. Native iPhone appearance remains pending.

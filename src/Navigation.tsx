@@ -46,7 +46,9 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
   const onToday = app.route === "today";
+  const onExplore = app.route === "explore";
   const twilight = resolved === "dark" && onToday;
+  const twilightExplore = resolved === "dark" && onExplore;
   const bottomInset = Math.max(insets.bottom, 10);
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
@@ -83,19 +85,23 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
         const selectedSurface =
           today && twilight
             ? "#322742"
-            : today
-              ? colors.sageSurface
-              : explore || resolved === "light"
-                ? colors.lavenderSurface
-                : colors.surface2;
+            : explore && twilightExplore
+              ? "#352741"
+              : today
+                ? colors.sageSurface
+                : explore || resolved === "light"
+                  ? colors.lavenderSurface
+                  : colors.surface2;
         const selectedInk =
           today && twilight
             ? "#D7B6FA"
-            : today
-              ? colors.sageText
-              : explore || resolved === "light"
-                ? colors.lavenderText
-                : colors.primary;
+            : explore && twilightExplore
+              ? "#D7B6FA"
+              : today
+                ? colors.sageText
+                : explore || resolved === "light"
+                  ? colors.lavenderText
+                  : colors.primary;
         return (
           <Pressable
             key={destination.name}
@@ -103,7 +109,7 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
               explore ? app.navigate("explore") : app.setTab(destination.name)
             }
             accessibilityRole={explore ? "button" : "tab"}
-            accessibilityState={explore ? undefined : { selected }}
+            accessibilityState={{ selected }}
             aria-selected={explore ? undefined : selected}
             accessibilityLabel={destination.title}
             android_ripple={{
@@ -235,9 +241,11 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
             style={[
               shape,
               {
-                backgroundColor: twilight ? "#211D2B" : colors.surface,
+                backgroundColor:
+                  twilight || twilightExplore ? "#211D2B" : colors.surface,
                 borderWidth: 1,
-                borderColor: twilight ? "#3E344B" : colors.border,
+                borderColor:
+                  twilight || twilightExplore ? "#3E344B" : colors.border,
               },
             ]}
           >

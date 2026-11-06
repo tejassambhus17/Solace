@@ -1,12 +1,16 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
+  useWindowDimensions,
   type ImageSourcePropType,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import {
   createExplorePractice,
   exploreShortcuts,
@@ -27,10 +31,10 @@ import {
 } from "../ui";
 
 const categories = [
-  { id: "all", label: "All", icon: "grid-outline" },
-  { id: "breathe", label: "Breathe", icon: "cloud-outline" },
+  { id: "all", label: "All", icon: null },
+  { id: "breathe", label: "Breathe", icon: "leaf-outline" },
   { id: "reflect", label: "Reflect", icon: "pencil-outline" },
-  { id: "relax", label: "Relax", icon: "moon-outline" },
+  { id: "sleep", label: "Sleep", icon: "moon-outline" },
   { id: "focus", label: "Focus", icon: "locate-outline" },
   { id: "move", label: "Move", icon: "body-outline" },
 ] as const;
@@ -39,7 +43,7 @@ type Category = (typeof categories)[number]["id"];
 type Duration = (typeof practiceDurations)[number];
 type PracticeDestination =
   | { route: string; params?: Record<string, string | number> }
-  | { focus: PracticeFocus; minutes: Duration };
+  | { focus: PracticeFocus; minutes: Duration; title?: string };
 type ExploreItem = {
   title: string;
   detail: string;
@@ -48,51 +52,52 @@ type ExploreItem = {
   destination: PracticeDestination;
 };
 type FeaturedTile = ExploreItem & {
-  tile: { title: string; image: ImageSourcePropType; base: string };
+  tile: { meta: string; image: ImageSourcePropType; base: string };
 };
 
 const exploreArt = {
   sceneLight: require("../../assets/redesign-explore-scene-light.jpg"),
-  sceneDark: require("../../assets/redesign-explore-scene-dark.jpg"),
+  sceneDark: require("../../assets/today-twilight-lotus.jpg"),
   featureLight: require("../../assets/redesign-explore-feature-light.jpg"),
   featureDark: require("../../assets/redesign-explore-feature-dark.jpg"),
   breathe: require("../../assets/redesign-explore-breathe.jpg"),
   ground: require("../../assets/redesign-explore-ground.jpg"),
   reflect: require("../../assets/redesign-explore-reflect.jpg"),
   sleep: require("../../assets/redesign-explore-sleep.jpg"),
+  plan: require("../../assets/today-explore-guided.jpg"),
 };
 
 const featured: ExploreItem = {
   title: "Calm Your Mind",
-  detail: "A 5-minute guided journey to slow down, breathe, and reset.",
+  detail: "A short guided pause to slow down and reset.",
   icon: "sparkles-outline",
-  categories: ["breathe", "relax"],
+  categories: ["breathe"],
   destination: { focus: "breathe", minutes: 5 },
 };
 
 const forYou: FeaturedTile[] = [
   {
-    title: "3-Min Breath Reset",
+    title: "Breath Reset",
     detail: "Take three minutes to follow a comfortable breathing rhythm.",
     icon: "cloud-outline",
-    categories: ["breathe", "relax"],
+    categories: ["breathe"],
     destination: { route: "breathing", params: { durationSec: 180 } },
     tile: {
-      title: "3-Min\nBreath Reset",
+      meta: "3 min · Breathing",
       image: exploreArt.breathe,
-      base: "#655477",
+      base: "#231C2A",
     },
   },
   {
-    title: "Grounding in 5 Senses",
-    detail: "Notice what’s around you, one sense at a time.",
+    title: "Five Senses",
+    detail: "A five-minute grounding practice to notice what’s around you.",
     icon: "hand-left-outline",
-    categories: ["focus", "relax"],
-    destination: { route: "grounding" },
+    categories: ["focus"],
+    destination: { focus: "ground", minutes: 5, title: "Five Senses" },
     tile: {
-      title: "Grounding\nin 5 Senses",
+      meta: "5 min · Grounding",
       image: exploreArt.ground,
-      base: "#505C49",
+      base: "#202420",
     },
   },
   {
@@ -102,21 +107,21 @@ const forYou: FeaturedTile[] = [
     categories: ["reflect", "focus"],
     destination: { route: "reflection" },
     tile: {
-      title: "Quick\nReflection",
+      meta: "≈4 min · Journaling",
       image: exploreArt.reflect,
-      base: "#68536F",
+      base: "#2C212C",
     },
   },
   {
     title: "Sleep Wind Down",
-    detail: "Four gentle steps to wind down toward rest.",
+    detail: "A ten-minute practice to wind down toward rest.",
     icon: "moon-outline",
-    categories: ["relax"],
-    destination: { route: "sleep" },
+    categories: ["sleep"],
+    destination: { focus: "rest", minutes: 10, title: "Sleep Wind Down" },
     tile: {
-      title: "Sleep\nWind Down",
+      meta: "10 min · Relaxation",
       image: exploreArt.sleep,
-      base: "#313959",
+      base: "#201B32",
     },
   },
 ];
@@ -126,7 +131,7 @@ const extraTools: ExploreItem[] = [
     title: "Solace Moments",
     detail: "Choose a guided activity for how you feel.",
     icon: "sparkles-outline",
-    categories: ["breathe", "reflect", "relax", "focus"],
+    categories: ["breathe", "reflect", "focus"],
     destination: { route: "moments" },
   },
   {
@@ -140,8 +145,22 @@ const extraTools: ExploreItem[] = [
     title: "Guides & Resources",
     detail: "Browse sleep, stress, connection, and other guides.",
     icon: "book-outline",
-    categories: ["relax", "focus"],
+    categories: ["focus"],
     destination: { route: "resources" },
+  },
+  {
+    title: "Sleep Wind-Down Guide",
+    detail: "Four gentle steps to try at your own pace.",
+    icon: "moon-outline",
+    categories: ["sleep"],
+    destination: { route: "sleep" },
+  },
+  {
+    title: "Five-Senses Exercise",
+    detail: "Go one sense at a time without a timer.",
+    icon: "hand-left-outline",
+    categories: ["focus"],
+    destination: { route: "grounding" },
   },
   {
     title: "Reflective Check-Ins",
@@ -154,7 +173,7 @@ const extraTools: ExploreItem[] = [
     title: "Daily Affirmation",
     detail: "A kind thought to keep close.",
     icon: "heart-outline",
-    categories: ["reflect", "relax"],
+    categories: ["reflect"],
     destination: { route: "affirmation" },
   },
   {
@@ -224,12 +243,10 @@ function IconAction({
 function SectionHeading({
   icon,
   title,
-  detail,
   action,
 }: {
   icon: string;
   title: string;
-  detail?: string;
   action?: { label: string; onPress: () => void; expanded?: boolean };
 }) {
   const { colors } = useTheme();
@@ -238,21 +255,12 @@ function SectionHeading({
       <Icon name={icon} color={colors.text} size={21} />
       <View style={styles.sectionTitle}>
         <AppText
-          variant="label"
+          variant="heading"
           accessibilityRole="header"
           style={styles.sectionTitleText}
         >
           {title}
         </AppText>
-        {detail && (
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={styles.sectionDetail}
-          >
-            {detail}
-          </AppText>
-        )}
       </View>
       {action && (
         <Pressable
@@ -357,6 +365,10 @@ export function ExploreScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
+  const { top } = useSafeAreaInsets();
+  const { width, fontScale } = useWindowDimensions();
+  const singleColumn = width < 350 || fontScale > 1.2;
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [category, setCategory] = useState<Category>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -384,8 +396,14 @@ export function ExploreScreen() {
       app.navigate(destination.route, destination.params);
       return;
     }
+    const activity = createExplorePractice(
+      destination.focus,
+      destination.minutes,
+    );
     app.navigate("moment-player", {
-      activity: createExplorePractice(destination.focus, destination.minutes),
+      activity: destination.title
+        ? { ...activity, title: destination.title }
+        : activity,
       provider: "offline",
       source: "explore",
     });
@@ -400,9 +418,16 @@ export function ExploreScreen() {
     setSearchOpen(!searchOpen);
   }
   return (
-    <Screen style={styles.screen}>
+    <Screen edgeToEdgeTop scrollRef={scroll} style={styles.screen}>
+      <StatusBar style="light" />
       <View
-        style={[styles.hero, { backgroundColor: dark ? "#24213C" : "#545071" }]}
+        style={[
+          styles.hero,
+          {
+            paddingTop: top + 3,
+            backgroundColor: dark ? "#191528" : "#545071",
+          },
+        ]}
       >
         <DecorativeImage
           source={dark ? exploreArt.sceneDark : exploreArt.sceneLight}
@@ -413,7 +438,7 @@ export function ExploreScreen() {
             StyleSheet.absoluteFill,
             {
               backgroundImage:
-                "linear-gradient(90deg, #25223DCC 0%, #29264177 51%, #29264100 82%)",
+                "linear-gradient(90deg, #11101BCD 0%, #17132350 49%, #18132600 80%)",
             },
           ]}
         />
@@ -422,7 +447,7 @@ export function ExploreScreen() {
           style={[
             StyleSheet.absoluteFill,
             {
-              backgroundImage: `linear-gradient(180deg, ${colors.bg}00 74%, ${colors.bg} 100%)`,
+              backgroundImage: `linear-gradient(180deg, ${colors.bg}00 67%, ${colors.bg} 100%)`,
             },
           ]}
         />
@@ -436,7 +461,7 @@ export function ExploreScreen() {
             <Icon name="chevron-back" color={overlayInk} size={13} />
             <LotusMark size={26} />
             <AppText
-              variant="label"
+              variant="heading"
               color={overlayInk}
               style={styles.brandName}
             >
@@ -466,16 +491,23 @@ export function ExploreScreen() {
           >
             Explore
           </AppText>
-          <AppText color={overlayInk} style={styles.heroSubtitle}>
-            Discover guided experiences, tools, and practices for your everyday
-            wellbeing.
+          <AppText
+            variant="heading"
+            color={overlayInk}
+            style={styles.heroSubtitle}
+          >
+            What would help you today?
           </AppText>
         </View>
       </View>
 
       <View style={styles.body}>
-        <View
-          style={styles.categoryRail}
+        <ScrollView
+          horizontal
+          style={styles.categoryViewport}
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.categoryRail}
           accessibilityRole="radiogroup"
           accessibilityLabel="Practice categories"
         >
@@ -494,31 +526,53 @@ export function ExploreScreen() {
                 }}
                 style={({ pressed }) => [
                   styles.category,
-                  {
-                    backgroundColor: selected
-                      ? colors.lavenderSurface
-                      : colors.surface,
-                    borderColor: selected ? colors.lavender : colors.border,
-                  },
                   pressed && styles.pressed,
                 ]}
               >
-                <Icon
-                  name={item.icon}
-                  color={selected ? colors.lavenderText : colors.text}
-                  size={18}
-                />
-                <AppText
-                  variant="label"
-                  color={selected ? colors.lavenderText : colors.text}
-                  style={styles.categoryLabel}
+                <Row
+                  style={[
+                    styles.categoryPill,
+                    {
+                      backgroundColor: selected
+                        ? dark
+                          ? "#D6B7F0"
+                          : colors.lavenderSurface
+                        : dark
+                          ? "#18151EDD"
+                          : colors.surface,
+                      borderColor: selected
+                        ? colors.lavender
+                        : dark
+                          ? "#514456"
+                          : colors.border,
+                    },
+                  ]}
                 >
-                  {item.label}
-                </AppText>
+                  {item.icon && (
+                    <Icon
+                      name={item.icon}
+                      color={selected && dark ? "#24172F" : colors.text}
+                      size={15}
+                    />
+                  )}
+                  <AppText
+                    variant="heading"
+                    color={
+                      selected
+                        ? dark
+                          ? "#24172F"
+                          : colors.lavenderText
+                        : colors.text
+                    }
+                    style={styles.categoryLabel}
+                  >
+                    {item.label}
+                  </AppText>
+                </Row>
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         {searchOpen && (
           <View
@@ -586,7 +640,10 @@ export function ExploreScreen() {
             <View
               style={[
                 styles.feature,
-                { backgroundColor: dark ? "#2B263D" : "#5C4D68" },
+                {
+                  backgroundColor: dark ? "#2B263D" : "#5C4D68",
+                  borderColor: dark ? "#63546C" : "#DED0DC",
+                },
               ]}
             >
               <DecorativeImage
@@ -598,7 +655,7 @@ export function ExploreScreen() {
                   StyleSheet.absoluteFill,
                   {
                     backgroundImage:
-                      "linear-gradient(90deg, #272139CC 0%, #2D263DB3 36%, #302B420F 78%)",
+                      "linear-gradient(90deg, #17131FE6 0%, #211A2A9C 43%, #302B4200 81%)",
                   },
                 ]}
               />
@@ -610,7 +667,7 @@ export function ExploreScreen() {
                     color={overlayInk}
                     style={styles.featureBadgeText}
                   >
-                    Solace Moment
+                    FEATURED MOMENT · 5 MIN
                   </AppText>
                 </Row>
                 <AppText
@@ -621,7 +678,11 @@ export function ExploreScreen() {
                 >
                   {featured.title}
                 </AppText>
-                <AppText color={overlayInk} style={styles.featureDescription}>
+                <AppText
+                  variant="heading"
+                  color={overlayInk}
+                  style={styles.featureDescription}
+                >
                   {featured.detail}
                 </AppText>
                 <Pressable
@@ -630,69 +691,73 @@ export function ExploreScreen() {
                   onPress={() => open(featured.destination)}
                   style={({ pressed }) => [
                     styles.featureAction,
-                    { backgroundColor: dark ? colors.primary : "#FFF6EC" },
+                    { backgroundColor: "#FFDBB9" },
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Icon
-                    name="play"
-                    size={15}
-                    color={dark ? colors.primaryText : "#26252B"}
-                  />
+                  <Icon name="play" size={15} color="#2B1E28" />
                   <AppText
-                    variant="label"
-                    color={dark ? colors.primaryText : "#26252B"}
+                    variant="heading"
+                    color="#2B1E28"
+                    style={styles.featureActionLabel}
                   >
                     Start Moment
                   </AppText>
+                  <Icon name="arrow-forward" size={15} color="#2B1E28" />
                 </Pressable>
               </View>
             </View>
 
             <View style={styles.section}>
-              <SectionHeading
-                icon="leaf-outline"
-                title="For You Today"
-                action={{
-                  label: "See All",
-                  expanded: false,
-                  onPress: () => setShowAll(true),
-                }}
-              />
+              <SectionHeading icon="leaf-outline" title="Recommended for You" />
               <View style={styles.tiles}>
                 {forYou.map((item) => (
                   <Pressable
                     key={item.title}
                     accessibilityRole="button"
                     accessibilityLabel={item.title}
+                    accessibilityHint={item.tile.meta.replace("≈", "About ")}
                     onPress={() => open(item.destination)}
                     style={({ pressed }) => [
                       styles.tile,
-                      { backgroundColor: item.tile.base },
+                      singleColumn && styles.fullTile,
+                      {
+                        backgroundColor: item.tile.base,
+                        borderColor: dark ? "#514256" : "#6B596D",
+                      },
                       pressed && styles.pressed,
                     ]}
                   >
-                    <DecorativeImage source={item.tile.image} />
-                    <View
-                      pointerEvents="none"
-                      style={[
-                        StyleSheet.absoluteFill,
-                        {
-                          backgroundImage:
-                            "linear-gradient(180deg, #211D3300 30%, #262138D9 100%)",
-                        },
-                      ]}
-                    />
-                    <View style={styles.tilePlay}>
-                      <Icon name="play" color={overlayInk} size={10} />
+                    <View style={styles.tilePicture} pointerEvents="none">
+                      <DecorativeImage source={item.tile.image} />
+                      <View
+                        style={[
+                          StyleSheet.absoluteFill,
+                          {
+                            backgroundImage: `linear-gradient(90deg, ${item.tile.base}00 24%, ${item.tile.base} 100%)`,
+                          },
+                        ]}
+                      />
                     </View>
-                    <AppText
-                      variant="label"
-                      color={overlayInk}
-                      style={styles.tileLabel}
-                    >
-                      {item.tile.title}
-                    </AppText>
+                    <View style={styles.tileCopy}>
+                      <AppText
+                        variant="heading"
+                        color={overlayInk}
+                        style={styles.tileLabel}
+                      >
+                        {item.title}
+                      </AppText>
+                      <AppText
+                        variant="caption"
+                        color="#E9DBEA"
+                        style={styles.tileMeta}
+                      >
+                        {item.tile.meta}
+                      </AppText>
+                    </View>
+                    <View style={styles.tilePlay}>
+                      <Icon name="play" color={overlayInk} size={11} />
+                    </View>
                   </Pressable>
                 ))}
               </View>
@@ -700,67 +765,158 @@ export function ExploreScreen() {
           </>
         )}
 
-        <View style={styles.builder}>
-          <SectionHeading
-            icon="locate-outline"
-            title="Build Your Practice"
-            detail="Create a simple, personalized wellbeing routine."
-          />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create Your Wellness Plan"
+          accessibilityHint="Opens your editable three-day plan"
+          onPress={() => app.navigate("plan")}
+          style={({ pressed }) => [
+            styles.planBanner,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View pointerEvents="none" style={styles.planPicture}>
+            <DecorativeImage source={exploreArt.plan} />
+            <View style={[StyleSheet.absoluteFill, styles.planScrim]} />
+          </View>
+          <View style={styles.planIcon}>
+            <Icon name="calendar-outline" color={overlayInk} size={23} />
+          </View>
+          <View style={styles.sectionTitle}>
+            <AppText
+              variant="heading"
+              color={overlayInk}
+              style={styles.planTitle}
+            >
+              Create Your Wellness Plan
+            </AppText>
+            <AppText
+              variant="caption"
+              color="#E6DAE8"
+              style={styles.planDetail}
+            >
+              Choose a goal and build a gentle daily routine.
+            </AppText>
+          </View>
+          <View style={styles.planAction}>
+            <Icon name="arrow-forward" color="#2B1E28" size={18} />
+          </View>
+        </Pressable>
+
+        <View style={styles.section}>
+          <SectionHeading icon="grid-outline" title="Explore More" />
+          <View
+            style={[styles.moreCards, singleColumn && styles.moreCardsStacked]}
+          >
+            {exploreShortcuts.map((card) => {
+              const tone = moreTones[card.tone];
+              const detail = moreDescriptions[card.route];
+              return (
+                <Pressable
+                  key={card.route}
+                  accessibilityRole="button"
+                  accessibilityLabel={card.title}
+                  accessibilityHint={detail}
+                  onPress={() => app.navigate(card.route)}
+                  style={({ pressed }) => [
+                    styles.moreCard,
+                    singleColumn && styles.fullTile,
+                    {
+                      backgroundColor: dark
+                        ? tone.surface
+                        : colors[`${card.tone}Surface`],
+                      borderColor: dark ? tone.border : colors.border,
+                    },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Icon
+                    name={card.icon}
+                    color={dark ? tone.ink : colors[`${card.tone}Text`]}
+                    size={25}
+                  />
+                  <AppText variant="heading" style={styles.moreTitle}>
+                    {card.title}
+                  </AppText>
+                  <AppText
+                    variant="caption"
+                    color={dark ? "#D8CCD8" : colors.muted}
+                    style={styles.moreDetail}
+                  >
+                    {detail}
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Build Your Practice"
+            accessibilityState={{ expanded: moreOpen }}
+            aria-expanded={moreOpen}
+            onPress={() => setMoreOpen(!moreOpen)}
+            style={({ pressed }) => [
+              styles.moreAction,
+              styles.moreToolsAction,
+              pressed && styles.pressed,
+            ]}
+          >
+            <AppText variant="label" color={colors.primary}>
+              More wellness tools
+            </AppText>
+            <Icon
+              name={moreOpen ? "chevron-up" : "chevron-down"}
+              color={colors.primary}
+              size={15}
+            />
+          </Pressable>
+          {moreOpen && (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setCategory("all");
+                  setQuery("");
+                  setSearchOpen(false);
+                  setShowAll(true);
+                  scroll.current?.scrollTo({ y: 0 });
+                }}
+                style={({ pressed }) => [
+                  styles.moreAction,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <AppText variant="label" color={colors.primary}>
+                  Browse all practices
+                </AppText>
+                <Icon name="chevron-forward" color={colors.primary} size={15} />
+              </Pressable>
+              {extraTools.map((item) => (
+                <ExploreResult
+                  key={item.title}
+                  item={item}
+                  onPress={() => open(item.destination)}
+                />
+              ))}
+            </>
+          )}
+          <Pressable
+            accessibilityRole="button"
             accessibilityState={{ expanded: builderOpen }}
             aria-expanded={builderOpen}
             onPress={() => setBuilderOpen(!builderOpen)}
             style={({ pressed }) => [
-              styles.builderStrip,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              styles.moreAction,
               pressed && styles.pressed,
             ]}
           >
-            <View style={styles.builderPicture}>
-              <DecorativeImage source={exploreArt.breathe} />
-              <View
-                pointerEvents="none"
-                style={[
-                  StyleSheet.absoluteFill,
-                  {
-                    backgroundImage: `linear-gradient(90deg, ${colors.surface}00 40%, ${colors.surface} 100%)`,
-                  },
-                ]}
-              />
-            </View>
-            {(
-              [
-                ["locate-outline", "Choose\nYour Focus"],
-                ["time-outline", "Set\nDuration"],
-                ["sparkles-outline", "Get Your\nPlan"],
-              ] as const
-            ).map(([icon, label], index) => (
-              <React.Fragment key={label}>
-                {index > 0 && (
-                  <Icon name="chevron-forward" color={colors.muted} size={11} />
-                )}
-                <View style={styles.builderStep}>
-                  <Icon name={icon} color={colors.sageText} size={17} />
-                  <AppText variant="label" style={styles.builderStepLabel}>
-                    {label}
-                  </AppText>
-                </View>
-              </React.Fragment>
-            ))}
-            <View
-              style={[
-                styles.builderAction,
-                { backgroundColor: colors.primary },
-              ]}
-            >
-              <Icon
-                name={builderOpen ? "chevron-up" : "arrow-forward"}
-                color={colors.primaryText}
-                size={18}
-              />
-            </View>
+            <AppText variant="label" color={colors.primary}>
+              Build a timed practice
+            </AppText>
+            <Icon
+              name={builderOpen ? "chevron-up" : "chevron-down"}
+              color={colors.primary}
+              size={15}
+            />
           </Pressable>
           {practicePlan && (
             <View
@@ -837,92 +993,40 @@ export function ExploreScreen() {
             </View>
           )}
         </View>
-
-        <View style={styles.section}>
-          <SectionHeading icon="grid-outline" title="More to Explore" />
-          <View style={styles.moreCards}>
-            {exploreShortcuts.map((card) => (
-              <Pressable
-                key={card.route}
-                accessibilityRole="button"
-                accessibilityLabel={card.title}
-                accessibilityHint={card.detail}
-                onPress={() => app.navigate(card.route)}
-                style={({ pressed }) => [
-                  styles.moreCard,
-                  {
-                    backgroundColor: colors[`${card.tone}Surface`],
-                    borderColor: colors.border,
-                  },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Icon
-                  name={card.icon}
-                  color={colors[`${card.tone}Text`]}
-                  size={22}
-                />
-                <AppText variant="label" style={styles.moreTitle}>
-                  {card.title}
-                </AppText>
-                <AppText
-                  variant="caption"
-                  color={colors.muted}
-                  style={styles.moreDetail}
-                >
-                  {card.detail}
-                </AppText>
-              </Pressable>
-            ))}
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: moreOpen }}
-            aria-expanded={moreOpen}
-            onPress={() => setMoreOpen(!moreOpen)}
-            style={({ pressed }) => [
-              styles.moreAction,
-              pressed && styles.pressed,
-            ]}
-          >
-            <AppText variant="label" color={colors.primary}>
-              More wellness tools
-            </AppText>
-            <Icon
-              name={moreOpen ? "chevron-up" : "chevron-down"}
-              color={colors.primary}
-              size={15}
-            />
-          </Pressable>
-          {moreOpen &&
-            extraTools.map((item) => (
-              <ExploreResult
-                key={item.title}
-                item={item}
-                onPress={() => open(item.destination)}
-              />
-            ))}
-        </View>
       </View>
     </Screen>
   );
 }
 
 const overlayInk = "#FFF8F1";
+const moreTones = {
+  lavender: { surface: "#252039", border: "#554766", ink: "#DEBBFF" },
+  sage: { surface: "#1D2B2A", border: "#435453", ink: "#CBE6DD" },
+  peach: { surface: "#33242B", border: "#765259", ink: "#FFD0A6" },
+};
+const moreDescriptions = {
+  plan: "Three days of gentle practice",
+  toolkit: "Simple tools for balance and calm",
+  checkin: "Track your mood and wellbeing",
+};
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingTop: 0 },
+  screen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 18 },
   pressed: { opacity: 0.72 },
   hero: {
-    minHeight: 174,
-    paddingHorizontal: 16,
-    paddingTop: 7,
-    paddingBottom: 30,
+    paddingHorizontal: 14,
+    paddingBottom: 24,
     overflow: "hidden",
   },
-  heroHeader: { justifyContent: "space-between", gap: 2 },
-  brand: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 4 },
-  brandName: { fontSize: 14, lineHeight: 19 },
-  heroActions: { gap: 0, marginRight: -3 },
+  heroHeader: { minHeight: 44, justifyContent: "space-between", gap: 2 },
+  brand: {
+    minHeight: 44,
+    flexShrink: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  brandName: { fontSize: 21, lineHeight: 25 },
+  heroActions: { gap: 1, marginRight: -3 },
   iconTarget: {
     minWidth: 44,
     minHeight: 44,
@@ -933,33 +1037,33 @@ const styles = StyleSheet.create({
     width: 33,
     height: 33,
     borderRadius: 17,
-    backgroundColor: "#FFF4F031",
+    backgroundColor: "#FFF4F02E",
     alignItems: "center",
     justifyContent: "center",
   },
-  heroCopy: { marginTop: 1 },
-  heroTitle: { fontSize: 36, lineHeight: 39 },
-  heroSubtitle: { fontSize: 12, lineHeight: 17, marginTop: 4, maxWidth: 220 },
-  body: { paddingHorizontal: 16, paddingBottom: 3 },
-  categoryRail: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginTop: -12,
-    marginBottom: 17,
-  },
+  heroCopy: { paddingLeft: 2 },
+  heroTitle: { fontSize: 43, lineHeight: 45 },
+  heroSubtitle: { fontSize: 15, lineHeight: 20, marginTop: 2, maxWidth: "75%" },
+  body: { paddingHorizontal: 10 },
+  categoryViewport: { marginTop: -11, marginBottom: 8, flexGrow: 0 },
+  categoryRail: { flexGrow: 1, gap: 4 },
   category: {
-    flex: 1,
+    flexGrow: 1,
+    minHeight: 44,
     minWidth: 42,
-    minHeight: 50,
-    alignItems: "center",
     justifyContent: "center",
-    gap: 2,
-    paddingVertical: 5,
+  },
+  categoryPill: {
+    alignSelf: "stretch",
+    minHeight: 28,
+    justifyContent: "center",
+    paddingHorizontal: 5,
+    paddingVertical: 4,
+    gap: 3,
     borderWidth: 1,
     borderRadius: 16,
   },
-  categoryLabel: { fontSize: 10, lineHeight: 13, textAlign: "center" },
+  categoryLabel: { fontSize: 12, lineHeight: 15, textAlign: "center" },
   searchField: {
     flexDirection: "row",
     alignItems: "center",
@@ -977,49 +1081,60 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 14,
   },
-  feature: { minHeight: 153, borderRadius: 15, overflow: "hidden" },
+  feature: {
+    minHeight: 142,
+    borderRadius: 15,
+    overflow: "hidden",
+    borderWidth: 1,
+  },
   featureCopy: {
     alignItems: "flex-start",
     justifyContent: "center",
     flex: 1,
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 15,
   },
   featureBadge: {
     backgroundColor: "#FFF6F232",
-    borderRadius: 10,
+    borderRadius: 11,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    gap: 4,
+    gap: 3,
   },
-  featureBadgeText: { fontSize: 10, lineHeight: 14 },
+  featureBadgeText: { fontSize: 9.5, lineHeight: 14 },
   featureTitle: {
     alignSelf: "stretch",
     fontSize: 29,
-    lineHeight: 31,
+    lineHeight: 32,
     marginTop: 3,
   },
   featureDescription: {
-    fontSize: 12,
-    lineHeight: 16,
-    maxWidth: 190,
-    marginTop: 4,
+    fontSize: 15,
+    lineHeight: 17,
+    maxWidth: "55%",
+    marginTop: 3,
   },
   featureAction: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 7,
     minHeight: 44,
     borderRadius: 22,
-    paddingHorizontal: 14,
-    marginTop: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
+    marginTop: 4,
   },
-  section: { marginTop: 9 },
-  sectionHeading: { minHeight: 33, gap: 8, marginBottom: 5 },
+  featureActionLabel: { fontSize: 16, lineHeight: 21, flexShrink: 1 },
+  section: { marginTop: 10 },
+  sectionHeading: {
+    minHeight: 33,
+    gap: 8,
+    marginBottom: 5,
+    paddingHorizontal: 2,
+  },
   sectionTitle: { flex: 1, minWidth: 0 },
-  sectionTitleText: { fontSize: 17, lineHeight: 23 },
-  sectionDetail: { fontSize: 11, lineHeight: 16 },
+  sectionTitleText: { fontSize: 19, lineHeight: 23 },
   headingAction: {
     minHeight: 44,
     flexDirection: "row",
@@ -1027,30 +1142,81 @@ const styles = StyleSheet.create({
     gap: 3,
     paddingLeft: 8,
   },
-  tiles: { flexDirection: "row", gap: 7 },
+  tiles: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   tile: {
-    flex: 1,
+    flexBasis: "48%",
+    flexGrow: 1,
     minWidth: 0,
-    minHeight: 87,
-    justifyContent: "flex-end",
-    paddingTop: 29,
-    paddingHorizontal: 6,
-    paddingBottom: 7,
-    borderRadius: 13,
+    minHeight: 57,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 12,
+    borderWidth: 1,
     overflow: "hidden",
   },
+  fullTile: { flexBasis: "100%" },
+  tilePicture: {
+    alignSelf: "stretch",
+    width: "29%",
+  },
+  tileCopy: { flex: 1, minWidth: 0, paddingVertical: 5 },
   tilePlay: {
-    position: "absolute",
-    right: 6,
-    top: 6,
-    width: 19,
-    height: 19,
-    borderRadius: 10,
+    width: 22,
+    height: 22,
+    marginRight: 5,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5CFE94D",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#201C35A0",
+    backgroundColor: "#B7A4C437",
   },
-  tileLabel: { fontSize: 11, lineHeight: 14 },
+  tileLabel: { fontSize: 13.5, lineHeight: 16 },
+  tileMeta: { fontSize: 9.5, lineHeight: 12, marginTop: 2 },
+  planBanner: {
+    marginTop: 14,
+    minHeight: 62,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "#A48A96",
+    borderRadius: 15,
+    overflow: "hidden",
+    backgroundColor: "#342831",
+  },
+  planPicture: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: "68%",
+  },
+  planScrim: {
+    backgroundImage:
+      "linear-gradient(90deg, #342831 0%, #342831BA 37%, #2F24334D 100%)",
+  },
+  planIcon: {
+    width: 37,
+    height: 37,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 19,
+    backgroundColor: "#F5D8F220",
+  },
+  planTitle: { fontSize: 19, lineHeight: 22 },
+  planDetail: { fontSize: 10.5, lineHeight: 14, marginTop: 2 },
+  planAction: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#FFDBB9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   catalog: { paddingBottom: 6 },
   result: {
     flexDirection: "row",
@@ -1059,35 +1225,6 @@ const styles = StyleSheet.create({
     minHeight: 58,
     paddingVertical: 9,
     borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  builder: { marginTop: 13 },
-  builderStrip: {
-    minHeight: 58,
-    flexDirection: "row",
-    alignItems: "stretch",
-    paddingRight: 7,
-    borderWidth: 1,
-    borderRadius: 14,
-    overflow: "hidden",
-  },
-  builderPicture: { width: "21%", minHeight: 56, overflow: "hidden" },
-  builderStep: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 2,
-    minWidth: 0,
-    paddingVertical: 5,
-  },
-  builderStepLabel: { fontSize: 9, lineHeight: 11, textAlign: "center" },
-  builderAction: {
-    width: 37,
-    height: 37,
-    borderRadius: 19,
-    alignSelf: "center",
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 4,
   },
   builderForm: {
     marginTop: 9,
@@ -1111,7 +1248,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
   },
-  moreCards: { flexDirection: "row", alignItems: "stretch", gap: 7 },
+  moreCards: { flexDirection: "row", alignItems: "stretch", gap: 8 },
+  moreCardsStacked: { flexWrap: "wrap" },
   moreCard: {
     flex: 1,
     minWidth: 0,
@@ -1119,11 +1257,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 8,
     paddingTop: 10,
-    minHeight: 81,
+    minHeight: 96,
     gap: 2,
   },
-  moreTitle: { fontSize: 11, lineHeight: 14, marginTop: 2 },
-  moreDetail: { fontSize: 10, lineHeight: 13 },
+  moreTitle: { fontSize: 14, lineHeight: 17, marginTop: 4 },
+  moreDetail: { fontSize: 10.5, lineHeight: 14, marginTop: 2 },
   moreAction: {
     flexDirection: "row",
     alignItems: "center",
@@ -1131,4 +1269,5 @@ const styles = StyleSheet.create({
     minHeight: 44,
     marginTop: 7,
   },
+  moreToolsAction: { marginTop: 32 },
 });

@@ -49,7 +49,9 @@ The three-step path is supported by actual saved account and device records. Its
 
 ## Explore and supporting screens
 
-Explore leads with a violet lake scene, search, toolkit, and six category controls. Its five-minute feature and four illustrated shortcuts lead to existing practice flows. The builder shows a plan based on the chosen focus and duration. Guided programs, toolkit, check-ins, and additional wellness tools remain accessible below.
+Explore lets the twilight lake extend into the top safe area while the brand, title, search, and saved toolkit controls stay within reach. Six compact category chips include a dedicated Sleep filter. The five-minute Calm Your Mind card leads to a two-column grid of illustrated recommendations. Breath Reset, Five Senses, and Sleep Wind Down use three-, five-, and ten-minute sessions respectively. Quick Reflection opens the self-paced journal with a four-minute estimate.
+
+Create Your Wellness Plan opens the editable three-day plan. Explore More provides direct routes to Guided Programs, Wellness Toolkit, and Check-Ins. Additional tools include the timed practice builder, where a chosen focus and duration determine the preview and session.
 
 Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Profile owns private photos, account settings and data controls. Welcome, login, signup and Today have no upper-right profile shortcut.
 
