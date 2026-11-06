@@ -3,7 +3,7 @@ export type VoiceState =
 export const MAX_VOICE_BYTES = 8 * 1024 * 1024;
 
 export type VoiceIO = {
-  permission: () => Promise<boolean>;
+  permission: () => Promise<boolean | "away">;
   start: () => Promise<void>;
   stop: () => Promise<ArrayBuffer>;
   cancel: () => Promise<void>;
@@ -17,6 +17,7 @@ export class VoiceTurn {
   private version = 0;
   private disposed = false;
   private audio: ArrayBuffer | null = null;
+  private permissionVersion: number | null = null;
   private starting: Promise<void> | null = null;
   private stopping: Promise<ArrayBuffer> | null = null;
   private cancelling: Promise<void> | null = null;
@@ -37,15 +38,23 @@ export class VoiceTurn {
     this.audio = null;
     this.publish("preparing");
     try {
-      if (!(await this.io.permission())) {
-        if (this.current(version))
-          this.publish(
-            "idle",
-            "Microphone access is off. Allow it in device settings, or type your message.",
-          );
-        return;
+      this.permissionVersion = version;
+      let permission: Awaited<ReturnType<VoiceIO["permission"]>>;
+      try {
+        permission = await this.io.permission();
+      } finally {
+        if (this.permissionVersion === version) this.permissionVersion = null;
       }
       if (!this.current(version)) return;
+      if (permission !== true) {
+        this.publish(
+          "idle",
+          permission === "away"
+            ? "Tap the microphone when you're ready to record."
+            : "Microphone access is off. Allow it in device settings, or type your message.",
+        );
+        return;
+      }
       const starting = this.io.start();
       this.starting = starting;
       try {
@@ -142,6 +151,16 @@ export class VoiceTurn {
   }
   get canRetry() {
     return !!this.audio && this.state === "idle";
+  }
+  leaveForeground() {
+    // Permission sheets can temporarily hide the app before any audio starts.
+    if (this.permissionVersion === this.version) return;
+    if (this.state === "idle" && !this.canRetry) return;
+    return this.cancel(
+      this.state === "transcribing"
+        ? "Transcription was interrupted when you left the app. Try recording again, or type your message."
+        : "Recording was discarded when you left the app. Start again when you're ready.",
+    );
   }
   cancel(message = ""): Promise<void> {
     if (this.cancelling) return this.cancelling;

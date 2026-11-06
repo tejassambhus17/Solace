@@ -27,6 +27,24 @@ import {
   type VoiceState,
 } from "./voice-session";
 
+async function recordingPermission() {
+  const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+  if (!granted || Platform.OS === "web" || AppState.currentState === "active")
+    return granted;
+  // Android can deliver the permission result before the activity resumes.
+  return new Promise<true | "away">((resolve) => {
+    const listener = AppState.addEventListener("change", (state) => {
+      if (state === "active") finish(true);
+    });
+    const timeout = setTimeout(() => finish("away"), 1200);
+    function finish(result: true | "away") {
+      clearTimeout(timeout);
+      listener.remove();
+      resolve(result);
+    }
+  });
+}
+
 export function VoiceControlsImpl({
   disabled,
   reply,
@@ -76,7 +94,6 @@ export function VoiceControlsImpl({
   const latest = useRef({ app, onTranscript, onState, onMeter, talk });
   latest.current = { app, onTranscript, onState, onMeter, talk };
   const uri = useRef<string | null>(null);
-  const requestingPermission = useRef(false);
   const mime = useRef(voiceContentType(Platform.OS));
   const turnRef = useRef<VoiceTurn | null>(null);
   const recorder = useAudioRecorder(
@@ -120,14 +137,7 @@ export function VoiceControlsImpl({
   }
   if (!turnRef.current)
     turnRef.current = new VoiceTurn({
-      permission: async () => {
-        requestingPermission.current = true;
-        try {
-          return (await AudioModule.requestRecordingPermissionsAsync()).granted;
-        } finally {
-          requestingPermission.current = false;
-        }
-      },
+      permission: recordingPermission,
       start: async () => {
         ++speechVersion.current;
         clearSpeechWait();
@@ -148,6 +158,8 @@ export function VoiceControlsImpl({
         });
         if (!mounted.current || turnRef.current?.state !== "preparing") return;
         await recorder.prepareToRecordAsync();
+        if (Platform.OS !== "web" && AppState.currentState !== "active")
+          throw new Error("Solace is in the background.");
         // Expo's web recorder releases its microphone tracks on the stop event.
         // If cancellation arrived during preparation, VoiceTurn immediately
         // stops and discards this recording after start settles.
@@ -237,15 +249,7 @@ export function VoiceControlsImpl({
       setStartingSpeech(false);
       void Speech.stop().catch(() => {});
       setSpeaking(false);
-      // The iOS permission sheet can make the app inactive before recording starts.
-      if (next === "inactive" && requestingPermission.current) return;
-      if (turn.state !== "idle" || turn.canRetry) {
-        void turn.cancel(
-          turn.state === "transcribing"
-            ? "Transcription was interrupted when you left the app. Try recording again, or type your message."
-            : "Recording was discarded when you left the app. Start again when you're ready.",
-        );
-      }
+      void turn.leaveForeground();
     });
     return () => {
       mounted.current = false;

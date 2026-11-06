@@ -90,6 +90,38 @@ test("permission denial does not start or upload audio and offers text fallback"
   assert.match(f.events.at(-1).error, /type your message/);
 });
 
+test("an OS permission overlay can leave the foreground without cancelling the pending permission", async () => {
+  let answer;
+  const f = fixture({
+    permission: () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  });
+  const pending = f.turn.start();
+  await f.turn.leaveForeground();
+  assert.equal(f.turn.state, "preparing");
+  assert.equal(f.cancels(), 0);
+  answer(false);
+  await pending;
+  assert.match(f.events.at(-1).error, /Microphone access is off/);
+  assert.equal(f.starts(), 0);
+});
+
+test("granted permission waits for the app to resume, and backgrounding live audio cancels it", async () => {
+  const away = fixture({ permission: async () => "away" });
+  await away.turn.start();
+  assert.equal(away.starts(), 0);
+  assert.equal(away.turn.state, "idle");
+  const active = fixture();
+  await active.turn.start();
+  assert.equal(active.turn.state, "listening");
+  await active.turn.leaveForeground();
+  assert.equal(active.turn.state, "idle");
+  assert.equal(active.uploads(), 0);
+  assert.match(active.events.at(-1).error, /discarded/);
+});
+
 test("an interruption explanation survives asynchronous recorder cleanup", async () => {
   let releaseCleanup;
   const f = fixture({
