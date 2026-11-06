@@ -57,6 +57,7 @@ async function main() {
       args: ["--test", file("test-google-auth-flow.cjs"), ...rest],
     },
     moments: { args: ["--test", file("test-moments.cjs"), ...rest] },
+    navigation: { args: ["--test", file("test-navigation.cjs"), ...rest] },
     voice: { args: ["--test", file("test-voice.cjs"), ...rest] },
     progress: { args: ["--test", file("test-progress.cjs"), ...rest] },
     insights: { args: ["--test", file("test-insights.mjs"), ...rest] },

@@ -2,6 +2,7 @@ import React, {
   Activity,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -63,6 +64,8 @@ import { MilestoneCelebration } from "./src/MilestoneCelebration";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
+import { NavigationDetail, useIosEdgeBack } from "./src/NavigationDetail";
+import { useReducedMotion } from "./src/Companion";
 import { GoogleLinkProvider } from "./src/google-auth";
 import {
   subscribeNotificationNavigation,
@@ -155,7 +158,52 @@ const RetainedScreen = React.memo(function RetainedScreen({
 
 function Shell() {
   const app = useApp();
-  useExperienceLinks(app);
+  const [pendingLink, setPendingLink] =
+    useState<ReturnType<typeof experienceDestination>>(null);
+  const currentApp = useRef(app);
+  currentApp.current = app;
+  useEffect(() => {
+    let live = true;
+    let receivedEvent = false;
+    const accept = (url: string | null | undefined) => {
+      const destination = experienceDestination(url);
+      if (live && destination) {
+        receivedEvent = true;
+        setPendingLink(destination);
+      }
+    };
+    const listener = Linking.addEventListener("url", ({ url }) => {
+      accept(url);
+    });
+    void Linking.getInitialURL()
+      .then((url) => {
+        if (!receivedEvent) accept(url);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      listener.remove();
+    };
+  }, []);
+  const canOpenLink =
+    !app.initializing &&
+    !!app.user &&
+    !app.sessionExpired &&
+    !app.appLocked &&
+    !app.privacyCovered;
+  useEffect(() => {
+    if (!canOpenLink || !pendingLink) return;
+    setPendingLink(null);
+    const { navigate, switchSolaceMode } = currentApp.current;
+    if ("mode" in pendingLink) {
+      switchSolaceMode(pendingLink.mode);
+      return;
+    }
+    navigate(routes.explore);
+    navigate(pendingLink.route);
+    if (pendingLink.techniqueId)
+      navigate(routes.technique, { id: pendingLink.techniqueId });
+  }, [canOpenLink, pendingLink]);
   return (
     <View style={{ flex: 1 }}>
       <View
@@ -178,8 +226,16 @@ function Shell() {
 
 function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   const { colors, resolved } = useTheme();
+  const reducedMotion = useReducedMotion();
+  const previousTab = useRef(app.activeTab);
+  const switchingTabs = previousTab.current !== app.activeTab;
+  useLayoutEffect(() => {
+    previousTab.current = app.activeTab;
+  }, [app.activeTab]);
   const navigate = useRef(app.navigate);
   navigate.current = app.navigate;
+  const back = useRef(app.back);
+  back.current = app.back;
   const tabAction = useRef(app.setTab);
   tabAction.current = app.setTab;
   const selectTab = useCallback((tab: string) => tabAction.current(tab), []);
@@ -216,6 +272,13 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
     !app.sessionExpired &&
     !keyboardOpen &&
     !immersiveRoutes.has(app.route);
+  const canUseBack =
+    authenticated && app.canGoBack && !immersiveRoutes.has(app.route);
+  const edgeBack = useIosEdgeBack(
+    canUseBack && !keyboardOpen && !app.privacyCovered && !journalLocked
+      ? app.back
+      : undefined,
+  );
   useEffect(() => {
     if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
@@ -225,24 +288,19 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
           error.message,
         ),
     );
-    return subscribeNotificationNavigation((route: string) =>
-      navigate.current(route),
-    );
+    return subscribeNotificationNavigation((route: string) => {
+      navigate.current(routes.today);
+      if (route !== routes.today) navigate.current(route);
+    });
   }, [app.user?.id, app.sessionExpired]);
   useEffect(() => {
-    if (
-      !app.user ||
-      app.sessionExpired ||
-      !app.canGoBack ||
-      immersiveRoutes.has(app.route)
-    )
-      return;
+    if (!canUseBack) return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
-      app.back();
+      back.current();
       return true;
     });
     return () => handler.remove();
-  }, [app.user?.id, app.sessionExpired, app.route, app.canGoBack]);
+  }, [canUseBack]);
   useEffect(() => {
     if (Platform.OS !== "web")
       SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
@@ -366,30 +424,47 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
           <NavigationInset.Provider
             value={showNavigation ? navigationHeight : 0}
           >
-            {authenticated &&
-              Array.from(visitedRoots, (route) => (
-                <RetainedScreen
-                  key={route}
-                  route={route}
-                  app={activeRoot === route ? app : null}
-                />
-              ))}
-            <ExperienceTheme
-              enabled={
-                authenticated &&
-                (cinematicRoutes.has(app.route) ||
-                  (app.route === routes.momentPlayer &&
-                    !!app.params.techniqueId))
-              }
-            >
-              {content}
-            </ExperienceTheme>
+            <View style={{ flex: 1 }} {...edgeBack}>
+              {authenticated &&
+                Array.from(visitedRoots, (route) => (
+                  <RetainedScreen
+                    key={route}
+                    route={route}
+                    app={activeRoot === route ? app : null}
+                    />
+                ))}
+              <ExperienceTheme
+                enabled={
+                  authenticated &&
+                  (cinematicRoutes.has(app.route) ||
+                    (app.route === routes.momentPlayer &&
+                      !!app.params.techniqueId))
+                }
+              >
+                {content && authenticated && !journalLocked ? (
+                  <NavigationDetail
+                    key={`${app.route}:${app.params.id ?? ""}`}
+                    reducedMotion={reducedMotion}
+                    stationary={
+                      switchingTabs ||
+                      app.route === routes.journalEditor ||
+                      immersiveRoutes.has(app.route)
+                    }
+                  >
+                    {content}
+                  </NavigationDetail>
+                ) : (
+                  content
+                )}
+              </ExperienceTheme>
+            </View>
             {authenticated && <MilestoneCelebration allowed={showNavigation} />}
             {authenticated && (
               <Activity mode={showNavigation ? "visible" : "hidden"}>
                 <TabBar
                   activeTab={app.activeTab}
                   route={app.route}
+                  reducedMotion={reducedMotion}
                   onSelect={selectTab}
                   onHeight={setNavigationHeight}
                 />
@@ -402,46 +477,6 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   );
 }
 
-function useExperienceLinks(app: ReturnType<typeof useApp>) {
-  const [destination, setDestination] =
-    useState<ReturnType<typeof experienceDestination>>(null);
-  const getInitial = useRef(true);
-  useEffect(() => {
-    let active = true;
-    let received = false;
-    const listener = Linking.addEventListener("url", ({ url }) => {
-      const link = experienceDestination(url);
-      if (!link) return;
-      received = true;
-      setDestination(link);
-    });
-    if (getInitial.current && app.user) {
-      getInitial.current = false;
-      void Linking.getInitialURL()
-        .then((url) => {
-          if (active && !received) setDestination(experienceDestination(url));
-        })
-        .catch(() => {});
-    }
-    return () => {
-      active = false;
-      listener.remove();
-    };
-  }, [app.user?.id]);
-  useEffect(() => {
-    if (!destination || !app.user || app.initializing || app.sessionExpired)
-      return;
-    setDestination(null);
-    if ("mode" in destination) {
-      app.switchSolaceMode(destination.mode);
-      return;
-    }
-    app.navigate(routes.explore);
-    app.navigate(destination.route);
-    if (destination.techniqueId)
-      app.navigate(routes.technique, { id: destination.techniqueId });
-  }, [app, destination]);
-}
 function FontGate() {
   const { colors, resolved } = useTheme();
   const [loaded, error] = useFonts({

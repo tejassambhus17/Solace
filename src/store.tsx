@@ -101,6 +101,7 @@ type RouteEntry = {
   key: symbol;
   name: string;
   params: Record<string, any>;
+  destinationParams: Record<string, unknown>;
   returnTab?: MainTab;
   returnMode?: SolaceMode;
 };
@@ -145,7 +146,28 @@ function rememberSolaceView(navigation: NavigationState) {
 const routeEntry = (
   name: string,
   params: Record<string, any> = {},
-): RouteEntry => ({ key: Symbol(name), name, params });
+): RouteEntry => ({
+  key: Symbol(name),
+  name,
+  params,
+  destinationParams: params,
+});
+
+function matchesDestination(route: RouteEntry, entry: RouteEntry) {
+  if (route.name !== entry.name) return false;
+  const fields = Object.keys(entry.destinationParams);
+  return (
+    fields.length === Object.keys(route.destinationParams).length &&
+    fields.every(
+      (field) =>
+        Object.hasOwn(route.destinationParams, field) &&
+        Object.is(
+          route.destinationParams[field],
+          entry.destinationParams[field],
+        ),
+    )
+  );
+}
 
 const initialNavigation = (): NavigationState => ({
   activeTab: "today",
@@ -1880,11 +1902,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         previousRoute.params.id === params.id
       )
         return old;
+      // Match the original destination independently of view state added by
+      // setParams. Reopening an ancestor keeps its saved filters and scroll.
+      let previousIndex = previousStack.length - 1;
+      while (
+        previousIndex >= 0 &&
+        !matchesDestination(previousStack[previousIndex], entry)
+      )
+        previousIndex -= 1;
+      if (previousIndex === previousStack.length - 1) return old;
       return {
         ...old,
         stacks: {
           ...old.stacks,
-          [old.activeTab]: [...old.stacks[old.activeTab]!, entry],
+          [old.activeTab]:
+            previousIndex < 0
+              ? [...previousStack, entry]
+              : previousStack.slice(0, previousIndex + 1),
         },
       };
     });
@@ -1922,8 +1956,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (draftGeneration !== generation.current) return;
     setNavigation((old) => {
       const activeStack = old.stacks[old.activeTab]!;
-      if (activeStack.length === 1) return old;
-      const { returnTab, returnMode } = activeStack[activeStack.length - 1];
+      const top = activeStack[activeStack.length - 1];
+      // A delayed save/delete or repeated Back should only close the page
+      // that requested it, including two details with the same route name.
+      if (activeStack.length === 1 || top.key !== current.key) return old;
+      const { returnTab, returnMode } = top;
       const priorMode = returnMode && old.solaceViews?.[returnMode];
       if (returnMode && priorMode?.length)
         return {

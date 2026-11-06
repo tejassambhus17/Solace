@@ -1,14 +1,23 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AccessibilityInfo,
   Animated,
   AppState,
   Easing,
   I18nManager,
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
@@ -17,9 +26,16 @@ import {
   isGlassEffectAPIAvailable,
   isLiquidGlassAvailable,
 } from "expo-glass-effect";
-import { useReducedMotion } from "./Companion";
 import { useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
+import {
+  clampTabCenter,
+  dragIntent,
+  measuredTabStops,
+  nearestTab,
+  type TabFrame,
+  type TabStop,
+} from "./navigation-motion";
 
 const destinations = [
   { name: "today", title: "Today", icon: "home-outline", active: "home" },
@@ -46,25 +62,100 @@ const destinations = [
 const rowPadding = 5;
 const spotlightSize = 36;
 const android = Platform.OS === "android";
+const useNativeDriver = Platform.OS !== "web";
+const destinationNames = destinations.map(({ name }) => name);
+const verticalReleaseSlop = 20;
 
 const TabDestination = React.memo(function TabDestination({
   destination,
   selected,
   ink,
   rippleColor,
+  reducedMotion,
+  onMeasure,
+  onPressStart,
   onSelect,
 }: {
   destination: (typeof destinations)[number];
   selected: boolean;
   ink: string;
   rippleColor: string;
-  onSelect: (name: string) => void;
+  reducedMotion: boolean;
+  onMeasure: (name: string, frame: TabFrame) => void;
+  onPressStart: () => void;
+  onSelect: (name: string, nonPointer?: boolean) => void;
 }) {
+  const [iconOpacity] = useState(() => new Animated.Value(1));
+  const wasSelected = useRef(selected);
+  const webTouch = useRef<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    const animate = selected && !wasSelected.current && !reducedMotion;
+    wasSelected.current = selected;
+    iconOpacity.setValue(animate ? 0.76 : 1);
+    if (!animate) return;
+    const animation = Animated.timing(iconOpacity, {
+      toValue: 1,
+      duration: 100,
+      useNativeDriver,
+      isInteraction: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [iconOpacity, reducedMotion, selected]);
   return (
     <Pressable
-      onPress={() => onSelect(destination.name)}
+      onPressIn={onPressStart}
+      onTouchStart={
+        Platform.OS === "web"
+          ? ({ nativeEvent }) => {
+              const touch = nativeEvent.touches[0];
+              webTouch.current =
+                nativeEvent.touches.length === 1
+                  ? { x: touch.pageX, y: touch.pageY }
+                  : null;
+              onPressStart();
+            }
+          : undefined
+      }
+      onTouchCancel={
+        Platform.OS === "web"
+          ? () => {
+              webTouch.current = null;
+            }
+          : undefined
+      }
+      onTouchEnd={
+        Platform.OS === "web"
+          ? (event) => {
+              const start = webTouch.current;
+              webTouch.current = null;
+              const touch = event.nativeEvent.changedTouches[0];
+              // Chrome can omit the synthetic click immediately after a drag.
+              if (
+                start &&
+                touch &&
+                Math.hypot(touch.pageX - start.x, touch.pageY - start.y) < 8
+              ) {
+                event.preventDefault();
+                onSelect(destination.name);
+              }
+            }
+          : undefined
+      }
+      onPress={({ nativeEvent }) =>
+        onSelect(
+          destination.name,
+          Platform.OS === "web" &&
+            (nativeEvent == null ||
+              ("detail" in nativeEvent && nativeEvent.detail === 0)),
+        )
+      }
+      onLayout={({ nativeEvent }) =>
+        onMeasure(destination.name, nativeEvent.layout)
+      }
       accessibilityRole="tab"
       accessibilityState={{ selected }}
+      aria-selected={selected}
       accessibilityLabel={destination.title}
       android_ripple={android ? { color: rippleColor } : undefined}
       style={({ pressed }) => [
@@ -72,18 +163,14 @@ const TabDestination = React.memo(function TabDestination({
         !android && pressed && styles.pressed,
       ]}
     >
-      <View style={styles.iconFrame}>
+      <Animated.View style={[styles.iconFrame, { opacity: iconOpacity }]}>
         <Icon
           name={selected ? destination.active : destination.icon}
           size={22}
           color={ink}
         />
-      </View>
-      <AppText
-        variant="caption"
-        color={ink}
-        style={styles.label}
-      >
+      </Animated.View>
+      <AppText variant="caption" color={ink} style={styles.label}>
         {destination.title}
       </AppText>
     </Pressable>
@@ -93,11 +180,13 @@ const TabDestination = React.memo(function TabDestination({
 export const TabBar = React.memo(function TabBar({
   activeTab,
   route,
+  reducedMotion,
   onSelect,
   onHeight,
 }: {
   activeTab: string;
   route: string;
+  reducedMotion: boolean;
   onSelect: (name: string) => void;
   onHeight: (height: number) => void;
 }) {
@@ -108,49 +197,176 @@ export const TabBar = React.memo(function TabBar({
   const twilight = resolved === "dark" && onToday;
   const twilightExplore = resolved === "dark" && onExplore;
   const bottomInset = Math.max(insets.bottom, 10);
-  const reducedMotion = useReducedMotion();
   const [rowWidth, setRowWidth] = useState(0);
+  const [frames, setFrames] = useState(() => new Map<string, TabFrame>());
+  const row = useRef<React.ComponentRef<typeof View>>(null);
+  const rowBounds = useRef<{ x: number; y: number; height: number } | null>(
+    null,
+  );
+  const refreshRowBounds = useCallback(() => {
+    row.current?.measure((_x, _y, width, height, x, y) => {
+      if (width > 0 && height > 0) rowBounds.current = { x, y, height };
+    });
+  }, []);
+  const measureRow = useCallback(
+    (event: LayoutChangeEvent) => {
+      const { width } = event.nativeEvent.layout;
+      if (width > 0) {
+        setRowWidth(width);
+        refreshRowBounds();
+      }
+    },
+    [refreshRowBounds],
+  );
+  const measureTab = useCallback((name: string, { x, width }: TabFrame) => {
+    setFrames((previous) => {
+      const old = previous.get(name);
+      if (old?.x === x && old.width === width) return previous;
+      return new Map(previous).set(name, { x, width });
+    });
+  }, []);
+  const stops = useMemo(
+    () => measuredTabStops(destinationNames, frames, rowWidth, spotlightSize),
+    [frames, rowWidth],
+  );
   const [spotlightX] = useState(() => new Animated.Value(0));
-  const measuredWidth = useRef(0);
-  const lastTarget = useRef<number | undefined>(undefined);
-  const selectedIndex = destinations.findIndex(
-    ({ name }) => name === activeTab,
+  const gestureState = useRef({ activeTab, onSelect, reducedMotion, stops });
+  gestureState.current = { activeTab, onSelect, reducedMotion, stops };
+  const laidOutStops = useRef<readonly TabStop[] | null>(null);
+  const previousRoute = useRef(route);
+  const goal = useRef<number | null>(null);
+  const drag = useRef<"horizontal" | "vertical" | null>(null);
+  const suppressPressUntil = useRef(0);
+  const clearPressSuppression = useCallback(() => {
+    if (!drag.current) suppressPressUntil.current = 0;
+  }, []);
+  const settle = useCallback(
+    (name: string, immediate = false) => {
+      const state = gestureState.current;
+      const target = state.stops.find((stop) => stop.name === name)?.center;
+      if (target === undefined || (goal.current === target && !immediate))
+        return;
+      goal.current = target;
+      if (immediate || state.reducedMotion) {
+        spotlightX.setValue(target - spotlightSize / 2);
+      } else {
+        Animated.timing(spotlightX, {
+          toValue: target - spotlightSize / 2,
+          duration: 145,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver,
+          isInteraction: false,
+        }).start();
+      }
+    },
+    [spotlightX],
   );
   useLayoutEffect(() => {
-    if (!rowWidth || selectedIndex < 0) return;
-    const index = I18nManager.isRTL
-      ? destinations.length - 1 - selectedIndex
-      : selectedIndex;
-    const tabWidth = (rowWidth - rowPadding * 2) / destinations.length;
-    const center = rowPadding + (index + 0.5) * tabWidth;
-    const target = center - spotlightSize / 2;
-    const snap =
-      reducedMotion ||
-      measuredWidth.current !== rowWidth ||
-      lastTarget.current === target;
-    measuredWidth.current = rowWidth;
-    lastTarget.current = target;
-    if (snap) {
-      spotlightX.setValue(target);
-      return;
-    }
-    const motion = Animated.timing(spotlightX, {
-      toValue: target,
-      duration: 145,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== "web",
-      isInteraction: false,
+    const geometryChanged = laidOutStops.current !== stops;
+    const navigationChanged = previousRoute.current !== route;
+    laidOutStops.current = stops;
+    previousRoute.current = route;
+    if (geometryChanged || navigationChanged) drag.current = null;
+    if (!drag.current) settle(activeTab, geometryChanged || reducedMotion);
+  }, [activeTab, reducedMotion, route, settle, stops]);
+  useLayoutEffect(
+    () => () => {
+      drag.current = null;
+      laidOutStops.current = null;
+      spotlightX.stopAnimation();
+    },
+    [spotlightX],
+  );
+  const selectByPress = useCallback(
+    (name: string, nonPointer = false) => {
+      if (
+        drag.current ||
+        (!nonPointer && Date.now() < suppressPressUntil.current)
+      )
+        return;
+      const { activeTab, onSelect } = gestureState.current;
+      if (name === activeTab) return;
+      settle(name);
+      onSelect(name);
+    },
+    [settle],
+  );
+  const railGesture = useMemo(() => {
+    const update = (pageX: number) => {
+      const bounds = rowBounds.current;
+      const { stops } = gestureState.current;
+      if (drag.current !== "horizontal" || !bounds || !stops.length) return;
+      goal.current = null;
+      spotlightX.setValue(
+        clampTabCenter(pageX - bounds.x, stops) - spotlightSize / 2,
+      );
+    };
+    const finish = (destination?: string) => {
+      if (!drag.current) return;
+      drag.current = null;
+      if (Platform.OS === "web") suppressPressUntil.current = Date.now() + 100;
+      const { activeTab, onSelect } = gestureState.current;
+      settle(destination ?? activeTab);
+      if (destination && destination !== activeTab) onSelect(destination);
+    };
+    return PanResponder.create({
+      onStartShouldSetPanResponderCapture: (event) => {
+        if (event.nativeEvent.touches.length === 1) {
+          suppressPressUntil.current = 0;
+          refreshRowBounds();
+        }
+        return false;
+      },
+      onMoveShouldSetPanResponderCapture: (
+        _event,
+        { dx, dy, numberActiveTouches },
+      ) => {
+        if (!gestureState.current.stops.length || !rowBounds.current)
+          return false;
+        const intent = dragIntent(dx, dy);
+        if (intent === "pending" && numberActiveTouches === 1) return false;
+        drag.current =
+          numberActiveTouches === 1 && intent === "horizontal"
+            ? "horizontal"
+            : "vertical";
+        return true;
+      },
+      onPanResponderGrant: ({ nativeEvent }) => update(nativeEvent.pageX),
+      onPanResponderMove: ({ nativeEvent }, { numberActiveTouches }) => {
+        if (numberActiveTouches === 1) update(nativeEvent.pageX);
+        else if (drag.current === "horizontal") {
+          drag.current = "vertical";
+          settle(gestureState.current.activeTab);
+        }
+      },
+      onPanResponderRelease: ({ nativeEvent }) => {
+        const bounds = rowBounds.current;
+        const { activeTab, stops } = gestureState.current;
+        if (
+          drag.current === "horizontal" &&
+          bounds &&
+          stops.length &&
+          nativeEvent.pageY >= bounds.y - verticalReleaseSlop &&
+          nativeEvent.pageY <= bounds.y + bounds.height + verticalReleaseSlop
+        ) {
+          finish(
+            nearestTab(nativeEvent.pageX - bounds.x, stops, activeTab).name,
+          );
+        } else finish();
+      },
+      onPanResponderReject: () => finish(),
+      onPanResponderTerminate: () => finish(),
     });
-    motion.start();
-    return () => motion.stop();
-  }, [reducedMotion, rowWidth, selectedIndex, spotlightX]);
+  }, [refreshRowBounds, settle, spotlightX]);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state !== "active" && lastTarget.current !== undefined)
-        spotlightX.setValue(lastTarget.current);
+      if (state !== "active") {
+        drag.current = null;
+        settle(gestureState.current.activeTab, true);
+      }
     });
     return () => subscription.remove();
-  }, [spotlightX]);
+  }, [settle]);
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
@@ -177,15 +393,16 @@ export const TabBar = React.memo(function TabBar({
     isLiquidGlassAvailable();
   const items = (
     <View
+      ref={row}
+      collapsable={false}
       accessibilityRole="tablist"
-      onLayout={({ nativeEvent }) => {
-        const width = nativeEvent.layout.width;
-        if (width > 0) setRowWidth(width);
-      }}
+      onLayout={measureRow}
+      {...railGesture.panHandlers}
       style={styles.items}
     >
-      {rowWidth > 0 && (
+      {stops.length > 0 && (
         <Animated.View
+          testID="tab-spotlight"
           pointerEvents="none"
           accessible={false}
           style={[
@@ -206,7 +423,10 @@ export const TabBar = React.memo(function TabBar({
             selected={selected}
             ink={selected ? colors.tabActiveText : colors.muted}
             rippleColor={resolved === "dark" ? "#FFFFFF24" : "#49326120"}
-            onSelect={onSelect}
+            reducedMotion={reducedMotion}
+            onMeasure={measureTab}
+            onPressStart={clearPressSuppression}
+            onSelect={selectByPress}
           />
         );
       })}
@@ -298,10 +518,15 @@ export const TabBar = React.memo(function TabBar({
 
 const styles = StyleSheet.create({
   bottomSafeArea: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  items: { flexDirection: "row", padding: rowPadding, alignItems: "stretch" },
+  items: {
+    flexDirection: "row",
+    padding: rowPadding,
+    alignItems: "stretch",
+    ...(Platform.OS === "web" ? { touchAction: "pan-y" } : {}),
+  },
   spotlight: {
     position: "absolute",
-    left: 0,
+    ...(I18nManager.isRTL ? { end: 0 } : { start: 0 }),
     top: rowPadding,
     width: spotlightSize,
     height: spotlightSize,

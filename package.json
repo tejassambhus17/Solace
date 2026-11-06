@@ -34,6 +34,7 @@
     "test:voice": "node scripts/runtime.cjs voice",
     "test:progress": "node scripts/runtime.cjs progress",
     "test:moments": "node scripts/runtime.cjs moments",
+    "test:navigation": "node scripts/runtime.cjs navigation",
     "test:native-config": "node scripts/runtime.cjs native-config"
   },
   "dependencies": {

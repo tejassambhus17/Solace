@@ -16,6 +16,20 @@ export type CompanionState =
 export function useReducedMotion() {
   const [reduced, setReduced] = useState(true);
   useEffect(() => {
+    if (Platform.OS === "web") {
+      if (typeof window === "undefined" || !window.matchMedia) return;
+      // React Native Web keys listeners by the string form of their callback.
+      // Keep each screen's registration attached to its own media query.
+      const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const update = () => setReduced(preference.matches);
+      update();
+      if (typeof preference.addEventListener === "function") {
+        preference.addEventListener("change", update);
+        return () => preference.removeEventListener("change", update);
+      }
+      preference.addListener(update);
+      return () => preference.removeListener(update);
+    }
     let current = true;
     AccessibilityInfo.isReduceMotionEnabled()
       .then((enabled) => current && setReduced(enabled))

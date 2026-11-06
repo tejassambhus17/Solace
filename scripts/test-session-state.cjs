@@ -909,6 +909,47 @@ test("leaving a player for another tab returns to its parent on a later tab swit
   assert.equal(h.render().route, "moments");
 });
 
+test("repeated detail taps keep one route and reopening its ancestor unwinds the branch", async () => {
+  const h = await signedIn();
+  h.render().setTab("journey");
+  const journey = h.render();
+  journey.navigate("journey-activity", { day: "2026-11-06" });
+  journey.navigate("journey-activity", { day: "2026-11-06" });
+  h.render().back();
+  assert.equal(h.render().route, "journey");
+  journey.navigate("journey-activity", { day: "2026-11-06" });
+  h.render().setParams({ historyY: 240 });
+  h.render().navigate("session-detail", { id: "session-a" });
+  h.render().navigate("session-detail", { id: "session-b" });
+  h.render().back();
+  assert.equal(h.render().params.id, "session-a");
+  h.render().navigate("journey-activity", { day: "2026-11-06" });
+  assert.equal(h.render().params.historyY, 240);
+  h.render().back();
+  assert.equal(h.render().route, "journey");
+  h.close();
+});
+
+test("late or repeated Back from a closed detail cannot pop another route", async () => {
+  const h = await signedIn();
+  h.render().setTab("journey");
+  h.render().navigate("session-detail", { id: "session-a" });
+  const pendingDeletion = h.render();
+  h.render().setTab("profile");
+  h.render().navigate("settings");
+  pendingDeletion.back();
+  assert.equal(h.render().route, "settings");
+  h.render().setTab("journey");
+  h.render().navigate("session-detail", { id: "session-b" });
+  pendingDeletion.back();
+  assert.equal(h.render().params.id, "session-b");
+  const top = h.render();
+  top.back();
+  top.back();
+  assert.equal(h.render().params.id, "session-a");
+  h.close();
+});
+
 test("a first chat turn stays pending across tab switches and cannot be sent twice", async () => {
   const h = await signedIn();
   const reply = deferred();
