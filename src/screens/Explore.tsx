@@ -1,8 +1,15 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Animated,
   Easing,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -385,38 +392,33 @@ function ExploreDisclosure({
   children: React.ReactNode;
 }) {
   const { colors } = useTheme();
-  const [animating, setAnimating] = useState(false);
-  const [contentHeight, setContentHeight] = useState(0);
-  const height = useRef(new Animated.Value(0)).current;
+  const [opacity] = useState(() => new Animated.Value(1));
+  const animateOpen = useRef(false);
 
   useEffect(() => {
-    if (!animating) return;
-    if (reduceMotion) {
-      setAnimating(false);
+    const shouldAnimate = expanded && animateOpen.current && !reduceMotion;
+    animateOpen.current = false;
+    if (!shouldAnimate) {
+      opacity.setValue(1);
       return;
     }
-    if (expanded && !contentHeight) return;
-    const transition = Animated.timing(height, {
-      toValue: expanded ? contentHeight : 0,
-      duration: 200,
+    const transition = Animated.timing(opacity, {
+      toValue: 1,
+      duration: 160,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
+      useNativeDriver: Platform.OS !== "web",
       isInteraction: false,
     });
-    transition.start(({ finished }) => {
-      if (finished) setAnimating(false);
-    });
-    return () => transition.stop();
-  }, [animating, contentHeight, expanded, height, reduceMotion]);
+    transition.start();
+    return () => {
+      transition.stop();
+      opacity.setValue(1);
+    };
+  }, [expanded, opacity, reduceMotion]);
 
   function toggle() {
-    if (!reduceMotion) {
-      if (!animating) {
-        height.setValue(expanded ? contentHeight : 0);
-        if (!expanded) setContentHeight(0);
-      }
-      setAnimating(true);
-    }
+    animateOpen.current = !expanded && !reduceMotion;
+    if (animateOpen.current) opacity.setValue(0.45);
     onChange(!expanded);
   }
 
@@ -465,26 +467,14 @@ function ExploreDisclosure({
           size={17}
         />
       </Pressable>
-      {(expanded || animating) && (
+      {expanded && (
         <Animated.View
-          accessibilityElementsHidden={!expanded}
-          importantForAccessibility={expanded ? "auto" : "no-hide-descendants"}
-          aria-hidden={!expanded}
-          pointerEvents={expanded ? "auto" : "none"}
-          style={animating && { height, overflow: "hidden" }}
+          style={[
+            styles.disclosureContent,
+            { borderTopColor: colors.border, opacity },
+          ]}
         >
-          <View
-            onLayout={(event) =>
-              setContentHeight(event.nativeEvent.layout.height)
-            }
-            style={[
-              styles.disclosureContent,
-              { borderTopColor: colors.border },
-              animating && styles.disclosureMeasure,
-            ]}
-          >
-            {children}
-          </View>
+          {children}
         </Animated.View>
       )}
     </View>
@@ -614,16 +604,21 @@ export function ExploreScreen() {
     },
     [initialView, saveLibraryParams],
   );
-  const practicePlan = createExplorePractice(focus, duration);
-  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const results = catalog.filter((item) => {
-    const text = `${item.title} ${item.detail}`.toLowerCase();
-    return (
-      (category === "all" || item.categories.includes(category)) &&
-      terms.every((term) => text.includes(term))
-    );
-  });
-  const searching = searchOpen && terms.length > 0;
+  const practicePlan = useMemo(
+    () => createExplorePractice(focus, duration),
+    [focus, duration],
+  );
+  const results = useMemo(() => {
+    const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    return catalog.filter((item) => {
+      const text = `${item.title} ${item.detail}`.toLowerCase();
+      return (
+        (category === "all" || item.categories.includes(category)) &&
+        terms.every((term) => text.includes(term))
+      );
+    });
+  }, [category, query]);
+  const searching = searchOpen && !!query.trim();
   const showCatalog = searching || showAll || category !== "all";
   const categoryLabel = categories.find((item) => item.id === category)?.label;
   function open(destination: PracticeDestination) {
@@ -1489,7 +1484,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.card,
     paddingVertical: 4,
   },
-  disclosureMeasure: { position: "absolute", left: 0, right: 0, top: 0 },
   builderForm: {
     paddingVertical: spacing.row,
     gap: spacing.row,

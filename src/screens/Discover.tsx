@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -86,6 +92,7 @@ function TodayMoodOption({
   const dark = resolved === "dark";
   const selected = status !== undefined;
   const [tint] = useState(() => new Animated.Value(selected ? 1 : 0));
+  const previousSelection = useRef(selected);
   const fadeTint = useCallback(
     (toValue: number) => {
       if (reducedMotion) {
@@ -96,12 +103,15 @@ function TodayMoodOption({
         toValue,
         duration: 140,
         useNativeDriver: Platform.OS !== "web",
+        isInteraction: false,
       }).start();
     },
     [reducedMotion, tint],
   );
   useEffect(() => {
-    fadeTint(selected ? 1 : 0);
+    if (previousSelection.current === selected) tint.setValue(selected ? 1 : 0);
+    else fadeTint(selected ? 1 : 0);
+    previousSelection.current = selected;
     return () => tint.stopAnimation();
   }, [fadeTint, selected, tint]);
 
@@ -229,12 +239,28 @@ export function TodayScreen() {
   const now = useToday();
   const today = localDay(now);
   const [showReason, setShowReason] = useState(false);
+  const { checkins, goals, memories, preferences, reflections, sessions } =
+    app.data;
   const routine = useMemo(
-    () => pickDailyRoutine(app.data, app.user, now),
-    [app.data, app.user, now],
+    () =>
+      pickDailyRoutine(
+        { checkins, goals, memories, preferences, reflections, sessions },
+        app.user,
+        now,
+      ),
+    [
+      checkins,
+      goals,
+      memories,
+      preferences,
+      reflections,
+      sessions,
+      app.user,
+      now,
+    ],
   );
   const selectedCheckin = routine.todayCheckin;
-  const environment = app.data.preferences.find(
+  const environment = preferences.find(
     (item) => item.id === "wellness",
   )?.environment;
   const name =

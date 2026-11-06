@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   AppState,
+  FlatList,
   Image,
   Platform,
   Pressable,
@@ -26,6 +27,7 @@ import {
 } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
 import { spacing, useScreenGutter } from "../layout";
+import { useListScrollRestore } from "../list-scroll";
 import { momentClockText } from "../moments";
 import {
   activeSeconds,
@@ -44,7 +46,9 @@ import {
   LotusMark,
   Row,
   Screen,
+  ScreenHeader,
   coverImageStyle,
+  useNavigationInset,
 } from "../ui";
 
 const periods = [
@@ -117,6 +121,21 @@ function useJourneyClock() {
     };
   }, []);
   return now;
+}
+
+function useJourneyAnalytics(
+  data: ReturnType<typeof useApp>["data"],
+  now: Date,
+) {
+  const { checkins, sessions, reflections, assessments, plans } = data;
+  return useMemo(
+    () =>
+      journeyAnalytics(
+        { checkins, sessions, reflections, assessments, plans },
+        now,
+      ),
+    [checkins, sessions, reflections, assessments, plans, now],
+  );
 }
 
 function useJourneyPeriod(owner?: string) {
@@ -304,7 +323,7 @@ function compareText(value: number, timed: boolean, period: JourneyPeriod) {
 function counted(value: number, label: string) {
   return value + " " + label + (value === 1 ? "" : "s");
 }
-function HistoryEntry({ entry }: { entry: DayEntry }) {
+function HistoryEntry({ entry, onOpen }: { entry: DayEntry; onOpen: () => void }) {
   const app = useApp();
   const { colors } = useTheme();
   const { record, collection } = entry;
@@ -359,7 +378,7 @@ function HistoryEntry({ entry }: { entry: DayEntry }) {
       accessibilityRole={open ? "button" : undefined}
       accessibilityLabel={`${title}. ${subtitle}`}
       disabled={!open}
-      onPress={open}
+      onPress={open ? () => { onOpen(); open(); } : undefined}
       style={({ pressed }) => ({
         paddingVertical: 14,
         borderBottomWidth: 0.75,
@@ -383,15 +402,20 @@ function HistoryEntry({ entry }: { entry: DayEntry }) {
   );
 }
 
+type HistoryRow =
+  | { key: string; day: string }
+  | { key: string; entry: DayEntry; last: boolean };
+
 export function JourneyActivityScreen() {
   const app = useApp();
   const { colors } = useTheme();
+  const gutter = useScreenGutter();
+  const { bottom } = useSafeAreaInsets();
+  const bottomClearance = Math.max(useNavigationInset(), bottom);
   const now = useJourneyClock();
-  const analytics = useMemo(
-    () => journeyAnalytics(app.data, now),
-    [app.data, now],
-  );
-  const { filter, startDay, endDay, day } = app.params || {};
+  const analytics = useJourneyAnalytics(app.data, now);
+  const { filter, startDay, endDay, day, historyLimit, historyY } =
+    app.params || {};
   const practices = filter === "moments" || filter === "timed";
   const title = day
     ? "Activity on " + formatDay(day)
@@ -404,87 +428,136 @@ export function JourneyActivityScreen() {
           : filter === "story"
             ? "Your check-ins"
             : "Activity history";
-  const days = [...analytics.days.entries()]
-    .filter(([key]) =>
-      day
-        ? key === day
-        : (!startDay || key >= startDay) && (!endDay || key <= endDay),
-    )
-    .sort(([left], [right]) => right.localeCompare(left))
-    .map(([key, item]) => ({
-      day: key,
-      entries: item.entries.filter(({ collection, record }) =>
-        filter === "story"
-          ? collection === "checkins" || collection === "assessments"
-          : filter === "checkins"
-            ? collection === "checkins"
-            : filter === "moments"
-              ? collection === "sessions" && isCompletedMoment(record)
-              : filter === "timed"
-                ? collection === "sessions" &&
-                  record.completed === true &&
-                  activeSeconds(record) > 0
-                : true,
-      ),
-    }))
-    .filter((item) => item.entries.length > 0);
-  const [limit, setLimit] = useState(14);
+  const days = useMemo(
+    () =>
+      [...analytics.days.entries()]
+        .filter(([key]) =>
+          day
+            ? key === day
+            : (!startDay || key >= startDay) && (!endDay || key <= endDay),
+        )
+        .sort(([left], [right]) => right.localeCompare(left))
+        .map(([key, item]) => ({
+          day: key,
+          entries: item.entries.filter(({ collection, record }) =>
+            filter === "story"
+              ? collection === "checkins" || collection === "assessments"
+              : filter === "checkins"
+                ? collection === "checkins"
+                : filter === "moments"
+                  ? collection === "sessions" && isCompletedMoment(record)
+                  : filter === "timed"
+                    ? collection === "sessions" &&
+                      record.completed === true &&
+                      activeSeconds(record) > 0
+                    : true,
+          ),
+        }))
+        .filter((item) => item.entries.length > 0),
+    [analytics.days, day, endDay, filter, startDay],
+  );
+  const [limit, setLimit] = useState<number>(
+    Number.isSafeInteger(historyLimit) && historyLimit > 14 ? historyLimit : 14,
+  );
+  const rows = useMemo(
+    () =>
+      days.slice(0, limit).flatMap<HistoryRow>((item) => {
+        const entries = item.entries.map((entry, index) => ({
+          key: entry.key,
+          entry,
+          last: index === item.entries.length - 1,
+        }));
+        return day
+          ? entries
+          : [{ key: `day:${item.day}`, day: item.day }, ...entries];
+      }),
+    [day, days, limit],
+  );
+  const listScroll = useListScrollRestore<HistoryRow>(historyY);
+  const rememberPosition = () =>
+    app.setParams({ historyLimit: limit, historyY: listScroll.offset.current });
   return (
-    <Screen title={title} back={app.back}>
-      {startDay && endDay && (
-        <AppText
-          variant="caption"
-          color={colors.muted}
-          style={styles.detailIntro}
-        >
-          {formatDay(startDay, { month: "short", day: "numeric" })} –{" "}
-          {formatDay(endDay)}
-        </AppText>
-      )}
-      {filter === "story" && (
-        <>
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={styles.detailIntro}
-          >
-            {analytics.savedStory.checkins} mood entries ·{" "}
-            {analytics.savedStory.assessments} reflective assessments
-          </AppText>
-          <Button
-            title="Take a reflective assessment"
-            variant="secondary"
-            onPress={() => app.navigate("assessments")}
-          />
-        </>
-      )}
-      {!days.length && (
-        <View style={{ gap: 14 }}>
-          <AppText color={colors.muted}>
-            There’s no saved activity here yet. You can make a little space
-            whenever you’re ready.
-          </AppText>
-          <Button
-            title={practices ? "Explore practices" : "Check in with yourself"}
-            onPress={() => app.navigate(practices ? "explore" : "checkin")}
-          />
-        </View>
-      )}
-      {days.slice(0, limit).map((item) => (
-        <View key={item.day} style={{ marginBottom: 14 }}>
-          {!day && <AppText variant="heading">{formatDay(item.day)}</AppText>}
-          {item.entries.map((entry) => (
-            <HistoryEntry key={entry.key} entry={entry} />
-          ))}
-        </View>
-      ))}
-      {days.length > limit && (
-        <Button
-          title="Show earlier activity"
-          variant="ghost"
-          onPress={() => setLimit((value) => value + 14)}
-        />
-      )}
+    <Screen scroll={false} style={styles.historyShell}>
+      <FlatList<HistoryRow>
+        {...listScroll.props}
+        data={rows}
+        keyExtractor={(item) => item.key}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        contentContainerStyle={{
+          paddingHorizontal: gutter,
+          paddingTop: spacing.screenTop,
+          paddingBottom: spacing.bottom + bottomClearance,
+        }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <>
+            <ScreenHeader title={title} back={app.back} />
+            {startDay && endDay && (
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={styles.detailIntro}
+              >
+                {formatDay(startDay, { month: "short", day: "numeric" })} –{" "}
+                {formatDay(endDay)}
+              </AppText>
+            )}
+            {filter === "story" && (
+              <>
+                <AppText
+                  variant="caption"
+                  color={colors.muted}
+                  style={styles.detailIntro}
+                >
+                  {analytics.savedStory.checkins} mood entries ·{" "}
+                  {analytics.savedStory.assessments} reflective assessments
+                </AppText>
+                <Button
+                  title="Take a reflective assessment"
+                  variant="secondary"
+                  onPress={() => {
+                    rememberPosition();
+                    app.navigate("assessments");
+                  }}
+                />
+              </>
+            )}
+          </>
+        }
+        ListEmptyComponent={
+          <View style={{ gap: 14 }}>
+            <AppText color={colors.muted}>
+              There’s no saved activity here yet. You can make a little space
+              whenever you’re ready.
+            </AppText>
+            <Button
+              title={practices ? "Explore practices" : "Check in with yourself"}
+              onPress={() => app.navigate(practices ? "explore" : "checkin")}
+            />
+          </View>
+        }
+        renderItem={({ item }) =>
+          "day" in item ? (
+            <AppText variant="heading">{formatDay(item.day)}</AppText>
+          ) : (
+            <View style={item.last && styles.historyDayEnd}>
+              <HistoryEntry entry={item.entry} onOpen={rememberPosition} />
+            </View>
+          )
+        }
+        ListFooterComponent={
+          days.length > limit ? (
+            <Button
+              title="Show earlier activity"
+              variant="ghost"
+              onPress={() => setLimit((value) => value + 14)}
+            />
+          ) : undefined
+        }
+      />
     </Screen>
   );
 }
@@ -493,10 +566,7 @@ export function JourneyMilestonesScreen() {
   const app = useApp();
   const { colors } = useTheme();
   const now = useJourneyClock();
-  const analytics = useMemo(
-    () => journeyAnalytics(app.data, now),
-    [app.data, now],
-  );
+  const analytics = useJourneyAnalytics(app.data, now);
   const milestone = analytics.milestones.find(
     (item) => item.id === app.params?.id,
   );
@@ -635,10 +705,7 @@ export function JourneyScreen() {
       : today;
   const { period, selectPeriod } = useJourneyPeriod(app.user?.id);
   const [options, setOptions] = useState(false);
-  const analytics = useMemo(
-    () => journeyAnalytics(app.data, now),
-    [app.data, now],
-  );
+  const analytics = useJourneyAnalytics(app.data, now);
   const report = useMemo(
     () => journeyReport(analytics, period, selectedDay),
     [analytics, period, selectedDay],
@@ -1505,6 +1572,13 @@ const styles = StyleSheet.create({
   storyCount: { fontSize: 18, lineHeight: 23, fontVariant: ["tabular-nums"] },
   storyLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
   detailIntro: { marginBottom: 13 },
+  historyShell: {
+    flex: 1,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  historyDayEnd: { marginBottom: 14 },
   entryRow: { minHeight: 48, paddingVertical: 8 },
   milestoneDetail: { alignItems: "center", paddingVertical: 24, gap: 12 },
   center: { textAlign: "center" },

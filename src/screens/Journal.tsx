@@ -1,14 +1,17 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  FlatList,
   Image,
   Keyboard,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { localDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
+import { useListScrollRestore } from "../list-scroll";
 import { isRecordId, routes } from "../routes";
 import {
   isJournalRecord as isJournal,
@@ -27,14 +30,15 @@ import {
   moodPetals,
   Row,
   Screen,
+  useNavigationInset,
 } from "../ui";
 import { SolaceModeSwitcher } from "./SolaceModeSwitcher";
 
 const notebook = require("../../assets/redesign-explore-reflect.jpg");
 const twilightNotebook = require("../../assets/solace-journal-twilight.jpg");
 const landscapes = {
-  light: require("../../assets/profile-mountains-light.jpg"),
-  dark: require("../../assets/redesign-explore-scene-dark.jpg"),
+  light: require("../../assets/journal-thumbnail-light.jpg"),
+  dark: require("../../assets/journal-thumbnail-dark.jpg"),
 };
 
 const titleOf = (record: Item) =>
@@ -258,8 +262,11 @@ function JournalLibrary() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const gutter = useScreenGutter();
+  const { bottom } = useSafeAreaInsets();
+  const bottomClearance = Math.max(useNavigationInset(), bottom);
   const bookmark = useBookmark();
-  const records = app.data.reflections.filter(isJournal);
+  const { reflections } = app.data;
+  const records = useMemo(() => reflections.filter(isJournal), [reflections]);
   const query = typeof app.params.query === "string" ? app.params.query : "";
   const favorites = app.params.favorites === true;
   const moodOnly = app.params.moodOnly === true;
@@ -269,371 +276,390 @@ function JournalLibrary() {
   const focusSearch = useRef(false);
   const [showFilters, setShowFilters] = useState(!!mood || oldest);
   const [showModes, setShowModes] = useState(false);
-  const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
-  const scrollY = useRef(0);
-  const restoreScroll = useRef(Number(app.params.scrollY) || 0);
+  const listScroll = useListScrollRestore<Item>(app.params.scrollY);
   const hasDraft = !!app.editorDrafts["journal:new"];
   const needle = query.trim().toLocaleLowerCase();
-  const filtered = records
-    .filter((record) => !favorites || record.bookmarked === true)
-    .filter((record) => !moodOnly || !!moodOf(record.mood))
-    .filter((record) => !mood || record.mood === mood)
-    .filter(
-      (record) =>
-        !needle ||
-        [record.title, writing(record), ...tagsOf(record)].some(
-          (value) =>
-            typeof value === "string" &&
-            value.toLocaleLowerCase().includes(needle),
-        ),
-    )
-    .sort((first, second) => {
-      const delta =
-        (Date.parse(second.createdAt) || 0) -
-        (Date.parse(first.createdAt) || 0);
-      return oldest ? -delta : delta;
-    });
+  const filtered = useMemo(
+    () =>
+      records
+        .filter(
+          (record) =>
+            (!favorites || record.bookmarked === true) &&
+            (!moodOnly || !!moodOf(record.mood)) &&
+            (!mood || record.mood === mood) &&
+            (!needle ||
+              [record.title, writing(record), ...tagsOf(record)].some(
+                (value) =>
+                  typeof value === "string" &&
+                  value.toLocaleLowerCase().includes(needle),
+              )),
+        )
+        .sort((first, second) => {
+          const delta =
+            (Date.parse(second.createdAt) || 0) -
+            (Date.parse(first.createdAt) || 0);
+          return oldest ? -delta : delta;
+        }),
+    [records, favorites, moodOnly, mood, needle, oldest],
+  );
   const open = (destination: string, params?: Record<string, string>) => {
-    app.setParams({ scrollY: scrollY.current });
+    app.setParams({ scrollY: listScroll.offset.current });
     app.navigate(destination, params);
   };
   const write = () => open(routes.journalEditor);
   const hasFilters = !!needle || !!mood || moodOnly;
   const clearFilters = () =>
     app.setParams({ query: "", mood: null, favorites: false, moodOnly: false });
-  return (
-    <Screen
-      style={[styles.screen, styles.library]}
-      scrollRef={scroll}
-      onScroll={({ nativeEvent }) => {
-        scrollY.current = nativeEvent.contentOffset.y;
-      }}
-      onContentSizeChange={(_width, height) => {
-        if (restoreScroll.current > 0 && height > restoreScroll.current) {
-          scroll.current?.scrollTo({
-            y: restoreScroll.current,
-            animated: false,
-          });
-          restoreScroll.current = 0;
-        }
-      }}
+  const header = (
+    <JournalHeader
+      title="My Journal"
+      back={() => app.switchSolaceMode("companion")}
+      backLabel="Back to Companion"
     >
-      <JournalHeader
-        title="My Journal"
-        back={() => app.switchSolaceMode("companion")}
-        backLabel="Back to Companion"
-      >
-        {records.length ? (
-          <>
-            <JournalHeaderAction
-              name={showSearch ? "close" : "search-outline"}
-              label={showSearch ? "Close journal search" : "Search journal"}
-              onPress={() => {
-                if (showSearch) app.setParams({ query: "" });
-                focusSearch.current = !showSearch;
-                setShowSearch(!showSearch);
-              }}
-            />
-            <JournalHeaderAction
-              name={showFilters ? "options" : "options-outline"}
-              label={
-                showFilters
-                  ? "Hide mood and date filters"
-                  : "Show mood and date filters"
-              }
-              onPress={() => setShowFilters(!showFilters)}
-            />
-          </>
-        ) : (
-          <JournalHeaderAction
-            name="ellipsis-horizontal"
-            label={showModes ? "Close journal options" : "Journal options"}
-            onPress={() => setShowModes(!showModes)}
-          />
-        )}
-      </JournalHeader>
-      {showModes && !records.length && <SolaceModeSwitcher mode="journal" />}
-      {!records.length ? (
+      {records.length ? (
         <>
-          <View
-            style={[
-              styles.hero,
-              {
-                backgroundColor: colors.bg,
-                marginHorizontal: -gutter,
-              },
-            ]}
-          >
-            {resolved === "dark" ? (
-              <>
-                <Image
-                  source={twilightNotebook}
-                  style={coverImageStyle}
-                  resizeMode="cover"
-                  accessible={false}
-                  fadeDuration={0}
-                />
-                <View
-                  pointerEvents="none"
-                  style={[
-                    StyleSheet.absoluteFill,
-                    artGradient(
-                      `linear-gradient(180deg, ${colors.bg} 0%, ${colors.bg}00 16%, ${colors.bg}00 75%, ${colors.bg} 100%)`,
-                    ),
-                  ]}
-                />
-              </>
-            ) : (
-              <View style={styles.heroArt}>
-                <Image
-                  source={notebook}
-                  style={coverImageStyle}
-                  resizeMode="cover"
-                  accessible={false}
-                  fadeDuration={0}
-                />
-              </View>
-            )}
-          </View>
-          <View style={styles.welcome}>
-            <AppText
-              variant="title"
-              style={styles.center}
-              accessibilityRole="header"
-            >
-              A space just for you.
-            </AppText>
-            <AppText color={colors.muted} style={styles.center}>
-              Write freely, reflect, vent, or capture anything on your mind.
-            </AppText>
-          </View>
-          <Button
-            title={hasDraft ? "Continue your draft" : "Write a new entry"}
-            icon="create-outline"
-            onPress={write}
-            style={[
-              styles.welcomeAction,
-              resolved === "dark" && { backgroundColor: colors.lavender },
-            ]}
+          <JournalHeaderAction
+            name={showSearch ? "close" : "search-outline"}
+            label={showSearch ? "Close journal search" : "Search journal"}
+            onPress={() => {
+              if (showSearch) app.setParams({ query: "" });
+              focusSearch.current = !showSearch;
+              setShowSearch(!showSearch);
+            }}
           />
-          <JournalPrivacyMarkers />
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={[styles.center, styles.privacyCopy]}
-          >
-            You choose whether to share an excerpt with Solace.
-          </AppText>
+          <JournalHeaderAction
+            name={showFilters ? "options" : "options-outline"}
+            label={
+              showFilters
+                ? "Hide mood and date filters"
+                : "Show mood and date filters"
+            }
+            onPress={() => setShowFilters(!showFilters)}
+          />
         </>
       ) : (
-        <>
-          <View style={styles.group}>
-            {showSearch && (
-              <Input
-                accessibilityLabel="Search journal entries"
-                placeholder="Search your entries"
-                value={query}
-                onChangeText={(value) => app.setParams({ query: value })}
-                returnKeyType="search"
-                autoCorrect={false}
-                autoFocus={focusSearch.current}
-                style={styles.searchInput}
+        <JournalHeaderAction
+          name="ellipsis-horizontal"
+          label={showModes ? "Close journal options" : "Journal options"}
+          onPress={() => setShowModes(!showModes)}
+        />
+      )}
+    </JournalHeader>
+  );
+  if (!records.length)
+    return (
+      <Screen style={[styles.screen, styles.library]}>
+        {header}
+        {showModes && <SolaceModeSwitcher mode="journal" />}
+        <View
+          style={[
+            styles.hero,
+            {
+              backgroundColor: colors.bg,
+              marginHorizontal: -gutter,
+            },
+          ]}
+        >
+          {resolved === "dark" ? (
+            <>
+              <Image
+                source={twilightNotebook}
+                style={coverImageStyle}
+                resizeMode="cover"
+                accessible={false}
+                fadeDuration={0}
               />
-            )}
-            <View
-              style={[
-                styles.filterRail,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              {[
-                {
-                  label: "All entries",
-                  selected: !favorites && !moodOnly,
-                  filters: { favorites: false, moodOnly: false, mood: null },
-                },
-                {
-                  label: "By mood",
-                  selected: moodOnly,
-                  filters: { favorites: false, moodOnly: true, mood: null },
-                },
-                {
-                  label: "Favorites",
-                  selected: favorites,
-                  filters: { favorites: true, moodOnly: false, mood: null },
-                },
-              ].map(({ label, selected, filters }) => (
-                <Pressable
-                  key={label}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  aria-pressed={selected}
-                  onPress={() => {
-                    app.setParams(filters);
-                    if (label === "By mood") setShowFilters(true);
-                  }}
-                  style={({ pressed }) => [
-                    styles.filterSegment,
-                    selected && { backgroundColor: colors.lavender },
-                    { opacity: pressed ? 0.8 : 1 },
-                  ]}
-                >
-                  <AppText
-                    variant="caption"
-                    style={styles.center}
-                    color={
-                      selected
-                        ? resolved === "dark"
-                          ? "#24182E"
-                          : colors.lavenderText
-                        : colors.text
-                    }
-                  >
-                    {label}
-                  </AppText>
-                </Pressable>
-              ))}
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  artGradient(
+                    `linear-gradient(180deg, ${colors.bg} 0%, ${colors.bg}00 16%, ${colors.bg}00 75%, ${colors.bg} 100%)`,
+                  ),
+                ]}
+              />
+            </>
+          ) : (
+            <View style={styles.heroArt}>
+              <Image
+                source={notebook}
+                style={coverImageStyle}
+                resizeMode="cover"
+                accessible={false}
+                fadeDuration={0}
+              />
             </View>
-            {showFilters && (
-              <View style={styles.group}>
-                <AppText variant="label">Filter by mood</AppText>
-                <View style={styles.wrap}>
-                  <JournalChip
-                    label="Any mood"
-                    selected={!mood}
-                    onPress={() => app.setParams({ mood: null })}
-                  />
-                  {moodPetals.map((choice) => (
-                    <JournalChip
-                      key={choice.mood}
-                      label={choice.mood}
-                      petal={choice.image}
-                      selected={mood === choice.mood}
-                      onPress={() => app.setParams({ mood: choice.mood })}
-                    />
-                  ))}
-                </View>
-                <View style={styles.wrap}>
-                  <JournalChip
-                    label="Newest first"
-                    selected={!oldest}
-                    onPress={() => app.setParams({ oldest: false })}
-                  />
-                  <JournalChip
-                    label="Oldest first"
-                    selected={oldest}
-                    onPress={() => app.setParams({ oldest: true })}
-                  />
-                </View>
-              </View>
-            )}
-          </View>
-          {bookmark.error && (
-            <JournalNotice error>{bookmark.error}</JournalNotice>
           )}
+        </View>
+        <View style={styles.welcome}>
+          <AppText
+            variant="title"
+            style={styles.center}
+            accessibilityRole="header"
+          >
+            A space just for you.
+          </AppText>
+          <AppText color={colors.muted} style={styles.center}>
+            Write freely, reflect, vent, or capture anything on your mind.
+          </AppText>
+        </View>
+        <Button
+          title={hasDraft ? "Continue your draft" : "Write a new entry"}
+          icon="create-outline"
+          onPress={write}
+          style={[
+            styles.welcomeAction,
+            resolved === "dark" && { backgroundColor: colors.lavender },
+          ]}
+        />
+        <JournalPrivacyMarkers />
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={[styles.center, styles.privacyCopy]}
+        >
+          You choose whether to share an excerpt with Solace.
+        </AppText>
+      </Screen>
+    );
+  return (
+    <Screen scroll={false} style={styles.listShell}>
+      <FlatList<Item>
+        {...listScroll.props}
+        data={filtered}
+        keyExtractor={(record) => record.id!}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        style={styles.flex}
+        contentContainerStyle={[
+          styles.listContent,
+          {
+            paddingHorizontal: gutter,
+            paddingBottom: spacing.bottom + bottomClearance,
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        showsVerticalScrollIndicator={false}
+        ItemSeparatorComponent={JournalEntrySeparator}
+        ListHeaderComponentStyle={styles.listHeader}
+        ListHeaderComponent={
           <View style={styles.group}>
-            {filtered.length ? (
-              filtered.map((record) => (
-                <View
-                  key={record.id}
-                  style={[
-                    styles.entryCard,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={[
-                      titleOf(record),
-                      entryDate(record),
-                      record.mood,
-                    ]
-                      .filter(Boolean)
-                      .join(", ")}
-                    onPress={() =>
-                      open(routes.journalEntry, { id: record.id! })
-                    }
-                    style={({ pressed }) => [
-                      styles.entryContent,
-                      { opacity: pressed ? 0.75 : 1 },
-                    ]}
-                  >
-                    <Image
-                      source={landscapes[resolved]}
-                      style={styles.thumbnail}
-                      resizeMode="cover"
-                      accessible={false}
-                      fadeDuration={0}
-                    />
-                    <View style={styles.entryCopy}>
-                      <AppText
-                        variant="heading"
-                        numberOfLines={2}
-                        style={styles.cardTitle}
-                      >
-                        {titleOf(record)}
-                      </AppText>
-                      <AppText
-                        variant="caption"
-                        numberOfLines={2}
-                        color={colors.muted}
-                      >
-                        {writing(record)}
-                      </AppText>
-                      <EntryMeta record={record} />
-                    </View>
-                  </Pressable>
-                  <IconButton
-                    name={record.bookmarked ? "bookmark" : "bookmark-outline"}
-                    label={`${record.bookmarked ? "Remove bookmark from" : "Bookmark"} ${titleOf(record)}`}
-                    disabled={
-                      record.localOnly || bookmark.working.includes(record.id!)
-                    }
-                    onPress={() => void bookmark.toggle(record)}
-                  />
-                </View>
-              ))
-            ) : (
+            {header}
+            <View style={styles.group}>
+              {showSearch && (
+                <Input
+                  accessibilityLabel="Search journal entries"
+                  placeholder="Search your entries"
+                  value={query}
+                  onChangeText={(value) => app.setParams({ query: value })}
+                  returnKeyType="search"
+                  autoCorrect={false}
+                  autoFocus={focusSearch.current}
+                  style={styles.searchInput}
+                />
+              )}
               <View
                 style={[
-                  styles.panel,
+                  styles.filterRail,
                   {
                     backgroundColor: colors.surface,
                     borderColor: colors.border,
                   },
                 ]}
               >
-                <AppText variant="heading">
-                  {hasFilters ? "No matching entries" : "No favorites yet"}
-                </AppText>
-                <JournalNotice>
-                  {hasFilters
-                    ? "Try a different search or clear your filters."
-                    : "Bookmark an entry to find it here again."}
-                </JournalNotice>
-                {hasFilters && (
-                  <Button
-                    title="Clear filters"
-                    variant="secondary"
-                    onPress={clearFilters}
-                  />
-                )}
+                {[
+                  {
+                    label: "All entries",
+                    selected: !favorites && !moodOnly,
+                    filters: { favorites: false, moodOnly: false, mood: null },
+                  },
+                  {
+                    label: "By mood",
+                    selected: moodOnly,
+                    filters: { favorites: false, moodOnly: true, mood: null },
+                  },
+                  {
+                    label: "Favorites",
+                    selected: favorites,
+                    filters: { favorites: true, moodOnly: false, mood: null },
+                  },
+                ].map(({ label, selected, filters }) => (
+                  <Pressable
+                    key={label}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    aria-pressed={selected}
+                    onPress={() => {
+                      app.setParams(filters);
+                      if (label === "By mood") setShowFilters(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.filterSegment,
+                      selected && { backgroundColor: colors.lavender },
+                      { opacity: pressed ? 0.8 : 1 },
+                    ]}
+                  >
+                    <AppText
+                      variant="caption"
+                      style={styles.center}
+                      color={
+                        selected
+                          ? resolved === "dark"
+                            ? "#24182E"
+                            : colors.lavenderText
+                          : colors.text
+                      }
+                    >
+                      {label}
+                    </AppText>
+                  </Pressable>
+                ))}
               </View>
+              {showFilters && (
+                <View style={styles.group}>
+                  <AppText variant="label">Filter by mood</AppText>
+                  <View style={styles.wrap}>
+                    <JournalChip
+                      label="Any mood"
+                      selected={!mood}
+                      onPress={() => app.setParams({ mood: null })}
+                    />
+                    {moodPetals.map((choice) => (
+                      <JournalChip
+                        key={choice.mood}
+                        label={choice.mood}
+                        petal={choice.image}
+                        selected={mood === choice.mood}
+                        onPress={() => app.setParams({ mood: choice.mood })}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.wrap}>
+                    <JournalChip
+                      label="Newest first"
+                      selected={!oldest}
+                      onPress={() => app.setParams({ oldest: false })}
+                    />
+                    <JournalChip
+                      label="Oldest first"
+                      selected={oldest}
+                      onPress={() => app.setParams({ oldest: true })}
+                    />
+                  </View>
+                </View>
+              )}
+            </View>
+            {bookmark.error && (
+              <JournalNotice error>{bookmark.error}</JournalNotice>
             )}
           </View>
+        }
+        renderItem={({ item: record }) => (
+          <View
+            style={[
+              styles.entryCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={[
+                titleOf(record),
+                entryDate(record),
+                record.mood,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              onPress={() => open(routes.journalEntry, { id: record.id! })}
+              style={({ pressed }) => [
+                styles.entryContent,
+                { opacity: pressed ? 0.75 : 1 },
+              ]}
+            >
+              <Image
+                source={landscapes[resolved]}
+                style={styles.thumbnail}
+                resizeMode="cover"
+                accessible={false}
+                fadeDuration={0}
+              />
+              <View style={styles.entryCopy}>
+                <AppText
+                  variant="heading"
+                  numberOfLines={2}
+                  style={styles.cardTitle}
+                >
+                  {titleOf(record)}
+                </AppText>
+                <AppText
+                  variant="caption"
+                  numberOfLines={2}
+                  color={colors.muted}
+                >
+                  {writing(record)}
+                </AppText>
+                <EntryMeta record={record} />
+              </View>
+            </Pressable>
+            <IconButton
+              name={record.bookmarked ? "bookmark" : "bookmark-outline"}
+              label={`${record.bookmarked ? "Remove bookmark from" : "Bookmark"} ${titleOf(record)}`}
+              disabled={
+                record.localOnly || bookmark.working.includes(record.id!)
+              }
+              onPress={() => void bookmark.toggle(record)}
+            />
+          </View>
+        )}
+        ListEmptyComponent={
+          <View
+            style={[
+              styles.panel,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <AppText variant="heading">
+              {hasFilters ? "No matching entries" : "No favorites yet"}
+            </AppText>
+            <JournalNotice>
+              {hasFilters
+                ? "Try a different search or clear your filters."
+                : "Bookmark an entry to find it here again."}
+            </JournalNotice>
+            {hasFilters && (
+              <Button
+                title="Clear filters"
+                variant="secondary"
+                onPress={clearFilters}
+              />
+            )}
+          </View>
+        }
+        ListFooterComponentStyle={styles.listFooter}
+        ListFooterComponent={
           <Button
             title={hasDraft ? "Continue your draft" : "Write a new entry"}
             icon="create-outline"
             onPress={write}
             style={styles.libraryAction}
           />
-        </>
-      )}
+        }
+      />
     </Screen>
   );
+}
+
+function JournalEntrySeparator() {
+  return <View style={styles.entrySeparator} />;
 }
 
 const fieldsFrom = (record?: Item): EditorDraft => ({
@@ -1212,6 +1238,21 @@ export function JournalScreen({ name }: { name: string }) {
 const styles = StyleSheet.create({
   screen: { gap: spacing.row, paddingTop: 10 },
   library: { flexGrow: 1 },
+  listShell: {
+    flex: 1,
+    padding: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    paddingHorizontal: 0,
+  },
+  listContent: { flexGrow: 1, paddingTop: 10 },
+  listHeader: { marginBottom: spacing.row },
+  listFooter: {
+    flexGrow: 1,
+    justifyContent: "flex-end",
+    paddingTop: spacing.row,
+  },
+  entrySeparator: { height: spacing.row },
   editor: { flexGrow: 1, gap: spacing.compact },
   header: { gap: 4, marginHorizontal: -8, marginBottom: 1 },
   headerTitle: { flex: 1, fontSize: 25, lineHeight: 32 },

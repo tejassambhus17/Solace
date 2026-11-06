@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   BackHandler,
   Keyboard,
-  Image,
   Linking,
   Platform,
   Text,
@@ -103,6 +102,11 @@ const wellnessScreens = new Set([
 ]);
 const retainedRoots = {
   today: TodayScreen,
+  [routes.solace]: () => (
+    <ExperienceTheme>
+      <SolaceHome />
+    </ExperienceTheme>
+  ),
   [routes.journal]: () => (
     <ExperienceTheme>
       <JournalScreen name={routes.journal} />
@@ -114,7 +118,6 @@ const retainedRoots = {
 };
 type RetainedRoot = keyof typeof retainedRoots;
 const cinematicRoutes = new Set<string>([
-  routes.solace,
   routes.companion,
   routes.voice,
   routes.history,
@@ -180,17 +183,17 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   const tabAction = useRef(app.setTab);
   tabAction.current = app.setTab;
   const selectTab = useCallback((tab: string) => tabAction.current(tab), []);
-  const chatPositions = useRef(new Map<string, number>());
-  const visitedRoots = useRef(new Set<RetainedRoot>());
+  const [chatPositions] = useState(() => new Map<string, number>());
+  const [visitedRoots] = useState(() => new Set<RetainedRoot>());
   const journalLocked = app.journalLocked && app.journalRouteProtected;
   const activeRoot =
     !journalLocked && Object.hasOwn(retainedRoots, app.route)
       ? (app.route as RetainedRoot)
       : null;
   const authenticated = !!app.user && !app.sessionExpired;
-  if (!authenticated) visitedRoots.current.clear();
-  else if (activeRoot) visitedRoots.current.add(activeRoot);
-  if (app.journalLocked) visitedRoots.current.delete(routes.journal);
+  if (!authenticated) visitedRoots.clear();
+  else if (activeRoot) visitedRoots.add(activeRoot);
+  if (app.journalLocked) visitedRoots.delete(routes.journal);
   const [navigationHeight, setNavigationHeight] = useState(88);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
@@ -273,9 +276,8 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   else if (!app.user || app.sessionExpired) content = <AuthScreen />;
   else if (journalLocked) content = <DeviceUnlockScreen scope="journal" />;
   else if (activeRoot) content = null;
-  else if (app.route === routes.solace) content = <SolaceHome />;
   else if (app.route === routes.companion)
-    content = <ChatScreen scrollMemory={chatPositions.current} />;
+    content = <ChatScreen scrollMemory={chatPositions} />;
   else if (
     app.route === routes.journalEditor ||
     app.route === routes.journalEntry
@@ -365,7 +367,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
             value={showNavigation ? navigationHeight : 0}
           >
             {authenticated &&
-              Array.from(visitedRoots.current, (route) => (
+              Array.from(visitedRoots, (route) => (
                 <RetainedScreen
                   key={route}
                   route={route}
@@ -383,13 +385,15 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
               {content}
             </ExperienceTheme>
             {authenticated && <MilestoneCelebration allowed={showNavigation} />}
-            {showNavigation && (
-              <TabBar
-                activeTab={app.activeTab}
-                route={app.route}
-                onSelect={selectTab}
-                onHeight={setNavigationHeight}
-              />
+            {authenticated && (
+              <Activity mode={showNavigation ? "visible" : "hidden"}>
+                <TabBar
+                  activeTab={app.activeTab}
+                  route={app.route}
+                  onSelect={selectTab}
+                  onHeight={setNavigationHeight}
+                />
+              </Activity>
             )}
           </NavigationInset.Provider>
         )}
@@ -445,33 +449,29 @@ function FontGate() {
     Inter_600SemiBold,
     CormorantGaramond_600SemiBold,
   });
-  if (!loaded && !error)
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: colors.bg,
-        }}
-      >
-        <Image
-          source={require("./assets/petal.png")}
-          style={{ width: 120, height: 120 }}
-          resizeMode="contain"
-        />
-        <StatusBar style={resolved === "dark" ? "light" : "dark"} />
-        <Text style={{ fontSize: 28, color: colors.text, marginTop: 10 }}>
-          Solace
-        </Text>
-        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
-      </View>
-    );
   return (
     <AppProvider>
-      <GoogleLinkProvider>
-        <Shell />
-      </GoogleLinkProvider>
+      {loaded || error ? (
+        <GoogleLinkProvider>
+          <Shell />
+        </GoogleLinkProvider>
+      ) : (
+        <View
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.bg,
+          }}
+        >
+          <Petal size={120} />
+          <StatusBar style={resolved === "dark" ? "light" : "dark"} />
+          <Text style={{ fontSize: 28, color: colors.text, marginTop: 10 }}>
+            Solace
+          </Text>
+          <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+        </View>
+      )}
     </AppProvider>
   );
 }

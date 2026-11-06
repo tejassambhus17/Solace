@@ -113,8 +113,9 @@ export function TechniquesScreen() {
       <View pointerEvents="none" style={styles.botanicalFrame}>
         <Image
           accessible={false}
-          source={require("../../assets/botanical.png")}
+          source={require("../../assets/botanical-compact.png")}
           resizeMode="contain"
+          fadeDuration={0}
           style={[styles.botanical, { opacity: dark ? 0.58 : 0.24 }]}
         />
       </View>

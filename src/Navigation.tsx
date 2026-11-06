@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
+  AppState,
   Easing,
   I18nManager,
   Platform,
@@ -44,6 +45,50 @@ const destinations = [
 ];
 const rowPadding = 5;
 const spotlightSize = 36;
+const android = Platform.OS === "android";
+
+const TabDestination = React.memo(function TabDestination({
+  destination,
+  selected,
+  ink,
+  rippleColor,
+  onSelect,
+}: {
+  destination: (typeof destinations)[number];
+  selected: boolean;
+  ink: string;
+  rippleColor: string;
+  onSelect: (name: string) => void;
+}) {
+  return (
+    <Pressable
+      onPress={() => onSelect(destination.name)}
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
+      accessibilityLabel={destination.title}
+      android_ripple={android ? { color: rippleColor } : undefined}
+      style={({ pressed }) => [
+        styles.tab,
+        !android && pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.iconFrame}>
+        <Icon
+          name={selected ? destination.active : destination.icon}
+          size={22}
+          color={ink}
+        />
+      </View>
+      <AppText
+        variant="caption"
+        color={ink}
+        style={styles.label}
+      >
+        {destination.title}
+      </AppText>
+    </Pressable>
+  );
+});
 
 export const TabBar = React.memo(function TabBar({
   activeTab,
@@ -58,7 +103,6 @@ export const TabBar = React.memo(function TabBar({
 }) {
   const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
-  const android = Platform.OS === "android";
   const onToday = route === "today";
   const onExplore = route === "explore";
   const twilight = resolved === "dark" && onToday;
@@ -66,8 +110,9 @@ export const TabBar = React.memo(function TabBar({
   const bottomInset = Math.max(insets.bottom, 10);
   const reducedMotion = useReducedMotion();
   const [rowWidth, setRowWidth] = useState(0);
-  const spotlightX = useRef(new Animated.Value(0)).current;
+  const [spotlightX] = useState(() => new Animated.Value(0));
   const measuredWidth = useRef(0);
+  const lastTarget = useRef<number | undefined>(undefined);
   const selectedIndex = destinations.findIndex(
     ({ name }) => name === activeTab,
   );
@@ -79,14 +124,19 @@ export const TabBar = React.memo(function TabBar({
     const tabWidth = (rowWidth - rowPadding * 2) / destinations.length;
     const center = rowPadding + (index + 0.5) * tabWidth;
     const target = center - spotlightSize / 2;
-    if (reducedMotion || measuredWidth.current !== rowWidth) {
-      measuredWidth.current = rowWidth;
+    const snap =
+      reducedMotion ||
+      measuredWidth.current !== rowWidth ||
+      lastTarget.current === target;
+    measuredWidth.current = rowWidth;
+    lastTarget.current = target;
+    if (snap) {
       spotlightX.setValue(target);
       return;
     }
     const motion = Animated.timing(spotlightX, {
       toValue: target,
-      duration: 165,
+      duration: 145,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: Platform.OS !== "web",
       isInteraction: false,
@@ -94,6 +144,13 @@ export const TabBar = React.memo(function TabBar({
     motion.start();
     return () => motion.stop();
   }, [reducedMotion, rowWidth, selectedIndex, spotlightX]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active" && lastTarget.current !== undefined)
+        spotlightX.setValue(lastTarget.current);
+    });
+    return () => subscription.remove();
+  }, [spotlightX]);
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
@@ -121,7 +178,10 @@ export const TabBar = React.memo(function TabBar({
   const items = (
     <View
       accessibilityRole="tablist"
-      onLayout={({ nativeEvent }) => setRowWidth(nativeEvent.layout.width)}
+      onLayout={({ nativeEvent }) => {
+        const width = nativeEvent.layout.width;
+        if (width > 0) setRowWidth(width);
+      }}
       style={styles.items}
     >
       {rowWidth > 0 && (
@@ -139,35 +199,15 @@ export const TabBar = React.memo(function TabBar({
       )}
       {destinations.map((destination) => {
         const selected = activeTab === destination.name;
-        const ink = selected ? colors.tabActiveText : colors.muted;
         return (
-          <Pressable
+          <TabDestination
             key={destination.name}
-            onPress={() => onSelect(destination.name)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            accessibilityLabel={destination.title}
-            style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
-          >
-            <View style={styles.iconFrame}>
-              <Icon
-                name={selected ? destination.active : destination.icon}
-                size={22}
-                color={ink}
-              />
-            </View>
-            <AppText
-              variant="caption"
-              color={ink}
-              style={{
-                fontSize: 11,
-                lineHeight: 15,
-                textAlign: "center",
-              }}
-            >
-              {destination.title}
-            </AppText>
-          </Pressable>
+            destination={destination}
+            selected={selected}
+            ink={selected ? colors.tabActiveText : colors.muted}
+            rippleColor={resolved === "dark" ? "#FFFFFF24" : "#49326120"}
+            onSelect={onSelect}
+          />
         );
       })}
     </View>
@@ -276,6 +316,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   pressed: { opacity: 0.65 },
+  label: {
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: "center",
+  },
   iconFrame: {
     width: spotlightSize,
     height: spotlightSize,

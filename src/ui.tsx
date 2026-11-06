@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useRef, useState } from "react";
 import {
   View,
   Text as NativeText,
@@ -80,6 +80,37 @@ export function AppText({
     </NativeText>
   );
 }
+export function ScreenHeader({
+  title,
+  back,
+}: {
+  title: string;
+  back?: () => void;
+}) {
+  return (
+    <Row style={{ marginBottom: spacing.screenTop }}>
+      {back && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          onPress={back}
+          style={{
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: "center",
+            marginLeft: -4,
+          }}
+        >
+          <Icon name="arrow-back" size={23} />
+        </Pressable>
+      )}
+      <AppText variant="heading" accessibilityRole="header" style={{ flex: 1 }}>
+        {title}
+      </AppText>
+    </Row>
+  );
+}
+
 export function Screen({
   children,
   scroll = true,
@@ -118,6 +149,7 @@ export function Screen({
   const protectStatusBar =
     edgeTop && scroll && top > 0 && Platform.OS !== "web";
   const [scrolled, setScrolled] = useState(false);
+  const scrolledRef = useRef(false);
   const statusStyle = resolved === "dark" ? "light" : "dark";
   const content = (
     <View
@@ -130,32 +162,7 @@ export function Screen({
         style,
       ]}
     >
-      {title && (
-        <Row style={{ marginBottom: spacing.screenTop }}>
-          {back && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-              onPress={back}
-              style={{
-                minWidth: 44,
-                minHeight: 44,
-                justifyContent: "center",
-                marginLeft: -4,
-              }}
-            >
-              <Icon name="arrow-back" size={23} />
-            </Pressable>
-          )}
-          <AppText
-            variant="heading"
-            accessibilityRole="header"
-            style={{ flex: 1 }}
-          >
-            {title}
-          </AppText>
-        </Row>
-      )}
+      {title && <ScreenHeader title={title} back={back} />}
       {children}
     </View>
   );
@@ -180,12 +187,17 @@ export function Screen({
               ? (event) => {
                   const pastStatusArea =
                     event.nativeEvent.contentOffset.y > top;
-                  if (pastStatusArea !== scrolled) setScrolled(pastStatusArea);
+                  if (pastStatusArea !== scrolledRef.current) {
+                    scrolledRef.current = pastStatusArea;
+                    setScrolled(pastStatusArea);
+                  }
                   onScroll?.(event);
                 }
               : onScroll
           }
-          scrollEventThrottle={onScroll || protectStatusBar ? 16 : undefined}
+          scrollEventThrottle={
+            onScroll ? 16 : protectStatusBar ? 32 : undefined
+          }
           onContentSizeChange={onContentSizeChange}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -394,8 +406,13 @@ export function Input(props: React.ComponentPropsWithRef<typeof TextInput>) {
 export function Petal({ size = 48 }: { size?: number }) {
   return (
     <Image
-      source={require("../assets/petal.png")}
+      source={
+        size > 128
+          ? require("../assets/petal.png")
+          : require("../assets/petal-compact.png")
+      }
       resizeMode="contain"
+      fadeDuration={0}
       style={{ width: size, height: size }}
       accessibilityIgnoresInvertColors
       accessible={false}
@@ -446,47 +463,6 @@ export const Artwork = React.memo(function Artwork({
   );
 });
 
-/** Matched botanical artwork; text is rendered separately over a quiet scrim. */
-export const PauseArtwork = React.memo(function PauseArtwork({
-  style,
-}: {
-  style?: StyleProp<ViewStyle>;
-}) {
-  const { resolved } = useTheme();
-  const dark = resolved === "dark";
-  const source = dark
-    ? require("../assets/daily-pause-dark-v2.png")
-    : require("../assets/moment-light.png");
-  return (
-    <View
-      pointerEvents="none"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={[StyleSheet.absoluteFill, style]}
-    >
-      <Image
-        source={source}
-        defaultSource={source}
-        accessible={false}
-        accessibilityIgnoresInvertColors
-        resizeMode="cover"
-        resizeMethod="resize"
-        fadeDuration={0}
-        style={{ width: "100%", height: "100%" }}
-      />
-      <View
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundImage: dark
-              ? "linear-gradient(90deg, rgba(20,20,22,0.97) 0%, rgba(20,20,22,0.90) 55%, rgba(20,20,22,0) 100%)"
-              : "linear-gradient(90deg, rgba(243,230,214,0.92) 0%, rgba(243,230,214,0.66) 40%, rgba(243,230,214,0) 85%)",
-          },
-        ]}
-      />
-    </View>
-  );
-});
 export function SectionTitle({
   title,
   subtitle,
@@ -616,8 +592,9 @@ export function BotanicalBackdrop({
       ]}
     >
       <Image
-        source={require("../assets/botanical.png")}
+        source={require("../assets/botanical-compact.png")}
         resizeMode="contain"
+        fadeDuration={0}
         style={{
           width: "100%",
           height: "100%",
