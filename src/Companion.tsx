@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -41,6 +41,15 @@ const descriptions: Record<CompanionState, string> = {
   breathing: "Follow a comfortable breathing rhythm",
 };
 
+const gestures = {
+  idle: { rise: 4000, fall: 4600, scale: 1.015, turn: 0, lift: 0 },
+  listening: { rise: 850, fall: 1000, scale: 1.065, turn: 0, lift: 0 },
+  thinking: { rise: 1400, fall: 1700, scale: 1.02, turn: 5, lift: 0 },
+  speaking: { rise: 500, fall: 700, scale: 1.04, turn: 0, lift: 0.018 },
+  happy: { rise: 580, fall: 860, scale: 1.085, turn: 0, lift: 0.035 },
+  breathing: { rise: 4000, fall: 6000, scale: 1.14, turn: 0, lift: 0 },
+} satisfies Record<CompanionState, object>;
+
 /** Solace's small petal companion. Its state belongs to the actual interaction,
  * never an inferred emotion or assessment of the person using the app. */
 export function Companion({
@@ -49,12 +58,16 @@ export function Companion({
   phase,
   breathing,
   breathingProgress,
+  soundLevel,
+  animate = true,
 }: {
   state?: CompanionState;
   size?: number;
   phase?: string;
   breathing?: { inhale: number; hold: number; exhale: number } | null;
   breathingProgress?: number;
+  soundLevel?: number;
+  animate?: boolean;
 }) {
   const { resolved, colors } = useTheme();
   const reduced = useReducedMotion();
@@ -62,6 +75,9 @@ export function Companion({
     () => !AppState.currentState || AppState.currentState === "active",
   );
   const [motion] = useState(() => new Animated.Value(0));
+  const gesture = gestures[state];
+  const progress = state === "breathing" ? breathingProgress
+    : state === "listening" ? soundLevel : undefined;
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) =>
       setActive(next === "active"),
@@ -70,35 +86,26 @@ export function Companion({
   }, []);
   useEffect(() => {
     motion.stopAnimation();
-    if (reduced || !active) {
+    if (reduced || !active || !animate) {
       motion.setValue(0);
       return;
     }
-    if (state === "breathing" && breathingProgress !== undefined) {
+    if (progress !== undefined && Number.isFinite(progress)) {
       const animation = Animated.timing(motion, {
-        toValue: Math.max(0, Math.min(1, breathingProgress)),
-        duration: 240,
+        toValue: Math.max(0, Math.min(1, progress)),
+        duration: state === "listening" ? 125 : 240,
         easing: Easing.linear,
         useNativeDriver: Platform.OS !== "web",
+        isInteraction: false,
       });
       animation.start();
       return () => animation.stop();
     }
     motion.setValue(0);
-    const duration =
-      state === "breathing"
-        ? 1000 * (breathing?.inhale || 4)
-        : state === "idle"
-          ? 5000
-          : state === "thinking"
-            ? 1400
-            : state === "happy"
-              ? 650
-              : 700;
     const cycle = Animated.sequence([
       Animated.timing(motion, {
         toValue: 1,
-        duration,
+        duration: state === "breathing" && breathing?.inhale ? 1000 * breathing.inhale : gesture.rise,
         easing: Easing.inOut(Easing.sin),
         useNativeDriver: Platform.OS !== "web",
         isInteraction: false,
@@ -108,43 +115,35 @@ export function Companion({
         : []),
       Animated.timing(motion, {
         toValue: 0,
-        duration:
-          state === "breathing" ? 1000 * (breathing?.exhale || 6) : duration,
+        duration: state === "breathing" && breathing?.exhale ? 1000 * breathing.exhale : gesture.fall,
         easing: Easing.inOut(Easing.sin),
         useNativeDriver: Platform.OS !== "web",
         isInteraction: false,
       }),
     ]);
-    const animation = state === "happy" ? cycle : Animated.loop(cycle);
+    const animation = state === "happy" ? cycle : Animated.loop(cycle, {
+      iterations: state === "idle" ? 2 : -1,
+    });
     animation.start();
     return () => animation.stop();
   }, [
     state,
     reduced,
     active,
+    animate,
+    gesture,
     motion,
     breathing?.inhale,
     breathing?.hold,
     breathing?.exhale,
-    breathingProgress,
+    progress,
   ]);
-  const scale = motion.interpolate({
-    inputRange: [0, 1],
-    outputRange: [
-      1,
-      state === "breathing"
-        ? 1.14
-        : state === "happy"
-          ? 1.1
-          : state === "idle"
-            ? 1.012
-            : 1.035,
-    ],
-  });
-  const rotate = motion.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", state === "thinking" ? "7deg" : "0deg"],
-  });
+  const { scale, rotate, lift, signal } = useMemo(() => ({
+    scale: motion.interpolate({ inputRange: [0, 1], outputRange: [1, gesture.scale] }),
+    rotate: motion.interpolate({ inputRange: [0, 1], outputRange: ["0deg", `${gesture.turn}deg`] }),
+    lift: motion.interpolate({ inputRange: [0, 1], outputRange: [0, -size * gesture.lift] }),
+    signal: motion.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }),
+  }), [gesture, motion, size]);
   return (
     <View
       accessible
@@ -161,7 +160,7 @@ export function Companion({
         style={{
           width: size,
           height: size,
-          transform: [{ scale }, { rotate }],
+          transform: [{ scale }, { rotate }, { translateY: lift }],
         }}
       >
         <Image
@@ -218,36 +217,19 @@ export function Companion({
           )}
         </View>
       </Animated.View>
-      {(state === "listening" || state === "speaking") && (
-        <View
+      {size >= 64 && (state === "listening" || state === "speaking") && (
+        <Animated.View
           pointerEvents="none"
           style={{
-            flexDirection: "row",
-            gap: 4,
             position: "absolute",
             bottom: 0,
+            width: 18,
+            height: 3,
+            borderRadius: 2,
+            backgroundColor: colors.primary,
+            opacity: signal,
           }}
-        >
-          {[0.5, 1, 0.7, 1, 0.5].map((height, index) => (
-            <Animated.View
-              key={index}
-              style={{
-                width: 3,
-                height: 14 * height,
-                borderRadius: 2,
-                backgroundColor: colors.primary,
-                transform: [
-                  {
-                    scaleY: motion.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.5, 1],
-                    }),
-                  },
-                ],
-              }}
-            />
-          ))}
-        </View>
+        />
       )}
     </View>
   );

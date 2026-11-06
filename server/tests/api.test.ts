@@ -367,7 +367,7 @@ test("built-in guidance honors reflection starters and keeps urgent support firs
     ...input,
     text: "I feel tired before bedtime.",
   });
-  assert.equal(tired.action?.type, "reflection");
+  assert.equal(tired.action?.type, "wind-down");
   assert.match(tired.reply, /rest is on your mind/);
   const urgent = await getReply(ai, {
     ...input,
@@ -391,7 +391,10 @@ test("live provider sends bounded context with store:false and extracts output b
             content: [
               {
                 type: "output_text",
-                text: "We can take a short breathing pause, if you like.",
+                text: JSON.stringify({
+                  reply: "We can take a short breathing pause, if you like.",
+                  practice: "breathing",
+                }),
               },
             ],
           },
@@ -415,6 +418,7 @@ test("live provider sends bounded context with store:false and extracts output b
     assert.equal(output.action?.type, "breathing");
     assert.equal(captured?.store, false);
     assert.equal(captured?.input[0].content, "I feel tense");
+    assert.equal(captured?.text.format.name, "solace_chat_turn");
     assert.match(captured?.instructions, /Prefers short sessions/);
   } finally {
     globalThis.fetch = original;

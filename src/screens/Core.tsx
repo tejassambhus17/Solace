@@ -27,6 +27,12 @@ import { localDay, recordDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
 import { VoiceControls } from "../VoiceControls";
 import { useTheme } from "../theme";
+import { createChatPractice } from "../chat-practices";
+import {
+  chatPractices,
+  isChatPracticeId,
+  type ChatAction,
+} from "../../server/src/chat-practice";
 import {
   ChatAvatar,
   ChatBubble,
@@ -410,7 +416,7 @@ type ChatMessage = {
   provider?: "offline" | "live";
   support?: boolean;
   safety?: boolean;
-  action?: { type: "breathing" | "reflection"; label: string };
+  action?: ChatAction;
 };
 
 const emptyMessages: ChatMessage[] = [];
@@ -474,15 +480,20 @@ export function ChatScreen({
     conversationId: id,
   };
   const action = lastAssistant?.action;
+  const actionKey = lastAssistant?.id ?? String(messages.length);
   const showSupport =
     lastAssistant?.support === true || lastAssistant?.safety === true;
   const voiceBusy = voiceState === "listening" || voiceState === "thinking";
   const activityDisabled = !!pending || voiceBusy;
   const sendDisabled = !input.trim() || activityDisabled;
   const fresh = messages.length === 0 && !pending;
-  const reflection = action?.type === "reflection";
-  const offerReset =
-    !pending && !showSupport && (fresh || action?.type === "breathing");
+  const recommendation =
+    !pending &&
+    !showSupport &&
+    app.params.dismissedPractice !== actionKey &&
+    isChatPracticeId(action?.type)
+      ? createChatPractice(action.type)
+      : undefined;
   const today = localDay();
   const mood = useMemo(
     () =>
@@ -709,35 +720,47 @@ export function ChatScreen({
           style={{ alignSelf: "flex-start" }}
         />
       )}
-      {offerReset && (
-        <Button
-          title="Guided Breath · 2 min"
-          variant="secondary"
-          icon="leaf-outline"
-          onPress={startReset}
-          disabled={activityDisabled}
-          style={{ alignSelf: "flex-start" }}
-        />
-      )}
-      {reflection && !showSupport && !pending && (
+      {recommendation && action && (
         <Card style={{ backgroundColor: colors.surface2 }}>
-          <Row style={{ gap: 7, marginBottom: 7 }}>
-            <Icon name="book-outline" size={16} />
-            <AppText variant="caption">Suggested activity</AppText>
+          <Row style={{ gap: spacing.compact, marginBottom: spacing.compact }}>
+            <Icon name={chatPractices[action.type].icon} size={18} />
+            <AppText variant="caption" color={colors.muted}>
+              Suggested Moment · {recommendation.durationSec / 60} min
+            </AppText>
           </Row>
-          <AppText
-            variant="heading"
-            style={{ maxWidth: "85%", marginBottom: 12 }}
-          >
-            {action.label}
+          <AppText variant="heading">{recommendation.title}</AppText>
+          <AppText color={colors.muted} style={{ marginTop: spacing.compact }}>
+            {recommendation.description}
           </AppText>
-          <Button
-            title="Start writing"
-            icon="arrow-forward"
-            onPress={startReflection}
-            disabled={activityDisabled}
-            style={{ alignSelf: "flex-start", minHeight: 44 }}
-          />
+          <Row
+            style={{
+              flexWrap: "wrap",
+              gap: spacing.compact,
+              marginTop: spacing.card,
+            }}
+          >
+            <Button
+              title="Open Moment"
+              icon="arrow-forward"
+              onPress={() => {
+                Keyboard.dismiss();
+                app.navigate("moment-player", {
+                  activity: recommendation,
+                  provider: "offline",
+                  source: "chat",
+                  conversationId: id,
+                });
+              }}
+              disabled={activityDisabled}
+              style={{ minHeight: 48 }}
+            />
+            <Button
+              title="Not now"
+              variant="ghost"
+              onPress={() => app.setParams({ dismissedPractice: actionKey })}
+              style={{ minHeight: 48 }}
+            />
+          </Row>
         </Card>
       )}
     </View>

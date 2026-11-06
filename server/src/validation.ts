@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { momentSchema, environments } from "./moments.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
+import { chatPracticeIds } from "./chat-practice.js";
 import { weeklyPeriodSchema } from "./weekly.js";
 import {
   goalMetrics,
@@ -146,7 +147,7 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
           provider: z.enum(["live", "offline"]).optional(),
           action: z
             .object({
-              type: z.enum(["breathing", "reflection"]),
+              type: z.enum(chatPracticeIds),
               label: z.string().trim().min(1).max(200),
             })
             .optional(),

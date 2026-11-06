@@ -512,7 +512,9 @@ export function MomentPlayerScreen() {
       ? "Explore"
       : app.params.source === "today"
         ? "Today"
-        : undefined;
+        : app.params.source === "chat"
+          ? "Solace chat"
+          : undefined;
   useEffect(() => {
     if (playable) return;
     const subscription = BackHandler.addEventListener(
@@ -551,7 +553,7 @@ function PlayableMoment({
 }: {
   activity: SolaceMoment;
   provider: "live" | "offline";
-  guidedSource?: "Explore" | "Today";
+  guidedSource?: "Explore" | "Today" | "Solace chat";
 }) {
   const app = useApp();
   const { colors } = useTheme();
