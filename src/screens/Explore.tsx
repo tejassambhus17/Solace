@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useReducedMotion } from "../Companion";
 import { spacing, useScreenGutter } from "../layout";
+import { routes } from "../routes";
 import {
   createExplorePractice,
   exploreShortcuts,
@@ -148,6 +149,14 @@ const forYou: FeaturedTile[] = [
   },
 ];
 
+const guidedTechniques: ExploreItem = {
+  title: "Guided techniques",
+  detail: "Short practices for stress, grounding, sleep, and focus.",
+  icon: "compass-outline",
+  categories: ["breathe", "reflect", "sleep", "focus"],
+  destination: { route: routes.techniques },
+};
+
 const extraTools: ExploreItem[] = [
   {
     title: "Ambient Sound Mixer",
@@ -216,6 +225,7 @@ const extraTools: ExploreItem[] = [
 
 const catalog: ExploreItem[] = [
   featured,
+  guidedTechniques,
   ...forYou,
   ...extraTools,
   ...exploreShortcuts.map((card): ExploreItem => ({
@@ -625,7 +635,7 @@ export function ExploreScreen() {
       destination.focus,
       destination.minutes,
     );
-    app.navigate("moment-player", {
+    app.navigate(routes.momentPlayer, {
       activity: destination.title
         ? { ...activity, title: destination.title }
         : activity,
@@ -969,6 +979,13 @@ export function ExploreScreen() {
                   <Icon name="arrow-forward" size={15} color="#2B1E28" />
                 </Pressable>
               </View>
+            </View>
+
+            <View style={styles.section}>
+              <ExploreResult
+                item={guidedTechniques}
+                onPress={() => open(guidedTechniques.destination)}
+              />
             </View>
 
             <View style={styles.section}>

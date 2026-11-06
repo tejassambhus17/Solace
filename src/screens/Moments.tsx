@@ -14,6 +14,8 @@ import { AmbientSound } from "../AmbientSound";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp, type Item } from "../store";
 import { useTheme } from "../theme";
+import { isRecordId, routes } from "../routes";
+import { getTechnique, type Technique } from "../techniques";
 import { AppText, Button, Card, Icon, Row, Screen } from "../ui";
 import { Companion, useReducedMotion } from "../Companion";
 import { ENVIRONMENTS, EnvironmentScene } from "../Environment";
@@ -510,7 +512,11 @@ export function MomentsScreen() {
 
 export function MomentPlayerScreen() {
   const app = useApp();
-  const activity = app.params?.activity;
+  const technique = getTechnique(app.params.techniqueId);
+  const activity =
+    app.params.techniqueId === undefined
+      ? app.params.activity
+      : technique?.activity;
   const playable = isPlayableMoment(activity);
   const guidedSource =
     app.params.source === "explore"
@@ -519,7 +525,9 @@ export function MomentPlayerScreen() {
         ? "Today"
         : app.params.source === "chat"
           ? "Solace chat"
-          : undefined;
+          : app.params.source === "journal"
+            ? "My Journal"
+            : undefined;
   useEffect(() => {
     if (playable) return;
     const subscription = BackHandler.addEventListener(
@@ -538,14 +546,32 @@ export function MomentPlayerScreen() {
         <Notice>
           This activity couldn't be opened. Your saved Journey is unchanged.
         </Notice>
-        <Button title="Find a Moment" onPress={() => app.navigate("moments")} />
+        {app.params.techniqueId === undefined ? (
+          <Button
+            title="Find a Moment"
+            onPress={() => app.navigate("moments")}
+          />
+        ) : (
+          <Button
+            title="Browse techniques"
+            onPress={() => app.navigate(routes.techniques)}
+          />
+        )}
       </Screen>
     );
   return (
     <PlayableMoment
       key={activity.id}
       activity={activity}
-      provider={app.params.provider === "live" ? "live" : "offline"}
+      technique={technique}
+      conversationId={
+        isRecordId(app.params.conversationId)
+          ? app.params.conversationId
+          : undefined
+      }
+      provider={
+        !technique && app.params.provider === "live" ? "live" : "offline"
+      }
       guidedSource={guidedSource}
     />
   );
@@ -553,12 +579,16 @@ export function MomentPlayerScreen() {
 
 function PlayableMoment({
   activity,
+  technique,
+  conversationId,
   provider,
   guidedSource,
 }: {
   activity: SolaceMoment;
+  technique?: Technique;
+  conversationId?: string;
   provider: "live" | "offline";
-  guidedSource?: "Explore" | "Today" | "Solace chat";
+  guidedSource?: "Explore" | "Today" | "Solace chat" | "My Journal";
 }) {
   const app = useApp();
   const { colors } = useTheme();
@@ -572,6 +602,7 @@ function PlayableMoment({
   const [running, setRunning] = useState(false);
   const [started, setStarted] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [manualStep, setManualStep] = useState(0);
   const [finished, setFinished] = useState(false);
   const [exitConfirmation, setExitConfirmation] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -586,8 +617,26 @@ function PlayableMoment({
   const saveLock = useRef(false);
   const saveSnapshot = useRef<Item | null>(null);
   const [sessionId] = useState(newMomentSessionId);
-  const complete = elapsedMs >= activity.durationSec * 1000;
-  const position = momentPosition(activity, elapsedMs);
+  const selfPaced = technique?.selfPaced ?? false;
+  const elapsedLimit = selfPaced ? 7200 : activity.durationSec;
+  const timedPosition = momentPosition(activity, elapsedMs);
+  const position = selfPaced
+    ? {
+        ...timedPosition,
+        index: manualStep,
+        step: activity.steps[manualStep],
+        complete: finished,
+      }
+    : timedPosition;
+  const atLastStep = position.index === activity.steps.length - 1;
+  const progressMax = selfPaced ? activity.steps.length : activity.durationSec;
+  const progressNow = selfPaced
+    ? started
+      ? manualStep + 1
+      : 0
+    : Math.floor(elapsedMs / 1000);
+  const progressText = `${progressNow} of ${progressMax} ${selfPaced ? "steps" : "seconds"}`;
+  const reflectionPractice = !!technique && activity.type === "reflection";
   const rhythm = running
     ? momentBreathingPosition(
         activity,
@@ -596,12 +645,16 @@ function PlayableMoment({
         provider === "offline",
       )
     : null;
-  function pause(message = "") {
-    clock.current = pauseMoment(clock.current, now(), activity.durationSec);
+  function pause(message = "", completePractice = false) {
+    clock.current = pauseMoment(clock.current, now(), elapsedLimit);
     setElapsedMs(clock.current.elapsedMs);
     setRunning(false);
     if (message) setNotice(message);
-    if (clock.current.elapsedMs >= activity.durationSec * 1000) {
+    if (
+      completePractice ||
+      (!selfPaced && clock.current.elapsedMs >= activity.durationSec * 1000)
+    ) {
+      if (reflectionPractice) Keyboard.dismiss();
       const completedAt = new Date();
       finishedAt.current ||= {
         createdAt: completedAt.toISOString(),
@@ -611,12 +664,21 @@ function PlayableMoment({
     }
   }
   function resume() {
-    if (finished || complete) return;
+    if (finishedAt.current) return;
     setExitConfirmation(false);
     setNotice("");
     clock.current = resumeMoment(clock.current, now());
     setStarted(true);
     setRunning(true);
+  }
+  function restart() {
+    if (finishedAt.current) return;
+    clock.current = emptyClock();
+    setStarted(false);
+    setRunning(false);
+    setElapsedMs(0);
+    setManualStep(0);
+    setNotice("Ready to start again.");
   }
   function dismissExit() {
     setExitConfirmation(false);
@@ -640,16 +702,12 @@ function PlayableMoment({
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(() => {
-      const elapsed = elapsedMomentMs(
-        clock.current,
-        now(),
-        activity.durationSec,
-      );
+      const elapsed = elapsedMomentMs(clock.current, now(), elapsedLimit);
       setElapsedMs(elapsed);
-      if (elapsed >= activity.durationSec * 1000) pause();
+      if (!selfPaced && elapsed >= elapsedLimit * 1000) pause();
     }, 250);
     return () => clearInterval(timer);
-  }, [running, activity.durationSec]);
+  }, [running, elapsedLimit, selfPaced]);
   useEffect(() => {
     if (savedSession) scroll.current?.scrollTo({ y: 0, animated: false });
   }, [savedSession]);
@@ -689,9 +747,7 @@ function PlayableMoment({
       feedback: feedback || "skipped",
       note: note.trim(),
       source: guidedSource ?? "Solace Moments",
-      ...(app.params?.conversationId
-        ? { sourceConversationId: app.params.conversationId }
-        : {}),
+      ...(conversationId ? { sourceConversationId: conversationId } : {}),
       ...finishedAt.current,
     };
     try {
@@ -707,7 +763,13 @@ function PlayableMoment({
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Screen
-        title={finished ? "A moment for you" : "Solace Moment"}
+        title={
+          finished
+            ? "A moment for you"
+            : technique
+              ? "Guided practice"
+              : "Solace Moment"
+        }
         back={leave}
         scrollRef={scroll}
       >
@@ -739,6 +801,7 @@ function PlayableMoment({
         >
           <Companion
             state={finished ? "happy" : rhythm ? "breathing" : "idle"}
+            animate={!technique || running || finished}
             breathing={activity.breathing}
             breathingProgress={running && rhythm ? rhythm.progress : undefined}
             phase={
@@ -764,22 +827,24 @@ function PlayableMoment({
                   variant="caption"
                   style={{ fontVariant: ["tabular-nums"] }}
                 >
-                  {momentClockText(elapsedMs / 1000)} /{" "}
-                  {momentClockText(activity.durationSec)}
+                  {momentClockText(elapsedMs / 1000)}
+                  {selfPaced
+                    ? " active"
+                    : ` / ${momentClockText(activity.durationSec)}`}
                 </AppText>
               </Row>
               <View
                 accessibilityRole="progressbar"
                 accessibilityLabel="Moment progress"
                 aria-valuemin={0}
-                aria-valuemax={activity.durationSec}
-                aria-valuenow={Math.floor(elapsedMs / 1000)}
-                aria-valuetext={`${Math.floor(elapsedMs / 1000)} of ${activity.durationSec} seconds`}
+                aria-valuemax={progressMax}
+                aria-valuenow={progressNow}
+                aria-valuetext={progressText}
                 accessibilityValue={{
                   min: 0,
-                  max: activity.durationSec,
-                  now: Math.floor(elapsedMs / 1000),
-                  text: `${Math.floor(elapsedMs / 1000)} of ${activity.durationSec} seconds`,
+                  max: progressMax,
+                  now: progressNow,
+                  text: progressText,
                 }}
                 style={{
                   height: 3,
@@ -791,7 +856,7 @@ function PlayableMoment({
               >
                 <View
                   style={{
-                    width: `${Math.min(100, (elapsedMs / (activity.durationSec * 1000)) * 100)}%`,
+                    width: `${Math.min(100, 100 * (selfPaced ? progressNow / progressMax : elapsedMs / (activity.durationSec * 1000)))}%`,
                     height: "100%",
                     backgroundColor: colors.primary,
                   }}
@@ -826,15 +891,6 @@ function PlayableMoment({
                 ? " · Breathe naturally whenever you prefer."
                 : " · Take only what feels comfortable."}
             </AppText>
-            <EnvironmentOptions value={environment} onChange={setEnvironment}>
-              <AppText
-                variant="caption"
-                color={colors.muted}
-                style={{ marginTop: 8 }}
-              >
-                {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
-              </AppText>
-            </EnvironmentOptions>
             {!!activity.reflectionPrompts.length && (
               <View style={{ marginTop: 24 }}>
                 <AppText variant="label">A thought to sit with</AppText>
@@ -847,6 +903,73 @@ function PlayableMoment({
                     {prompt}
                   </AppText>
                 ))}
+                {reflectionPractice && started && (
+                  <MomentNote
+                    note={note}
+                    onChange={setNote}
+                    label="Optional reflection response"
+                    canDiscard
+                  />
+                )}
+              </View>
+            )}
+            {selfPaced && started && !exitConfirmation && (
+              <View style={{ gap: 8, marginTop: 17 }}>
+                <Button
+                  title={atLastStep ? "Finish practice" : "Next step"}
+                  disabled={!running}
+                  variant="secondary"
+                  onPress={() => {
+                    if (clock.current.runningSince === null) return;
+                    if (atLastStep) pause("", true);
+                    else
+                      setManualStep((step) =>
+                        Math.min(step + 1, activity.steps.length - 1),
+                      );
+                  }}
+                />
+                {manualStep > 0 && (
+                  <Button
+                    title="Previous step"
+                    disabled={!running}
+                    variant="ghost"
+                    onPress={() =>
+                      setManualStep((step) => Math.max(0, step - 1))
+                    }
+                  />
+                )}
+              </View>
+            )}
+            <EnvironmentOptions value={environment} onChange={setEnvironment}>
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 8 }}
+              >
+                {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
+              </AppText>
+            </EnvironmentOptions>
+            {!!technique && started && !exitConfirmation && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginTop: 12,
+                }}
+              >
+                <Button
+                  title="Restart"
+                  icon="refresh-outline"
+                  variant="ghost"
+                  onPress={restart}
+                />
+                <Button
+                  title="Stop practice"
+                  icon="stop-outline"
+                  variant="ghost"
+                  onPress={leave}
+                />
               </View>
             )}
           </>
@@ -905,29 +1028,16 @@ function PlayableMoment({
                 </Pressable>
               ))}
             </View>
-            <TextInput
-              accessibilityLabel="Optional note about your Moment"
-              placeholder="Anything you'd like to keep from this moment?"
-              placeholderTextColor={colors.muted}
-              value={note}
-              onChangeText={setNote}
-              editable={!saving && !saveSnapshot.current}
-              multiline
-              maxLength={2000}
-              style={{
-                marginTop: 17,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: 18,
-                backgroundColor: colors.surface,
-                padding: 15,
-                minHeight: 100,
-                color: colors.text,
-                fontFamily: "Inter_400Regular",
-                fontSize: 15,
-                lineHeight: 22,
-                textAlignVertical: "top",
-              }}
+            <MomentNote
+              note={note}
+              onChange={setNote}
+              label={
+                reflectionPractice
+                  ? "Optional reflection response"
+                  : "Optional note about your Moment"
+              }
+              readOnly={saving || !!saveSnapshot.current}
+              canDiscard={reflectionPractice}
             />
             <Button
               title={error ? "Retry saving Moment" : "Save Moment to Journey"}
@@ -948,30 +1058,46 @@ function PlayableMoment({
             <Row style={{ justifyContent: "center", marginBottom: 19 }}>
               <Icon name="checkmark-circle" color={colors.sageText} />
               <AppText variant="caption">
-                {momentClockText(activity.durationSec)} recorded ·{" "}
+                {momentClockText(
+                  savedSession.durationSec ?? activity.durationSec,
+                )}{" "}
+                recorded ·{" "}
                 {ENVIRONMENTS.find((item) => item.id === environment)?.short}
               </AppText>
             </Row>
-            {!!app.params?.conversationId && (
+            {!!conversationId && (
               <Button
                 title="Continue your conversation"
                 variant="secondary"
                 onPress={() =>
-                  app.navigate("chat", { id: app.params.conversationId })
+                  app.navigate(routes.companion, { id: conversationId })
                 }
                 style={{ marginBottom: 12 }}
               />
             )}
             <Button
               title="See your Journey"
-              onPress={() => app.navigate("journey")}
+              onPress={() => app.navigate(routes.journey)}
             />
+            {reflectionPractice && (
+              <Button
+                title="Write in My Journal"
+                variant="secondary"
+                onPress={() => {
+                  app.back();
+                  app.navigate(routes.journalEditor, {
+                    prompt: activity.reflectionPrompts[0],
+                  });
+                }}
+                style={{ marginTop: 12 }}
+              />
+            )}
             {saveSnapshot.current?.feedback === "Helped" && (
               <Button
                 title="Remember what helped"
                 variant="secondary"
                 onPress={() =>
-                  app.navigate("memory", {
+                  app.navigate(routes.memory, {
                     suggestedPreference: `I find ${activity.type} Moments helpful.`,
                     sourceType: "session",
                     sourceId: savedSession.id,
@@ -983,7 +1109,7 @@ function PlayableMoment({
             <Button
               title="Return to Today"
               variant="ghost"
-              onPress={() => app.navigate("today")}
+              onPress={() => app.navigate(routes.today)}
               style={{ marginTop: 8 }}
             />
           </View>
@@ -1060,10 +1186,16 @@ function PlayableMoment({
           <Button
             title={
               running
-                ? "Pause Moment"
+                ? technique
+                  ? "Pause practice"
+                  : "Pause Moment"
                 : started
-                  ? "Continue Moment"
-                  : "Begin Moment"
+                  ? technique
+                    ? "Resume practice"
+                    : "Continue Moment"
+                  : technique
+                    ? "Begin practice"
+                    : "Begin Moment"
             }
             icon={running ? "pause-outline" : "play-outline"}
             onPress={() => (running ? pause() : resume())}
@@ -1077,5 +1209,56 @@ function PlayableMoment({
         </View>
       )}
     </View>
+  );
+}
+
+function MomentNote({
+  note,
+  onChange,
+  label,
+  readOnly = false,
+  canDiscard = false,
+}: {
+  note: string;
+  onChange: (value: string) => void;
+  label: string;
+  readOnly?: boolean;
+  canDiscard?: boolean;
+}) {
+  const { colors } = useTheme();
+  return (
+    <>
+      <TextInput
+        accessibilityLabel={label}
+        placeholder="Anything you'd like to keep from this moment?"
+        placeholderTextColor={colors.muted}
+        value={note}
+        onChangeText={onChange}
+        editable={!readOnly}
+        multiline
+        maxLength={2000}
+        style={{
+          marginTop: 17,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 18,
+          backgroundColor: colors.surface,
+          padding: 15,
+          minHeight: 100,
+          color: colors.text,
+          fontFamily: "Inter_400Regular",
+          fontSize: 15,
+          lineHeight: 22,
+          textAlignVertical: "top",
+        }}
+      />
+      {canDiscard && !readOnly && !!note && (
+        <Button
+          title="Discard response"
+          variant="ghost"
+          onPress={() => onChange("")}
+        />
+      )}
+    </>
   );
 }

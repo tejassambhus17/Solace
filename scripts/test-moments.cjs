@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
-function loadHelper(file) {
+function loadHelper(file, dependencies = {}) {
   const compiled = ts.transpileModule(
     fs.readFileSync(path.join(__dirname, "../src", file), "utf8"),
     {
@@ -15,7 +15,8 @@ function loadHelper(file) {
   ).outputText;
   const moduleValue = { exports: {} };
   new Function("require", "module", "exports", compiled)(
-    () => {
+    (name) => {
+      if (Object.hasOwn(dependencies, name)) return dependencies[name];
       throw new Error(
         "Pure Moment helpers must not load native or server runtime modules.",
       );
@@ -127,6 +128,39 @@ test("breathing visual phase and remaining seconds use the same actual clock", (
   );
 });
 
+test("box breathing has four separate active phases and resumes at the same phase", () => {
+  const pattern = { inhale: 4, hold: 4, exhale: 4, rest: 4 };
+  assert.deepEqual(
+    [0, 4, 8, 12, 16].map(
+      (seconds) => breathingPosition(seconds, pattern).phase,
+    ),
+    ["Breathe in", "Hold gently", "Breathe out", "Rest gently", "Breathe in"],
+  );
+  assert.deepEqual(breathingPosition(12, pattern), {
+    phase: "Rest gently",
+    remaining: 4,
+    progress: 0,
+  });
+  const clock = pauseMoment(resumeMoment(emptyClock(), 100), 13100, 60);
+  assert.equal(
+    breathingPosition(elapsedMomentMs(clock, 100000, 60) / 1000, pattern)
+      .remaining,
+    3,
+  );
+  assert.equal(
+    breathingPosition(
+      elapsedMomentMs(resumeMoment(clock, 100000), 103000, 60) / 1000,
+      pattern,
+    ).phase,
+    "Breathe in",
+  );
+  assert.equal(isPlayableMoment({ ...activity(), breathing: pattern }), true);
+  assert.equal(
+    isPlayableMoment({ ...activity(), breathing: { ...pattern, rest: 5 } }),
+    false,
+  );
+});
+
 test("built-in breathing cues start at the guided step and stop during the return", () => {
   const practice = createExplorePractice("breathe", 3);
   const cueAt = (milliseconds, builtIn = true) =>
@@ -202,4 +236,41 @@ test("every Explore focus and duration opens a valid timed practice", () => {
     }
   }
   assert.equal(createExplorePractice("breathe", 5).title, "Calm Your Mind");
+});
+
+test("experience links accept known techniques and private roots, and reject arbitrary destinations", () => {
+  const techniques = loadHelper("techniques.ts", {
+    "../server/src/chat-practice": loadHelper("../server/src/chat-practice.ts"),
+    "./explore-practices": loadHelper("explore-practices.ts"),
+  });
+  const { experienceDestination } = loadHelper("experience-links.ts", {
+    "./routes": loadHelper("routes.ts"),
+    "./techniques": techniques,
+  });
+  assert.deepEqual(experienceDestination("solace://companion"), {
+    mode: "companion",
+  });
+  assert.deepEqual(experienceDestination("solace://journal/"), {
+    mode: "journal",
+  });
+  assert.deepEqual(experienceDestination("solace://techniques"), {
+    route: "techniques",
+    techniqueId: undefined,
+  });
+  for (const { id } of techniques.listTechniques("All")) {
+    assert.deepEqual(experienceDestination(`solace://techniques/${id}`), {
+      route: "techniques",
+      techniqueId: id,
+    });
+  }
+  for (const url of [
+    null,
+    "solace://techniques/unknown",
+    "solace://techniques/__proto__",
+    "solace://techniques/grounding/profile",
+    "solace://journal/private-id",
+    "https://solace.ai/techniques/grounding",
+  ]) {
+    assert.equal(experienceDestination(url), null);
+  }
 });

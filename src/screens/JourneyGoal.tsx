@@ -16,6 +16,7 @@ import {
 } from "../journey-goals";
 import { activeSeconds, type DayEntry } from "../progress";
 import { useApp } from "../store";
+import { savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
 import { AppText, Button, Card, Icon, Input, Row, Screen } from "../ui";
 
@@ -107,7 +108,7 @@ function GoalActivity({ entry }: { entry: DayEntry }) {
     collection === "sessions" && record.id
       ? { route: "session-detail", params: { id: record.id } }
       : collection === "reflections" && record.id
-        ? { route: "reflection-detail", params: { id: record.id } }
+        ? { route: savedReflectionRoute(record), params: { id: record.id } }
         : collection === "checkins" && day
           ? { route: "journey-activity", params: { day, filter: "checkins" } }
           : undefined;

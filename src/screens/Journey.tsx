@@ -34,6 +34,7 @@ import {
   type DayEntry,
 } from "../progress";
 import { useApp } from "../store";
+import { savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
 import { reflectionPeriodLabel } from "../weekly-story";
 import {
@@ -345,7 +346,7 @@ function HistoryEntry({ entry }: { entry: DayEntry }) {
     collection === "sessions"
       ? () => app.navigate("session-detail", { id: record.id })
       : collection === "reflections"
-        ? () => app.navigate("reflection-detail", { id: record.id })
+        ? () => app.navigate(savedReflectionRoute(record), { id: record.id })
         : collection === "assessments"
           ? () =>
               app.navigate("assessment-result", {

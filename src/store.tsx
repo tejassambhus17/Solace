@@ -8,6 +8,13 @@ import React, {
 import { Platform, AppState as NativeAppState } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  isRecordId,
+  journalRoutes,
+  routes,
+  solaceRoots,
+  type SolaceMode,
+} from "./routes";
 import { apiConnectionError, resolveApiConfiguration } from "./api-config";
 import {
   createOfflineVault,
@@ -20,6 +27,11 @@ import {
 } from "./offline";
 
 import type { MomentResult } from "../server/src/moment-contract";
+import type {
+  JournalAction,
+  JournalReflectionResult,
+  JournalSelection,
+} from "../server/src/journal-contract";
 
 export type { MomentResult } from "../server/src/moment-contract";
 export type WeeklyReflectionResult = {
@@ -59,7 +71,13 @@ export type Collection =
   | "goals";
 export type Data = Record<Collection, Item[]>;
 export type EditorDraft = Record<string, string>;
-const mainTabs = ["today", "chat", "explore", "journey", "profile"] as const;
+const mainTabs = [
+  routes.today,
+  routes.companion,
+  routes.explore,
+  routes.journey,
+  routes.profile,
+] as const;
 export const immersiveRoutes = new Set([
   "breathing",
   "moment",
@@ -68,14 +86,50 @@ export const immersiveRoutes = new Set([
   "voice-talk",
 ]);
 type MainTab = (typeof mainTabs)[number];
-type RouteEntry = { key: symbol; name: string; params: Record<string, any> };
+type RouteEntry = {
+  key: symbol;
+  name: string;
+  params: Record<string, any>;
+  returnTab?: MainTab;
+  returnMode?: SolaceMode;
+};
 type NavigationState = {
   activeTab: MainTab;
   stacks: Partial<Record<MainTab, RouteEntry[]>>;
+  solaceMode?: SolaceMode;
+  solaceViews?: Partial<Record<SolaceMode, RouteEntry[]>>;
 };
 
 const mainTabFor = (name: string) =>
-  name === "solace" ? "chat" : mainTabs.find((tab) => tab === name);
+  name === routes.solace
+    ? routes.companion
+    : mainTabs.find((tab) => tab === name);
+
+const solaceModeKey = (account: string) => `solace.mode.${account}`;
+
+function rememberSolaceView(navigation: NavigationState) {
+  const stack = navigation.stacks.chat;
+  if (!stack) return navigation.solaceViews;
+  const root = stack[0].name;
+  const mode =
+    root === routes.companion
+      ? "companion"
+      : root === routes.journal
+        ? "journal"
+        : null;
+  if (!mode) return navigation.solaceViews;
+  const handoffIndex = stack.findIndex(
+    (entry) => entry.name === routes.companion && entry.params.fromJournal,
+  );
+  const crossTabIndex = stack.findIndex(
+    (entry) => entry.returnTab || entry.returnMode,
+  );
+  const firstTemporary = Math.min(
+    handoffIndex < 0 ? stack.length : handoffIndex,
+    crossTabIndex < 0 ? stack.length : crossTabIndex,
+  );
+  return { ...navigation.solaceViews, [mode]: stack.slice(0, firstTemporary) };
+}
 
 const routeEntry = (
   name: string,
@@ -110,7 +164,7 @@ const apiConfiguration = resolveApiConfiguration({
 });
 export const API_URL = apiConfiguration.baseUrl || "";
 const TOKEN_KEY = "solace.session";
-const newChatRequestId = () => {
+export const newChatRequestId = () => {
   if (typeof globalThis.crypto?.randomUUID === "function")
     return globalThis.crypto.randomUUID();
   // This is an idempotency identifier scoped to an account, never a credential.
@@ -156,6 +210,7 @@ export type AppState = {
     draft: EditorDraft | null,
     expected?: EditorDraft,
   ) => void;
+  flushEditorDrafts: () => Promise<boolean>;
   pendingWrites: Omit<PendingWrite, "record">[];
   syncingWrites: boolean;
   offlineError: string | null;
@@ -166,13 +221,30 @@ export type AppState = {
   signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
-  save: (collection: Collection, record: Item) => Promise<Item>;
+  save: (
+    collection: Collection,
+    record: Item,
+    journalDraft?: { key: string; value: EditorDraft },
+  ) => Promise<Item>;
   remove: (collection: Collection, id: string) => Promise<void>;
   navigate: (name: string, params?: Record<string, any>) => void;
   setParams: (params: Record<string, any>) => void;
   back: () => void;
   setTab: (name: string) => void;
+  switchSolaceMode: (mode: SolaceMode) => void;
   chat: (text: string, conversationId?: string) => Promise<any>;
+  reflectJournal: (
+    id: string,
+    selection: JournalSelection,
+    action: JournalAction,
+    signal?: AbortSignal,
+  ) => Promise<JournalReflectionResult>;
+  discussJournal: (
+    id: string,
+    selection: JournalSelection,
+    requestId: string,
+    signal?: AbortSignal,
+  ) => Promise<{ conversation: Item }>;
   generateMoment: (
     feeling: string,
     environment?: "forest" | "ocean" | "twilight",
@@ -425,6 +497,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
   };
+  const sameDraft = (current: EditorDraft | undefined, expected: EditorDraft) =>
+    !!current &&
+    Object.keys(current).length === Object.keys(expected).length &&
+    Object.keys(expected).every((field) => current[field] === expected[field]);
+  const flushEditorDrafts = async () => {
+    const account = owner.current;
+    if (!account || !canUseAccount(draftGeneration)) return false;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = null;
+    try {
+      await vault.update(account, (snapshot) => {
+        if (!canUseAccount(draftGeneration)) return snapshot;
+        const drafts = Object.fromEntries(
+          Object.entries(editors.current).filter(([key]) =>
+            isProtectedDraft(key),
+          ),
+        );
+        return { ...snapshot, drafts };
+      });
+      if (draftGeneration === generation.current) setOfflineError(null);
+      return draftGeneration === generation.current;
+    } catch (error) {
+      if (draftGeneration === generation.current)
+        setOfflineError(
+          error instanceof Error
+            ? error.message
+            : "Your draft is open here but could not be protected on this device.",
+        );
+      return false;
+    }
+  };
   const setEditorDraft = (
     key: string,
     draft: EditorDraft | null,
@@ -433,50 +536,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!canUseAccount(draftGeneration)) return;
     const previous = editors.current;
     const current = previous[key];
-    if (
-      expected !== undefined &&
-      (!current ||
-        Object.keys(current).length !== Object.keys(expected).length ||
-        Object.keys(expected).some(
-          (field) => current[field] !== expected[field],
-        ))
-    )
-      return;
+    if (expected !== undefined && !sameDraft(current, expected)) return;
     const next = { ...previous };
     if (draft) next[key] = { ...draft };
     else delete next[key];
     editors.current = next;
     setEditorDrafts(next);
-    const account = owner.current;
-    if (!account || !isProtectedDraft(key)) return;
+    if (!owner.current || !isProtectedDraft(key)) return;
     if (draftTimer.current) clearTimeout(draftTimer.current);
-    const protectedDrafts = Object.fromEntries(
-      Object.entries(next).filter(([draftKey]) => isProtectedDraft(draftKey)),
-    );
-    const persistDraft = async () => {
-      if (!canUseAccount(draftGeneration)) return;
-      try {
-        await vault.update(account, (snapshot) => ({
-          ...snapshot,
-          drafts: protectedDrafts,
-        }));
-        if (draftGeneration === generation.current) setOfflineError(null);
-      } catch (error) {
-        if (draftGeneration === generation.current)
-          setOfflineError(
-            error instanceof Error
-              ? error.message
-              : "Your draft is open here but could not be protected on this device.",
-          );
-      }
-    };
     // Short debounce limits keychain work while typing. Clear/save operations
     // commit immediately so a removed draft does not reappear after restart.
-    if (draft === null) void persistDraft();
+    if (draft === null) void flushEditorDrafts();
     else
       draftTimer.current = setTimeout(() => {
-        draftTimer.current = null;
-        void persistDraft();
+        void flushEditorDrafts();
       }, 650);
   };
   const [initializing, setInitializing] = useState(true);
@@ -867,7 +940,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       discarding.current.delete(id);
     }
   };
-  const save = async (collection: Collection, record: Item) => {
+  const save = async (
+    collection: Collection,
+    record: Item,
+    journalDraft?: { key: string; value: EditorDraft },
+  ) => {
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
     const id = record.id;
@@ -876,12 +953,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     if (queued)
       throw new Error("Sync this device-saved entry before editing it.");
-    if (!id && (collection === "checkins" || collection === "reflections")) {
+    const newJournalEntry =
+      collection === "reflections" &&
+      record.kind === "journal" &&
+      !data.reflections.some((item) => item.id === id);
+    if (
+      newJournalEntry ||
+      (!id && (collection === "checkins" || collection === "reflections"))
+    ) {
       const account = owner.current;
       assertActiveSession(version);
       if (!account)
         throw new Error("Please sign in again to save your writing.");
-      const fields = writingRecord(collection, { ...record, id: "identity" });
+      const fields = writingRecord(collection, {
+        ...record,
+        id: id ?? "identity",
+      });
       const { createdAt: _createdAt, ...content } = fields;
       const fingerprint = JSON.stringify(content);
       const prior = retryWriting.current[collection];
@@ -892,7 +979,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               ...record,
               // This is a retry identity, never a credential. Account ownership is
               // enforced by the API and by the vault's authenticated account key.
-              id: `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`,
+              id:
+                id ??
+                `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`,
               createdAt: record.createdAt || new Date().toISOString(),
             });
       const entry: PendingWrite = {
@@ -913,14 +1002,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         assertSession(version);
         if (!isRecoverableConnectionError(error)) throw error;
         // Await the protected commit before claiming it was saved on-device.
-        const snapshot = await vault.update(account, (current) => ({
-          ...current,
-          pending: [
-            ...current.pending.filter((item) => item.id !== entry.id),
-            entry,
-          ],
-        }));
+        const snapshot = await vault.update(account, (current) => {
+          const drafts = { ...current.drafts };
+          if (
+            journalDraft &&
+            sameDraft(drafts[journalDraft.key], journalDraft.value)
+          )
+            delete drafts[journalDraft.key];
+          return {
+            drafts,
+            pending: [
+              ...current.pending.filter((item) => item.id !== entry.id),
+              entry,
+            ],
+          };
+        });
         assertSession(version);
+        if (journalDraft)
+          setEditorDraft(journalDraft.key, null, journalDraft.value);
         publishPending(snapshot.pending);
         setOfflineError(null);
         saved = { ...submitted, localOnly: true };
@@ -1006,6 +1105,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ))),
         );
       }
+      if (collection === "reflections") {
+        next.conversations = next.conversations.map((conversation) => {
+          if (conversation.journalSource?.id !== id) return conversation;
+          const { journalSource: _source, ...unlinked } = conversation;
+          return unlinked;
+        });
+      }
       return next;
     });
     // DELETE has succeeded. A connection error during reconciliation must not
@@ -1086,6 +1192,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const version = draftGeneration;
     const result = await authenticatedRequest(path, options, version);
     assertSession(version);
+    return result;
+  };
+  const reflectJournal: AppState["reflectJournal"] = (
+    id,
+    selection,
+    action,
+    signal,
+  ) =>
+    featureRequest(`/journal/${encodeURIComponent(id)}/reflect`, {
+      method: "POST",
+      body: JSON.stringify({ ...selection, action }),
+      signal,
+    });
+  const discussJournal: AppState["discussJournal"] = async (
+    id,
+    selection,
+    requestId,
+    signal,
+  ) => {
+    const result = await featureRequest(
+      `/journal/${encodeURIComponent(id)}/discuss`,
+      {
+        method: "POST",
+        body: JSON.stringify({ ...selection, requestId }),
+        signal,
+      },
+    );
+    if (
+      !isRecordId(result?.conversation?.id) ||
+      !Array.isArray(result.conversation.messages)
+    )
+      throw new Error("Solace returned an unexpected reply. Please try again.");
+    if (!signal?.aborted) {
+      revision.current += 1;
+      setData((prev) => ({
+        ...prev,
+        conversations: [
+          result.conversation,
+          ...prev.conversations.filter(
+            (item) => item.id !== result.conversation.id,
+          ),
+        ],
+      }));
+    }
     return result;
   };
   const generateMoment = (
@@ -1211,22 +1361,151 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { activeTab, stacks } = navigation;
   const stack = stacks[activeTab]!;
   const current = stack[stack.length - 1];
+  const switchSolaceMode = (mode: SolaceMode) => {
+    if (draftGeneration !== generation.current) return;
+    setNavigation((old) => {
+      const root = solaceRoots[mode];
+      const existing = old.stacks.chat;
+      if (
+        old.activeTab === routes.companion &&
+        existing?.[0].name === root &&
+        !existing.some((entry) => entry.params.fromJournal)
+      )
+        return old;
+      const views = rememberSolaceView(old);
+      const saved = views?.[mode];
+      return {
+        ...old,
+        activeTab: routes.companion,
+        solaceMode: mode,
+        solaceViews: views,
+        stacks: {
+          ...old.stacks,
+          chat: saved?.length ? saved : [routeEntry(root)],
+        },
+      };
+    });
+  };
   const navigate = (name: string, params: Record<string, any> = {}) => {
     if (draftGeneration !== generation.current) return;
+    if (name === routes.journal) {
+      switchSolaceMode("journal");
+      return;
+    }
+    if (
+      (name === routes.journalEntry ||
+        name === routes.journalReflect ||
+        (name === routes.journalEditor && params.id !== undefined)) &&
+      !isRecordId(params.id)
+    )
+      return;
     const tab = mainTabFor(name);
-    const entry = routeEntry(tab || name, params);
+    const entry = routeEntry(
+      name === routes.solace && !Object.keys(params).length
+        ? name
+        : tab || name,
+      params,
+    );
     setNavigation((old) => {
+      const previousStack = old.stacks[old.activeTab]!;
+      const previousRoute = previousStack[previousStack.length - 1];
+      if (tab === routes.companion && entry.name === routes.companion) {
+        const views = rememberSolaceView(old);
+        const inJournal =
+          old.activeTab === routes.companion &&
+          previousStack[0].name === routes.journal;
+        const origin = params.fromJournal;
+        if (
+          inJournal &&
+          isRecordId(origin) &&
+          previousStack.some(
+            (route) =>
+              journalRoutes.has(route.name) && route.params.id === origin,
+          )
+        ) {
+          if (
+            previousRoute.name === routes.companion &&
+            previousRoute.params.id === params.id
+          )
+            return old;
+          return {
+            ...old,
+            stacks: { ...old.stacks, chat: [...previousStack, entry] },
+          };
+        }
+        const handoffIndex = inJournal
+          ? previousStack.findIndex(
+              (route) =>
+                route.name === routes.companion && route.params.fromJournal,
+            )
+          : -1;
+        if (handoffIndex >= 0) {
+          const handoff = previousStack[handoffIndex];
+          const replacement = {
+            ...handoff,
+            params: { ...params, fromJournal: handoff.params.fromJournal },
+          };
+          return {
+            ...old,
+            stacks: {
+              ...old.stacks,
+              chat: [...previousStack.slice(0, handoffIndex), replacement],
+            },
+          };
+        }
+        const { fromJournal: _origin, ...safeParams } = params;
+        return {
+          ...old,
+          activeTab: routes.companion,
+          solaceMode: "companion",
+          solaceViews: views,
+          stacks: {
+            ...old.stacks,
+            ...(old.activeTab !== tab &&
+              immersiveRoutes.has(previousRoute.name) && {
+                [old.activeTab]: previousStack.slice(0, -1),
+              }),
+            chat: [{ ...entry, params: safeParams }],
+          },
+        };
+      }
+      if (
+        journalRoutes.has(name) &&
+        (old.activeTab !== routes.companion ||
+          previousStack[0].name !== routes.journal)
+      ) {
+        const views = rememberSolaceView(old);
+        const root = views?.journal?.[0] ?? routeEntry(routes.journal);
+        const returnTab =
+          old.activeTab === routes.companion ? undefined : old.activeTab;
+        const returnMode =
+          !returnTab && previousStack[0].name === routes.companion
+            ? "companion"
+            : undefined;
+        return {
+          ...old,
+          activeTab: routes.companion,
+          solaceMode: "journal",
+          solaceViews: views,
+          stacks: {
+            ...old.stacks,
+            chat: [root, { ...entry, returnTab, returnMode }],
+          },
+        };
+      }
       if (tab) {
         const saved = old.stacks[tab];
         const reopenExplore = tab === "explore" && !Object.keys(params).length;
         if (reopenExplore && old.activeTab === tab && saved?.length === 1)
           return old;
-        const previousStack = old.stacks[old.activeTab]!;
-        const previousRoute = previousStack[previousStack.length - 1];
         const leavingPlayer =
           old.activeTab !== tab && immersiveRoutes.has(previousRoute.name);
         return {
+          ...old,
           activeTab: tab,
+          ...(entry.name === routes.solace && {
+            solaceViews: rememberSolaceView(old),
+          }),
           stacks: {
             ...old.stacks,
             ...(leavingPlayer && {
@@ -1236,6 +1515,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           },
         };
       }
+      if (
+        (journalRoutes.has(name) ||
+          name === routes.techniques ||
+          name === routes.technique) &&
+        previousRoute.name === name &&
+        previousRoute.params.id === params.id
+      )
+        return old;
       return {
         ...old,
         stacks: {
@@ -1248,20 +1535,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setParams = (params: Record<string, any>) => {
     if (draftGeneration !== generation.current) return;
     setNavigation((old) => {
-      const saved = old.stacks[activeTab];
-      const index =
-        saved?.findIndex((entry) => entry.key === current.key) ?? -1;
-      if (!saved || index === -1) return old;
-      const entry = saved[index];
-      if (
-        Object.keys(params).every((key) =>
-          Object.is(params[key], entry.params[key]),
+      const merge = (entries: RouteEntry[] | undefined) => {
+        const index =
+          entries?.findIndex((entry) => entry.key === current.key) ?? -1;
+        if (!entries || index < 0) return;
+        const entry = entries[index];
+        if (
+          Object.keys(params).every((key) =>
+            Object.is(params[key], entry.params[key]),
+          )
         )
-      )
-        return old;
-      const updated = [...saved];
-      updated[index] = { ...entry, params: { ...entry.params, ...params } };
-      return { ...old, stacks: { ...old.stacks, [activeTab]: updated } };
+          return;
+        const updated = [...entries];
+        updated[index] = { ...entry, params: { ...entry.params, ...params } };
+        return updated;
+      };
+      const visible = merge(old.stacks[activeTab]);
+      if (visible)
+        return { ...old, stacks: { ...old.stacks, [activeTab]: visible } };
+      if (activeTab !== routes.companion) return old;
+      const mode = stack[0].name === routes.companion ? "companion" : "journal";
+      const cached = merge(old.solaceViews?.[mode]);
+      return cached
+        ? { ...old, solaceViews: { ...old.solaceViews, [mode]: cached } }
+        : old;
     });
   };
   const back = () => {
@@ -1269,8 +1566,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setNavigation((old) => {
       const activeStack = old.stacks[old.activeTab]!;
       if (activeStack.length === 1) return old;
+      const { returnTab, returnMode } = activeStack[activeStack.length - 1];
+      const priorMode = returnMode && old.solaceViews?.[returnMode];
+      if (returnMode && priorMode?.length)
+        return {
+          ...old,
+          solaceMode: returnMode,
+          solaceViews: rememberSolaceView(old),
+          stacks: { ...old.stacks, chat: priorMode },
+        };
       return {
         ...old,
+        activeTab: returnTab ?? old.activeTab,
         stacks: { ...old.stacks, [old.activeTab]: activeStack.slice(0, -1) },
       };
     });
@@ -1281,40 +1588,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!tab) return;
     setNavigation((old) => {
       if (old.activeTab === tab) return old;
+      const root =
+        tab === routes.companion
+          ? old.solaceMode
+            ? solaceRoots[old.solaceMode]
+            : routes.solace
+          : tab;
       return {
+        ...old,
         activeTab: tab,
         stacks: old.stacks[tab]
           ? old.stacks
-          : { ...old.stacks, [tab]: [routeEntry(tab)] },
+          : { ...old.stacks, [tab]: [routeEntry(root)] },
       };
     });
   };
   useEffect(() => {
-    const version = draftGeneration;
-    const account = owner.current;
-    if (!account || !token) return;
-    const protect = () => {
-      if (!canUseAccount(version)) return;
-      if (draftTimer.current) clearTimeout(draftTimer.current);
-      draftTimer.current = null;
-      const drafts = Object.fromEntries(
-        Object.entries(editors.current).filter(([key]) =>
-          isProtectedDraft(key),
-        ),
-      );
-      void vault
-        .update(account, (snapshot) => ({ ...snapshot, drafts }))
-        .catch(() => {
-          if (version === generation.current)
-            setOfflineError(
-              "Your writing is open here but could not be protected on this device. Keep the app open and try saving again.",
-            );
+    if (!user?.id) return;
+    let active = true;
+    const account = String(user.id);
+    void AsyncStorage.getItem(solaceModeKey(account))
+      .then((mode) => {
+        if (
+          !active ||
+          owner.current !== account ||
+          (mode !== "companion" && mode !== "journal")
+        )
+          return;
+        setNavigation((old) => {
+          if (old.solaceMode) return old;
+          const showingChoices = old.stacks.chat?.[0].name === routes.solace;
+          return {
+            ...old,
+            solaceMode: mode,
+            stacks: showingChoices
+              ? { ...old.stacks, chat: [routeEntry(solaceRoots[mode])] }
+              : old.stacks,
+          };
         });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
     };
+  }, [user?.id]);
+  useEffect(() => {
+    if (user?.id && navigation.solaceMode)
+      void AsyncStorage.setItem(
+        solaceModeKey(String(user.id)),
+        navigation.solaceMode,
+      ).catch(() => {});
+  }, [navigation.solaceMode, user?.id]);
+  useEffect(() => {
+    if (!owner.current || !token) return;
     const subscription = NativeAppState?.addEventListener?.(
       "change",
       (state) => {
-        if (state === "inactive" || state === "background") protect();
+        if (state === "inactive" || state === "background")
+          void flushEditorDrafts();
       },
     );
     return () => subscription?.remove();
@@ -1364,6 +1695,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setChatDraft,
         editorDrafts,
         setEditorDraft,
+        flushEditorDrafts,
         pendingWrites,
         syncingWrites,
         offlineError,
@@ -1380,7 +1712,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setParams,
         back,
         setTab,
+        switchSolaceMode,
         chat,
+        reflectJournal,
+        discussJournal,
         generateMoment,
         weeklyReflection,
         capabilities,

@@ -64,9 +64,10 @@ export function momentPosition(activity: SolaceMoment, elapsedMs: number) {
 
 export function breathingPosition(
   elapsedSec: number,
-  pattern: { inhale: number; hold: number; exhale: number },
+  pattern: NonNullable<SolaceMoment["breathing"]>,
 ) {
-  const cycle = pattern.inhale + pattern.hold + pattern.exhale;
+  const exhaleEnd = pattern.inhale + pattern.hold + pattern.exhale;
+  const cycle = exhaleEnd + (pattern.rest ?? 0);
   const position = Math.max(0, elapsedSec) % cycle;
   if (position < pattern.inhale)
     return {
@@ -76,14 +77,20 @@ export function breathingPosition(
     };
   if (position < pattern.inhale + pattern.hold)
     return {
-      phase: "Rest gently",
+      phase: pattern.rest ? "Hold gently" : "Rest gently",
       remaining: Math.ceil(pattern.inhale + pattern.hold - position),
       progress: 1,
     };
+  if (position < exhaleEnd)
+    return {
+      phase: "Breathe out",
+      remaining: Math.ceil(exhaleEnd - position),
+      progress: 1 - (position - pattern.inhale - pattern.hold) / pattern.exhale,
+    };
   return {
-    phase: "Breathe out",
+    phase: "Rest gently",
     remaining: Math.ceil(cycle - position),
-    progress: 1 - (position - pattern.inhale - pattern.hold) / pattern.exhale,
+    progress: 0,
   };
 }
 
@@ -152,7 +159,8 @@ export function isPlayableMoment(value: unknown): value is SolaceMoment {
     (!v.breathing ||
       !integer(v.breathing.inhale, 2, 6) ||
       !integer(v.breathing.hold, 0, 4) ||
-      !integer(v.breathing.exhale, 2, 8))
+      !integer(v.breathing.exhale, 2, 8) ||
+      (v.breathing.rest !== undefined && !integer(v.breathing.rest, 0, 4)))
   )
     return false;
   return true;

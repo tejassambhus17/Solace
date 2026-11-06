@@ -102,6 +102,11 @@ function harness(options = {}) {
     apiConfig,
     apiConfig.exports,
   );
+  const routes = { exports: {} };
+  new Function("module", "exports", compile("../src/routes.ts"))(
+    routes,
+    routes.exports,
+  );
   const module = { exports: {} };
   const requireMock = (name) => {
     if (name === "react") return react;
@@ -134,6 +139,7 @@ function harness(options = {}) {
       };
     if (name === "./offline") return offline.exports;
     if (name === "./api-config") return apiConfig.exports;
+    if (name === "./routes") return routes.exports;
     throw Error(`Unexpected dependency: ${name}`);
   };
   vm.runInNewContext(compiled, {
@@ -439,6 +445,63 @@ test("Explore is a tab with a root and preserves its branch and view across swit
   h.render().navigate("explore");
   assert.equal(h.render().route, "explore");
   assert.equal(h.render().params.exploreView.category, "Sleep");
+});
+
+test("Solace modes keep their own route and Journal handoff returns to its origin", async () => {
+  const h = await signedIn();
+  h.render().setTab("chat");
+  assert.equal(h.render().route, "solace");
+  h.render().switchSolaceMode("companion");
+  const companion = h.render();
+  assert.equal(companion.route, "chat");
+  companion.switchSolaceMode("journal");
+  companion.setParams({ id: "reply-after-mode-switch" });
+  h.render().navigate("journal-entry", { id: "bad/id" });
+  assert.equal(h.render().route, "journal");
+  h.render().navigate("journal-entry", { id: "entry-a" });
+  h.render().navigate("journal-reflect", { id: "entry-a" });
+  h.render().navigate("chat", { id: "shared-a", fromJournal: "entry-a" });
+  assert.equal(h.render().activeTab, "chat");
+  assert.equal(h.render().params.fromJournal, "entry-a");
+  h.render().navigate("voice-talk", { id: "shared-a" });
+  h.render().navigate("chat", { id: "shared-a" });
+  assert.equal(h.render().params.fromJournal, "entry-a");
+  h.render().back();
+  assert.equal(h.render().route, "journal-reflect");
+  h.render().switchSolaceMode("companion");
+  assert.equal(h.render().params.id, "reply-after-mode-switch");
+  h.render().switchSolaceMode("journal");
+  assert.equal(h.render().route, "journal-reflect");
+  h.close();
+});
+
+test("Journey opens a Journal record on Solace and back returns to the same Journey route", async () => {
+  const h = await signedIn();
+  h.render().navigate("journey");
+  h.render().navigate("journey-activity", { day: "2026-11-06" });
+  h.render().navigate("journal-entry", { id: "entry-b" });
+  assert.equal(h.render().activeTab, "chat");
+  assert.equal(h.render().params.id, "entry-b");
+  h.render().back();
+  assert.equal(h.render().activeTab, "journey");
+  assert.equal(h.render().route, "journey-activity");
+  assert.equal(h.render().params.day, "2026-11-06");
+  h.close();
+});
+
+test("writing after a completed practice returns to detail without restarting its player", async () => {
+  const h = await signedIn();
+  h.render().switchSolaceMode("companion");
+  h.render().navigate("technique-detail", { id: "reflection" });
+  h.render().navigate("moment-player", { techniqueId: "reflection" });
+  const completed = h.render();
+  completed.back();
+  completed.navigate("journal-editor", { prompt: "Synthetic prompt" });
+  assert.equal(h.render().route, "journal-editor");
+  h.render().back();
+  assert.equal(h.render().route, "technique-detail");
+  assert.equal(h.render().params.id, "reflection");
+  h.close();
 });
 
 test("late chat updates can update their own tab but never a replacement route or another tab", async () => {
@@ -1183,4 +1246,78 @@ test("voice authorization failures trigger the existing session-expiry recovery"
   assert.equal(h.render().sessionExpired, true);
   assert.equal(h.render().token, null);
   h.close();
+});
+
+test("a long journal draft atomically becomes one protected write and retries using its original ID", async () => {
+  const storage = new Map();
+  const h = harness({ platform: "ios", storage });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  const record = {
+    id: "journal-stable",
+    kind: "journal",
+    createdAt: "2026-11-05T12:00:00.000Z",
+    day: "2026-11-05",
+    title: "A walk",
+    text: "A quiet afternoon.\n".repeat(2900),
+    mood: "Calm",
+    tags: ["park"],
+    bookmarked: true,
+  };
+  const draft = {
+    id: record.id,
+    createdAt: record.createdAt,
+    title: record.title,
+    text: record.text,
+    mood: record.mood,
+    tags: "park",
+    bookmarked: "yes",
+  };
+  const key = "journal:new";
+  h.render().setEditorDraft(key, draft);
+  assert.equal(await h.render().flushEditorDrafts(), true);
+  let remote;
+  h.onRequest = async (route, options) => {
+    assert.equal(route, "/records/reflections");
+    assert.equal(options.method, "POST");
+    remote = JSON.parse(options.body);
+    throw Error("Response lost after commit");
+  };
+  const held = h.holdNextCredentialWrite();
+  const saving = h.render().save("reflections", record, { key, value: draft });
+  await until(() => held.started);
+  h.appState("background");
+  held.resolve();
+  const queued = await saving;
+  await settle();
+  assert.equal(queued.id, record.id);
+  assert.equal(queued.localOnly, true);
+  assert.equal(h.render().editorDrafts[key], undefined);
+  h.close();
+
+  // Simulate closing the app between the durable queue commit and UI cleanup.
+  const reopened = harness({ platform: "ios", storage });
+  reopened.onRequest = accountTransport("account-a", "token-a");
+  await until(() => !reopened.render().initializing);
+  assert.equal(reopened.render().editorDrafts[key], undefined);
+  assert.equal(reopened.render().data.reflections[0].id, record.id);
+  let replayPosts = 0;
+  reopened.onRequest = async (route, options) => {
+    assert.equal(route, "/records/reflections");
+    if (options.method === "POST") {
+      replayPosts++;
+      assert.deepEqual(JSON.parse(options.body), remote);
+      return ok({ error: "Already exists" }, 409);
+    }
+    return ok({ records: [{ ...remote, updatedAt: record.createdAt }] });
+  };
+  await reopened.render().flushPendingWrites();
+  const app = reopened.render();
+  assert.equal(replayPosts, 1);
+  assert.equal(app.pendingWrites.length, 0);
+  assert.equal(app.data.reflections.length, 1);
+  assert.equal(app.data.reflections[0].text, record.text);
+  assert.equal(app.data.reflections[0].localOnly, undefined);
+  reopened.close();
 });

@@ -111,6 +111,49 @@ test("a weekly reflection keeps its selected dates and protected draft during an
   assert.deepEqual(await vault.read("account-b"), { pending: [], drafts: {} });
 });
 
+test("journal draft identity and metadata survive a vault restart for the owner only", async () => {
+  const storage = protectedStorage();
+  const vault = createOfflineVault(storage);
+  const pending = entry("journal-one", "First line\n\n🌿 Second line\n");
+  pending.record = writingRecord("reflections", {
+    ...pending.record,
+    kind: "journal",
+    title: "On a walk",
+    mood: "Calm",
+    tags: ["park", "weekend"],
+    bookmarked: true,
+    unrecognized: "excluded",
+  });
+  const draft = {
+    id: pending.id,
+    createdAt: pending.createdAt,
+    title: "On a walk",
+    text: "An updated paragraph\n",
+    mood: "Calm",
+    tags: "park, weekend",
+    bookmarked: "yes",
+  };
+  await vault.update("account-a", () => ({
+    pending: [pending],
+    drafts: {
+      "journal:new": { ...draft, unrecognized: "excluded" },
+      "journal:edit:journal-one": draft,
+    },
+  }));
+  const reopened = createOfflineVault(storage);
+  const restored = await reopened.read("account-a");
+  assert.deepEqual(restored.pending, [pending]);
+  assert.deepEqual(restored.drafts, {
+    "journal:new": draft,
+    "journal:edit:journal-one": draft,
+  });
+  assert.equal(matchesPending(restored.pending[0], pending.record), true);
+  assert.deepEqual(await reopened.read("account-b"), {
+    pending: [],
+    drafts: {},
+  });
+});
+
 test("interrupted staging preserves the previous committed generation", async () => {
   const storage = protectedStorage();
   const vault = createOfflineVault(storage);

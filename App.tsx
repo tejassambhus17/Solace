@@ -11,6 +11,7 @@ import {
   BackHandler,
   Keyboard,
   Image,
+  Linking,
   Platform,
   Text,
   View,
@@ -44,6 +45,15 @@ import {
 } from "./src/screens/Journey";
 import { JourneyGoalScreen } from "./src/screens/JourneyGoal";
 import { MomentsScreen, MomentPlayerScreen } from "./src/screens/Moments";
+import { JournalScreen } from "./src/screens/Journal";
+import { JournalReflectionScreen } from "./src/screens/JournalReflection";
+import { SolaceHome } from "./src/screens/SolaceHome";
+import {
+  TechniqueDetailScreen,
+  TechniquesScreen,
+} from "./src/screens/Techniques";
+import { routes } from "./src/routes";
+import { experienceDestination } from "./src/experience-links";
 import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
 import { AmbientMixerScreen } from "./src/screens/AmbientMixer";
 import { MilestoneCelebration } from "./src/MilestoneCelebration";
@@ -88,6 +98,7 @@ const wellnessScreens = new Set([
 ]);
 const retainedRoots = {
   today: TodayScreen,
+  [routes.journal]: () => <JournalScreen name={routes.journal} />,
   explore: ExploreScreen,
   journey: JourneyScreen,
   profile: () => <ProfileScreen name="profile" />,
@@ -121,6 +132,7 @@ const RetainedScreen = React.memo(function RetainedScreen({
 
 function Shell() {
   const app = useApp();
+  useExperienceLinks(app);
   return <AccountShell key={app.user?.id ?? "signed-out"} app={app} />;
 }
 
@@ -220,19 +232,38 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
     );
   else if (!app.user || app.sessionExpired) content = <AuthScreen />;
   else if (activeRoot) content = null;
-  else if (app.route === "chat" || app.route === "solace")
+  else if (app.route === routes.solace) content = <SolaceHome />;
+  else if (app.route === routes.companion)
     content = <ChatScreen scrollMemory={chatPositions.current} />;
-  else if (app.route === "voice-talk") content = <VoiceTalkScreen />;
+  else if (
+    app.route === routes.journalEditor ||
+    app.route === routes.journalEntry
+  )
+    content = (
+      <JournalScreen
+        key={`${app.route}-${app.params.id ?? "new"}`}
+        name={app.route}
+      />
+    );
+  else if (app.route === routes.journalReflect)
+    content = <JournalReflectionScreen key={app.params.id} />;
+  else if (app.route === routes.techniques) content = <TechniquesScreen />;
+  else if (app.route === routes.technique) content = <TechniqueDetailScreen />;
+  else if (app.route === routes.voice) content = <VoiceTalkScreen />;
   else if (app.route === "ambient-mixer") content = <AmbientMixerScreen />;
-  else if (app.route === "history") content = <HistoryScreen />;
+  else if (app.route === routes.history) content = <HistoryScreen />;
   else if (app.route === "journey-activity")
     content = <JourneyActivityScreen />;
   else if (app.route === "journey-milestones")
     content = <JourneyMilestonesScreen />;
   else if (app.route === "journey-goal") content = <JourneyGoalScreen />;
   else if (app.route === "moments") content = <MomentsScreen />;
-  else if (app.route === "moment-player")
-    content = <MomentPlayerScreen key={app.params?.activity?.id || "player"} />;
+  else if (app.route === routes.momentPlayer)
+    content = (
+      <MomentPlayerScreen
+        key={app.params.techniqueId ?? app.params.activity?.id ?? "player"}
+      />
+    );
   else if (profileScreens.has(app.route))
     content = <ProfileScreen name={app.route} />;
   else if (wellnessScreens.has(app.route))
@@ -315,6 +346,47 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
       </View>
     </View>
   );
+}
+
+function useExperienceLinks(app: ReturnType<typeof useApp>) {
+  const [destination, setDestination] =
+    useState<ReturnType<typeof experienceDestination>>(null);
+  const getInitial = useRef(true);
+  useEffect(() => {
+    let active = true;
+    let received = false;
+    const listener = Linking.addEventListener("url", ({ url }) => {
+      const link = experienceDestination(url);
+      if (!link) return;
+      received = true;
+      setDestination(link);
+    });
+    if (getInitial.current && app.user) {
+      getInitial.current = false;
+      void Linking.getInitialURL()
+        .then((url) => {
+          if (active && !received) setDestination(experienceDestination(url));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+      listener.remove();
+    };
+  }, [app.user?.id]);
+  useEffect(() => {
+    if (!destination || !app.user || app.initializing || app.sessionExpired)
+      return;
+    setDestination(null);
+    if ("mode" in destination) {
+      app.switchSolaceMode(destination.mode);
+      return;
+    }
+    app.navigate(routes.explore);
+    app.navigate(destination.route);
+    if (destination.techniqueId)
+      app.navigate(routes.technique, { id: destination.techniqueId });
+  }, [app, destination]);
 }
 function FontGate() {
   const { colors, resolved } = useTheme();

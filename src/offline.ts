@@ -22,9 +22,19 @@ export type VaultStorage = {
 const MAX_BYTES = 96000;
 const CHUNK_BYTES = 1500;
 const MAX_PENDING = 10;
+const journalDraftFields = [
+  "id",
+  "createdAt",
+  "title",
+  "text",
+  "mood",
+  "tags",
+  "bookmarked",
+];
 const draftFields: Record<string, string[]> = {
   "checkin:new": ["mood", "tags", "note"],
   "reflection:new": ["text", "need"],
+  "journal:new": journalDraftFields,
 };
 const fieldsForDraft = (key: string) => {
   if (Object.hasOwn(draftFields, key)) return draftFields[key];
@@ -32,13 +42,20 @@ const fieldsForDraft = (key: string) => {
     return ["text", "need", "weeklyProvider"];
   if (/^reflection:edit:[A-Za-z0-9_-]{1,100}$/.test(key))
     return ["text", "need"];
+  if (/^journal:edit:[A-Za-z0-9_-]{1,100}$/.test(key))
+    return journalDraftFields;
   return undefined;
 };
 const recordFields: Record<WritingCollection, string[]> = {
   checkins: ["id", "mood", "tags", "note", "day", "createdAt"],
   reflections: [
     "id",
+    "kind",
+    "title",
     "text",
+    "mood",
+    "tags",
+    "bookmarked",
     "need",
     "day",
     "createdAt",

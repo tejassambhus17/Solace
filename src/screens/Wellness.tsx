@@ -17,6 +17,7 @@ import {
   savedWeeklyStory,
 } from "../../server/src/weekly-facts";
 import { useApp, type WeeklyReflectionResult } from "../store";
+import { savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
@@ -2436,7 +2437,7 @@ function Reflections() {
               ).slice(0, 130)}`}
               icon="create-outline"
               onPress={() =>
-                app.navigate("reflection-detail", { id: record.id })
+                app.navigate(savedReflectionRoute(record), { id: record.id })
               }
             />
           ))

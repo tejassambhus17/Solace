@@ -22,6 +22,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
+import { routes } from "../routes";
 import { Companion, useReducedMotion } from "../Companion";
 import { localDay, recordDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
@@ -44,6 +45,7 @@ import {
   ChatWelcome,
 } from "./ChatDetails";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { SolaceModeSwitcher } from "./SolaceModeSwitcher";
 import {
   AppText,
   Artwork,
@@ -519,9 +521,9 @@ export function ChatScreen({
   );
   function startReset() {
     setShowComposerMenu(false);
-    app.navigate("breathing", {
-      durationSec: 120,
-      source: "solace-chat",
+    app.navigate(routes.technique, {
+      id: "breathing",
+      source: "chat",
       conversationId: id,
     });
   }
@@ -646,7 +648,7 @@ export function ChatScreen({
           disabled={activityDisabled}
           featured
           scenic={fresh}
-          onPress={() => app.navigate("voice-talk", { id })}
+          onPress={() => app.navigate(routes.voice, { id })}
         />
         <ChatHeaderButton
           icon="sparkles-outline"
@@ -669,7 +671,7 @@ export function ChatScreen({
             color={fresh ? "#FFF7E9" : colors.text}
             style={fresh ? chatStyles.title : chatStyles.compactTitle}
           >
-            Solace
+            Companion
           </AppText>
         </Row>
         {fresh && (
@@ -701,7 +703,7 @@ export function ChatScreen({
           label="Conversation history"
           disabled={activityDisabled}
           scenic={fresh}
-          onPress={() => app.navigate("history")}
+          onPress={() => app.navigate(routes.history)}
         />
       </Row>
     </View>
@@ -738,7 +740,7 @@ export function ChatScreen({
           <Row style={{ gap: spacing.compact, marginBottom: spacing.compact }}>
             <Icon name={chatPractices[action.type].icon} size={18} />
             <AppText variant="caption" color={colors.muted}>
-              Suggested Moment · {recommendation.durationSec / 60} min
+              Suggested technique · {recommendation.durationSec / 60} min
             </AppText>
           </Row>
           <AppText variant="heading">{recommendation.title}</AppText>
@@ -753,13 +755,12 @@ export function ChatScreen({
             }}
           >
             <Button
-              title="Open Moment"
+              title="View technique"
               icon="arrow-forward"
               onPress={() => {
                 Keyboard.dismiss();
-                app.navigate("moment-player", {
-                  activity: recommendation,
-                  provider: "offline",
+                app.navigate(routes.technique, {
+                  id: action.type,
                   source: "chat",
                   conversationId: id,
                 });
@@ -802,12 +803,34 @@ export function ChatScreen({
           onClose={() => setShowExplanation(false)}
           onManage={() => {
             setShowExplanation(false);
-            app.navigate("memory");
+            app.navigate(routes.memory);
           }}
         />
       )}
       <StatusBar style={dark ? "light" : "dark"} />
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
+        <View
+          style={{
+            paddingHorizontal: gutter,
+            paddingVertical: spacing.compact,
+            gap: spacing.compact,
+          }}
+        >
+          <SolaceModeSwitcher mode="companion" />
+          {!!app.params.fromJournal && app.canGoBack && (
+            <Button
+              title="Back to Journal"
+              icon="arrow-back"
+              variant="ghost"
+              onPress={app.back}
+            />
+          )}
+          {!!conversation?.journalSource && (
+            <AppText variant="caption" color={colors.muted}>
+              Started with a shared journal excerpt
+            </AppText>
+          )}
+        </View>
         {fresh ? (
           <ScrollView
             ref={welcomeScroll}
@@ -1322,7 +1345,7 @@ export function HistoryScreen() {
       <Button
         title="New conversation"
         icon="add"
-        onPress={() => app.navigate("chat")}
+        onPress={() => app.navigate(routes.companion)}
         style={{ marginBottom: 24 }}
       />
       {!!failure && (
@@ -1420,7 +1443,7 @@ export function HistoryScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Open ${c.title || "conversation"}`}
-                    onPress={() => app.navigate("chat", { id: c.id })}
+                    onPress={() => app.navigate(routes.companion, { id: c.id })}
                     style={({ pressed }) => ({
                       flex: 1,
                       minHeight: 66,
