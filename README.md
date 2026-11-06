@@ -57,6 +57,8 @@ Personal weekly time goals can be changed, paused and resumed. Check-in streaks 
 - Reminders: private local notification schedules and destination routing. Browser preferences do not pretend to schedule native notifications.
 - Data controls: approved memory, export, logout, account deletion, unsynced-writing retry/discard and theme preferences.
 
+Profile shows the signed-in name and photo against mountain artwork for the active theme. **Edit Profile** opens name and photo controls. **Personalize Solace** groups reminders, saved memories, and appearance preferences, with badges based on the account’s reminder and memory records. **Privacy & Support** links to data export and deletion, human support, and About Solace. About explains Solace’s role and how the app handles conversations.
+
 Native check-in/journal drafts use bounded account-scoped SecureStore. Up to ten submitted check-ins/reflections can wait for retry after recoverable connection errors. Draft writes debounce 650ms and attempt protection when leaving the app; abrupt termination before a successful write can lose recent edits. Web writing is memory-only for the open tab. Cold launch still needs online API session restoration; chat and complete account snapshots are not placed in the protected writing vault.
 
 An unchanged chat draft reuses its request ID after a connection failure during the current app session. The API can replay its saved turn for up to 24 hours, including across API restarts. Editing the draft starts a new request. Chat drafts and pending request IDs live in app memory.
@@ -95,7 +97,8 @@ src/VoiceControls.tsx      recording, transcript review and reply playback
 src/voice-session.ts       cancellable account/conversation-scoped voice turn
 src/screens/Core.tsx       welcome, accounts, chat and history
 src/screens/Wellness.tsx   original activities, resources and reflections
-src/screens/Profile.tsx    account, photos, memory, reminders and data controls
+src/screens/ProfileHome.tsx  grouped profile overview and account badges
+src/screens/Profile.tsx      account, memory, reminders, privacy and About Solace
 src/store.tsx              authenticated state, API and protected sessions
 src/offline.ts             bounded protected-writing vault
 src/notifications.ts       native local reminders and tap routing

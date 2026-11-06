@@ -2,6 +2,16 @@
 
 final result: passed
 
+## Grouped Profile light and dark — 6 November 2026
+
+Compared the two supplied Profile images with the rendered screen at equivalent phone widths, below system chrome. The 394 × 852 CSS pixel captures use the saved name, photo, and settings of a synthetic account.
+
+- Both themes use the same compact card, two groups of three rows, and centered lotus footer. The four mountain assets follow the sunrise and twilight references. The scroll area keeps controls reachable around the floating bar.
+- The account name and photo persisted after reload. Reminder and memory badges changed when their records changed. The six settings rows opened their destinations, including direct access to export and deletion, and About displayed the wellness disclaimer.
+- Checked 320 and 430 pixel widths in both themes. The smaller layout still allowed the About row to be reached and opened. Browser captures use the web navigation material. Native iPhone glass and VoiceOver remain device checks.
+
+[Dark capture](docs/screenshots/profile-grouped-dark.jpg) · [Light capture](docs/screenshots/profile-grouped-light.jpg)
+
 ## Compact Explore phone reference — 6 November 2026
 
 Compared the second supplied Explore image with the rendered dark screen at equivalent phone widths, below system chrome. Reviewed the light screen at 394 × 852 CSS pixels and checked the narrow and wide phone layouts at 320 and 430 pixels.

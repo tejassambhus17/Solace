@@ -37,7 +37,7 @@ Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled E
 Today follows the latest phone reference. The dark arrival uses a violet lake scene and the light arrival uses the sunrise scene.
 
 1. Scenic artwork extends into the top safe area. The lotus wordmark, personal greeting, Reminders and Moments controls sit inside the safe area.
-2. Five mood choices show the latest saved check-in for the day. Dark appearance uses colored line icons, and light appearance uses watercolor petals.
+2. Five mood choices use the same watercolor petals, dimensions, and spacing in both themes. The selected tile marks the latest saved check-in. Tapping a tile opens the existing check-in and uses a gentle haptic on supported devices. The tint transition respects Reduce Motion.
 3. **Today’s Moment** opens a five-minute Calm Reset and respects the saved environment. Four compact practice shortcuts follow it.
 4. **Your Journey** shows a linear measure of the actual three-step daily routine. Explore More links to Guided Programs, Wellness Toolkit, Check-Ins and the full Explore library.
 
@@ -53,7 +53,13 @@ Explore lets the twilight lake extend into the top safe area while the brand, ti
 
 Create Your Wellness Plan opens the editable three-day plan. Explore More provides direct routes to Guided Programs, Wellness Toolkit, and Check-Ins. Additional tools include the timed practice builder, where a chosen focus and duration determine the preview and session.
 
-Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Profile owns private photos, account settings and data controls. Welcome, login, signup and Today have no upper-right profile shortcut.
+Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Welcome, login, signup and Today have no upper-right profile shortcut.
+
+## Profile
+
+Profile opens with a compact scenic card that shows the signed-in name and photo. The cream sunrise and charcoal sunset artwork use the same card and typography. **Edit Profile** opens the existing name and photo controls.
+
+**Personalize Solace** groups Gentle reminders, What Solace remembers, and Appearance & preferences. Reminder and memory badges reflect saved preferences and records. **Privacy & Support** groups direct access to account data controls, human support, and About Solace. About contains the AI wellness disclaimer and explains how the server and configured provider process conversations. A lotus and layered mountain scene frame the closing message.
 
 ## Artwork and implementation
 

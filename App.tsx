@@ -43,6 +43,7 @@ const profileScreens = new Set([
   "memory",
   "account",
   "support",
+  "about",
 ]);
 const immersiveScreens = new Set([
   "breathing",

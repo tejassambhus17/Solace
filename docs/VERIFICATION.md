@@ -409,3 +409,12 @@ The connected Android display was off during the redesign check. Installed-devic
 - TypeScript, formatting, seven wellness tests, ten routine tests, and the web preview export passed. The native haptic selection and accessibility announcement still need a rebuilt app on a physical iPhone. The tint transition uses the existing Reduce Motion preference.
 
 [Dark capture](screenshots/today-petals-dark.jpg) · [Light capture](screenshots/today-petals-light.jpg)
+
+## Grouped Profile and About — 6 November 2026
+
+- Compared both supplied Profile references with the light and dark browser captures. The 320 and 430 pixel layouts had no horizontal overflow. About was reachable by scrolling at 320 pixels.
+- Updated a synthetic account name and selected a synthetic photo through the account editor. Both appeared on Profile and persisted after reloading. The reminder badge changed from Off to On after saving an enabled preference, and the memory badge changed from zero to one after saving a preference. The browser reported preferences saved and deferred notification delivery to the mobile app.
+- Verified the reminder, memory, appearance, privacy, support, and About routes. Appearance presented Light, Dark, and System. Privacy exposed export and account deletion controls. About showed the wellness disclaimer and safety guidance. No account was deleted. The verified preview tab reported zero error-level entries.
+- TypeScript, formatting, the web preview export, and the Android and iOS JavaScript exports passed. Native picker, VoiceOver, Dynamic Type, and Liquid Glass remain to be checked on an iPhone.
+
+[Dark capture](screenshots/profile-grouped-dark.jpg) · [Light capture](screenshots/profile-grouped-light.jpg)

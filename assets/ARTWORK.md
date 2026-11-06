@@ -30,3 +30,15 @@ Five optimized JPEGs were generated with built-in ImageGen for the supplied dark
 | `today-explore-checkins.jpg` | 432 × 432 | Rose-brown mountain silhouettes, a small apricot sun, and a dark purple-brown foreground. |
 
 All five prompts specified editorial photographic realism and excluded text, icons, logos, device frames and interface controls.
+## Profile mountains
+
+Four optimized 1120 × 373 JPEGs were generated with built-in ImageGen. The app renders the account details, lotus, and copy separately.
+
+| File | Prompt summary |
+|---|---|
+| `profile-mountains-light.jpg` | Wide golden-hour scene with pale sage wooded ridges, a small sun on the right, and a quiet cream field on the left. |
+| `profile-mountains-dark.jpg` | Wide dusk scene with violet mountain layers, a small orange sun on the right, and a dark plum field on the left. |
+| `profile-footer-light.jpg` | Low, soft peach mountain ridges beneath a blank warm cream field. |
+| `profile-footer-dark.jpg` | Low, subdued aubergine ridges beneath a blank near-black plum field. |
+
+Prompts excluded interface elements, text, people, and foreground objects. The four JPEGs total about 83 KB.

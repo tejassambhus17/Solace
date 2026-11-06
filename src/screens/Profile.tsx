@@ -9,6 +9,7 @@ import {
   Share,
   Image,
 } from "react-native";
+import Constants from "expo-constants";
 import { useTheme } from "../theme";
 import { useApp } from "../store";
 import { chooseProfilePhoto } from "../photos";
@@ -21,11 +22,7 @@ import {
   Input,
   Row,
   Icon,
-  Petal,
   SectionTitle,
-  BrandMark,
-  BotanicalBackdrop,
-  Artwork,
 } from "../ui";
 import {
   scheduleReminder,
@@ -35,6 +32,7 @@ import {
   deviceReminderIds,
   rememberDeviceSchedule,
 } from "../notifications";
+import ProfileHome from "./ProfileHome";
 
 const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const memoryCategories = [
@@ -123,17 +121,19 @@ function Notice({ text, error = false }: { text: string; error?: boolean }) {
 export default function ProfileScreen({ name }: { name: string }) {
   const app = useApp();
   const { colors, mode, setMode, resolved } = useTheme();
+  const privacyOnly = name === "account" && app.params?.section === "privacy";
+  const routeIdentity = privacyOnly ? "privacy" : name;
   const [message, setMessageState] = useState("");
   const [error, setErrorState] = useState("");
-  const currentRoute = useRef(name);
-  currentRoute.current = name;
+  const currentRoute = useRef(routeIdentity);
+  currentRoute.current = routeIdentity;
   const operationLock = useRef(false);
   // Late responses from a screen we left must not announce success on another screen.
   const setMessage = (value: string) => {
-    if (currentRoute.current === name) setMessageState(value);
+    if (currentRoute.current === routeIdentity) setMessageState(value);
   };
   const setError = (value: string) => {
-    if (currentRoute.current === name) setErrorState(value);
+    if (currentRoute.current === routeIdentity) setErrorState(value);
   };
   const [pending, setPending] = useState(false);
   const [preference, setPreference] = useState("");
@@ -174,7 +174,7 @@ export default function ProfileScreen({ name }: { name: string }) {
     setDeleteAccount(false);
     setLogoutConfirm(false);
     setDiscardWriteId(null);
-  }, [name]);
+  }, [routeIdentity]);
   useEffect(() => {
     const suggested = app.params?.suggestedPreference;
     const sourceType = app.params?.sourceType;
@@ -262,119 +262,7 @@ export default function ProfileScreen({ name }: { name: string }) {
     setEnabled(true);
   }
 
-  if (name === "profile")
-    return (
-      <Screen>
-        <View>
-          <BotanicalBackdrop
-            style={{
-              right: -90,
-              top: -60,
-              opacity: resolved === "dark" ? 0.1 : 0.23,
-            }}
-          />
-          <Row style={{ marginBottom: 30 }}>
-            <BrandMark />
-          </Row>
-          <Row style={{ marginBottom: 32, gap: 18 }}>
-            <View
-              style={{
-                width: 96,
-                height: 96,
-                borderRadius: 48,
-                overflow: "hidden",
-                backgroundColor:
-                  resolved === "dark"
-                    ? colors.surface2
-                    : colors.lavenderSurface,
-                borderWidth: 1,
-                borderColor: colors.border,
-              }}
-            >
-              {app.user?.avatar ? (
-                <Image
-                  accessibilityLabel="Your profile photo"
-                  source={{ uri: app.user.avatar }}
-                  resizeMode="cover"
-                  style={{ width: 96, height: 96 }}
-                />
-              ) : (
-                <Artwork
-                  kind="petal"
-                  size={130}
-                  style={{ position: "absolute", left: -17, top: -14 }}
-                />
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
-              <AppText variant="display">
-                {app.user?.name || "Your space"}
-              </AppText>
-              <AppText
-                color={colors.muted}
-                style={{ marginTop: 7, fontSize: 14, lineHeight: 22 }}
-              >
-                Your preferences. Your pace.
-              </AppText>
-            </View>
-          </Row>
-        </View>
-        <MenuRow
-          title="Your account"
-          subtitle={app.user?.email}
-          icon="person-outline"
-          onPress={() => app.navigate("account")}
-        />
-        <MenuRow
-          title="Gentle reminders"
-          subtitle="A nudge, on your terms"
-          icon="notifications-outline"
-          tone="peach"
-          onPress={() => app.navigate("reminders")}
-        />
-        <MenuRow
-          title="What Solace remembers"
-          subtitle="Inspect and manage approved preferences"
-          icon="leaf-outline"
-          tone="sage"
-          onPress={() => app.navigate("memory")}
-        />
-        <MenuRow
-          title="Settings"
-          subtitle="Appearance, privacy and personalization"
-          icon="options-outline"
-          onPress={() => app.navigate("settings")}
-        />
-        <MenuRow
-          title="Find human support"
-          subtitle="Directories and local support resources"
-          icon="heart-outline"
-          tone="peach"
-          onPress={() => app.navigate("support")}
-        />
-        <View
-          style={{
-            marginTop: 20,
-            paddingTop: 22,
-            borderTopWidth: 1,
-            borderTopColor: colors.border,
-          }}
-        >
-          <Row>
-            <Petal size={42} />
-            <AppText variant="heading">Your pace is enough.</AppText>
-          </Row>
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ marginTop: 10, lineHeight: 20 }}
-          >
-            Solace is an AI wellness companion. It is not a medical or emergency
-            service.
-          </AppText>
-        </View>
-      </Screen>
-    );
+  if (name === "profile") return <ProfileHome />;
 
   if (name === "settings")
     return (
@@ -429,6 +317,20 @@ export default function ProfileScreen({ name }: { name: string }) {
           ))}
         </Row>
         <Card style={{ marginBottom: 16 }}>
+          <AppText variant="heading">Sound and accessibility</AppText>
+          <AppText color={colors.muted} style={{ marginTop: 7 }}>
+            Ambient sound is optional in each Solace Moment. Use your device
+            settings to adjust text size, Reduce Motion, and system haptics.
+          </AppText>
+          <Button
+            title="Open Solace Moments"
+            variant="ghost"
+            icon="sparkles-outline"
+            onPress={() => app.navigate("moments")}
+            style={{ marginTop: 7 }}
+          />
+        </Card>
+        <Card style={{ marginBottom: 16 }}>
           <Row>
             <View style={{ flex: 1 }}>
               <AppText variant="label">Use approved preferences</AppText>
@@ -474,22 +376,69 @@ export default function ProfileScreen({ name }: { name: string }) {
           title="Privacy & data"
           subtitle="Export data or delete your account"
           icon="shield-checkmark-outline"
-          onPress={() => app.navigate("account")}
+          onPress={() => app.navigate("account", { section: "privacy" })}
         />
-        <Card>
-          <AppText variant="heading">About Solace</AppText>
-          <AppText style={{ marginTop: 8 }}>
-            A calmer place to check in, talk, and take a small step. Version
-            1.0.0.
+        <MenuRow
+          title="About Solace"
+          subtitle="Learn more about the app, purpose, and safety"
+          icon="information-circle-outline"
+          onPress={() => app.navigate("about")}
+        />
+        {status}
+      </Screen>
+    );
+
+  if (name === "about")
+    return (
+      <Screen title="About Solace" back={app.back}>
+        {heading(
+          "A calmer place to pause",
+          "Check in, talk, and take one small step toward everyday wellbeing.",
+        )}
+        {Constants.expoConfig?.version && (
+          <AppText
+            color={colors.muted}
+            variant="caption"
+            style={{ marginBottom: 14 }}
+          >
+            Version {Constants.expoConfig.version}
           </AppText>
-          <AppText variant="caption" style={{ marginTop: 12 }}>
+        )}
+        <Card style={{ marginBottom: 14 }}>
+          <AppText variant="heading">Wellness and safety</AppText>
+          <AppText style={{ marginTop: 8 }}>
+            Solace is an AI wellness companion for everyday reflection and
+            self-care. It is not a medical or emergency service and cannot
+            provide diagnosis, treatment, or emergency care.
+          </AppText>
+          <AppText color={colors.muted} style={{ marginTop: 10 }}>
+            If you are in immediate danger, contact your local emergency
+            services or go to the nearest emergency department.
+          </AppText>
+          <Button
+            title="Find human support"
+            variant="secondary"
+            icon="heart-outline"
+            onPress={() => app.navigate("support")}
+            style={{ marginTop: 14 }}
+          />
+        </Card>
+        <Card>
+          <AppText variant="heading">How conversations work</AppText>
+          <AppText color={colors.muted} style={{ marginTop: 8 }}>
             Your messages are processed by the server. When live AI is
             configured, your conversation and relevant consented context are
             sent to the configured provider. Avoid sharing information you do
             not want processed.
           </AppText>
+          <Button
+            title="Privacy & data"
+            variant="ghost"
+            icon="lock-closed-outline"
+            onPress={() => app.navigate("account", { section: "privacy" })}
+            style={{ marginTop: 8 }}
+          />
         </Card>
-        {status}
       </Screen>
     );
 
@@ -1232,107 +1181,123 @@ export default function ProfileScreen({ name }: { name: string }) {
 
   if (name === "account")
     return (
-      <Screen title="Your account" back={app.back}>
-        {heading(
-          "Your information",
-          "Manage your account and the data you have saved.",
-        )}
-        <Row style={{ alignItems: "flex-start", gap: 18, marginBottom: 22 }}>
-          <View
-            style={{
-              width: 88,
-              height: 88,
-              borderRadius: 44,
-              overflow: "hidden",
-              backgroundColor:
-                resolved === "dark" ? colors.surface2 : colors.lavenderSurface,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {app.user?.avatar ? (
-              <Image
-                accessibilityLabel="Your current profile photo"
-                source={{ uri: app.user.avatar }}
-                resizeMode="cover"
-                style={{ width: 88, height: 88 }}
-              />
-            ) : (
-              <Icon
-                name="person-outline"
-                size={32}
-                color={colors.lavenderText}
+      <Screen
+        title={privacyOnly ? "Privacy & data" : "Your account"}
+        back={app.back}
+      >
+        {privacyOnly
+          ? heading(
+              "Your data",
+              "Export your information or manage your account.",
+            )
+          : heading(
+              "Your information",
+              "Manage your account and the data you have saved.",
+            )}
+        {!privacyOnly && (
+          <>
+            <Row
+              style={{ alignItems: "flex-start", gap: 18, marginBottom: 22 }}
+            >
+              <View
+                style={{
+                  width: 88,
+                  height: 88,
+                  borderRadius: 44,
+                  overflow: "hidden",
+                  backgroundColor:
+                    resolved === "dark"
+                      ? colors.surface2
+                      : colors.lavenderSurface,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {app.user?.avatar ? (
+                  <Image
+                    accessibilityLabel="Your current profile photo"
+                    source={{ uri: app.user.avatar }}
+                    resizeMode="cover"
+                    style={{ width: 88, height: 88 }}
+                  />
+                ) : (
+                  <Icon
+                    name="person-outline"
+                    size={32}
+                    color={colors.lavenderText}
+                  />
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="heading">Profile photo</AppText>
+                <AppText
+                  variant="caption"
+                  color={colors.muted}
+                  style={{ marginTop: 5 }}
+                >
+                  Optional. Choose a photo to make this space yours.
+                </AppText>
+              </View>
+            </Row>
+            <Button
+              title={
+                photoAction === "saving"
+                  ? "Saving photo…"
+                  : app.user?.avatar
+                    ? "Change photo"
+                    : "Add profile photo"
+              }
+              variant="secondary"
+              icon="image-outline"
+              disabled={pending}
+              loading={photoAction === "choosing" || photoAction === "saving"}
+              onPress={changePhoto}
+            />
+            {!!app.user?.avatar && (
+              <Button
+                title="Remove photo"
+                variant="ghost"
+                disabled={pending}
+                loading={photoAction === "removing"}
+                onPress={() =>
+                  perform(async () => {
+                    setPhotoAction("removing");
+                    try {
+                      await app.updateUser({ avatar: null });
+                      setMessage("Profile photo removed.");
+                    } finally {
+                      setPhotoAction("");
+                    }
+                  })
+                }
               />
             )}
-          </View>
-          <View style={{ flex: 1 }}>
-            <AppText variant="heading">Profile photo</AppText>
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={{ marginTop: 5 }}
-            >
-              Optional. Choose a photo to make this space yours.
+            <View style={{ height: 22 }} />
+            <AppText variant="label">Name</AppText>
+            <Input
+              accessibilityLabel="Your name"
+              value={accountName}
+              onChangeText={setAccountName}
+              editable={!pending}
+              maxLength={80}
+              style={{ marginTop: 8, marginBottom: 12 }}
+            />
+            <AppText color={colors.muted} style={{ marginBottom: 20 }}>
+              {app.user?.email}
             </AppText>
-          </View>
-        </Row>
-        <Button
-          title={
-            photoAction === "saving"
-              ? "Saving photo…"
-              : app.user?.avatar
-                ? "Change photo"
-                : "Add profile photo"
-          }
-          variant="secondary"
-          icon="image-outline"
-          disabled={pending}
-          loading={photoAction === "choosing" || photoAction === "saving"}
-          onPress={changePhoto}
-        />
-        {!!app.user?.avatar && (
-          <Button
-            title="Remove photo"
-            variant="ghost"
-            disabled={pending}
-            loading={photoAction === "removing"}
-            onPress={() =>
-              perform(async () => {
-                setPhotoAction("removing");
-                try {
-                  await app.updateUser({ avatar: null });
-                  setMessage("Profile photo removed.");
-                } finally {
-                  setPhotoAction("");
-                }
-              })
-            }
-          />
+            <Button
+              title="Save name"
+              disabled={pending || !accountName.trim()}
+              onPress={() =>
+                perform(async () => {
+                  await app.updateUser({ name: accountName.trim() });
+                  setMessage("Name updated.");
+                })
+              }
+            />
+          </>
         )}
         {status}
-        <View style={{ height: 22 }} />
-        <AppText variant="label">Name</AppText>
-        <Input
-          accessibilityLabel="Your name"
-          value={accountName}
-          onChangeText={setAccountName}
-          editable={!pending}
-          maxLength={80}
-          style={{ marginTop: 8, marginBottom: 12 }}
-        />
-        <AppText color={colors.muted} style={{ marginBottom: 20 }}>
-          {app.user?.email}
-        </AppText>
-        <Button
-          title="Save name"
-          disabled={pending || !accountName.trim()}
-          onPress={() =>
-            perform(async () => {
-              await app.updateUser({ name: accountName.trim() });
-              setMessage("Name updated.");
-            })
-          }
-        />
         {!!app.pendingWrites.length && (
           <Card
             style={{
