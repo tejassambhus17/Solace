@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { useAudioPlayer, type AudioStatus } from "expo-audio";
 import { useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
 import type { MomentEnvironment } from "./moments";
@@ -25,13 +25,31 @@ export function AmbientSoundImpl({
   compact?: boolean;
 }) {
   const { colors } = useTheme();
-  const player = useAudioPlayer(audioSources[environment], {
-    updateInterval: 500,
-  });
-  const status = useAudioPlayerStatus(player);
+  const player = useAudioPlayer(null);
+  const attached = useRef<MomentEnvironment | null>(null);
+  const [status, setStatus] = useState("loading");
+  const lastStatus = useRef(status);
   const [error, setError] = useState("");
   const soundState = useRef({ running, enabled, onToggle });
   soundState.current = { running, enabled, onToggle };
+  useEffect(() => {
+    function receive(sample: AudioStatus) {
+      const next = sample.error
+        ? "error"
+        : sample.playing
+          ? "playing"
+          : sample.isBuffering || !sample.isLoaded
+            ? "loading"
+            : "paused";
+      if (next !== lastStatus.current) {
+        lastStatus.current = next;
+        setStatus(next);
+      }
+    }
+    receive(player.currentStatus);
+    const subscription = player.addListener("playbackStatusUpdate", receive);
+    return () => subscription.remove();
+  }, [player]);
   useEffect(
     () =>
       registerAmbientPlayback(() => {
@@ -45,11 +63,15 @@ export function AmbientSoundImpl({
     [player],
   );
   useEffect(() => {
+    if (!running || !enabled) return;
     try {
-      player.loop = true;
-      player.volume = 0.22;
-      if (running && enabled) player.play();
-      else player.pause();
+      if (attached.current !== environment || lastStatus.current === "error") {
+        player.replace(audioSources[environment]);
+        attached.current = environment;
+        player.loop = true;
+        player.volume = 0.22;
+      }
+      player.play();
     } catch {
       setError("Sound couldn't start. Your practice can continue quietly.");
     }
@@ -60,9 +82,9 @@ export function AmbientSoundImpl({
     };
   }, [player, running, enabled, environment]);
   const label = enabled
-    ? status.playing
+    ? status === "playing"
       ? "Ambient sound playing"
-      : status.isBuffering || !status.isLoaded
+      : running && status === "loading"
         ? "Loading ambient sound…"
         : "Ambient sound paused"
     : "Ambient sound off";
@@ -103,7 +125,7 @@ export function AmbientSoundImpl({
       >
         <Icon
           name={
-            enabled && (compact || status.playing)
+            enabled && (compact || status === "playing")
               ? "volume-medium-outline"
               : "volume-mute-outline"
           }
@@ -116,7 +138,7 @@ export function AmbientSoundImpl({
           </AppText>
         )}
       </Pressable>
-      {!!(status.error || error) && (
+      {enabled && (status === "error" || !!error) && (
         <AppText
           variant="caption"
           color={colors.danger}

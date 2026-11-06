@@ -23,7 +23,12 @@ import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
 import { reflectionPeriodLabel, weeklyStoryFacts } from "../weekly-story";
-import { newMomentSessionId } from "../moments";
+import {
+  breathingPosition,
+  newMomentSessionId,
+  nextMomentTickDelay,
+} from "../moments";
+import { useBreathingMotion } from "../breathing-motion";
 import { WeeklyStoryOverview } from "./WeeklyStory";
 import {
   Screen,
@@ -1382,10 +1387,19 @@ function Breathing({ params }: { params: AnyRecord }) {
   const finished = useRef(false);
   const endSeconds = useRef(0);
   const resumeAfterEnd = useRef(false);
-  const scale = useRef(new Animated.Value(0.85)).current;
-  const phase = elapsed % 10 < 4 ? "Breathe in" : "Breathe out";
-  const phaseRemaining =
-    elapsed % 10 < 4 ? 4 - (elapsed % 10) : 10 - (elapsed % 10);
+  const cue = breathingPosition(elapsed, { inhale: 4, hold: 0, exhale: 6 });
+  const motion = useBreathingMotion(
+    started
+      ? { ...cue, phaseEndsAtMs: Math.round(elapsed * 1000 + cue.remainingMs) }
+      : null,
+    running,
+    reducedMotion,
+    0,
+  );
+  const scale = useMemo(
+    () => motion.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.12] }),
+    [motion],
+  );
   function finish(seconds: number, complete: boolean) {
     if (finished.current) return;
     finished.current = true;
@@ -1441,17 +1455,22 @@ function Breathing({ params }: { params: AnyRecord }) {
   }
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    function tick() {
       if (!active.current) return;
       const seconds =
         before.current + Math.max(0, monotonicNow() - base.current) / 1000;
-      // The visible timer changes once a second; keep fractional clock time in
-      // refs so the native petal animation stays smooth without rerendering the
-      // entire activity ten times a second.
-      setElapsed(Math.min(duration, Math.floor(seconds)));
-      if (seconds >= duration) finish(duration, true);
-    }, 250);
-    return () => clearInterval(timer);
+      if (seconds >= duration) {
+        finish(duration, true);
+        return;
+      }
+      setElapsed(seconds);
+      timer = setTimeout(tick, nextMomentTickDelay(seconds * 1000, duration));
+    }
+    const elapsedMs =
+      before.current * 1000 + Math.max(0, monotonicNow() - base.current);
+    timer = setTimeout(tick, nextMomentTickDelay(elapsedMs, duration));
+    return () => clearTimeout(timer);
   }, [running, duration]);
   useEffect(() => {
     const listener = AppState.addEventListener("change", (state) => {
@@ -1462,19 +1481,6 @@ function Breathing({ params }: { params: AnyRecord }) {
     });
     return () => listener.remove();
   }, [running, duration]);
-  useEffect(() => {
-    if (!running || reducedMotion) {
-      scale.stopAnimation();
-      if (reducedMotion) scale.setValue(1);
-      return;
-    }
-    Animated.timing(scale, {
-      toValue: phase === "Breathe in" ? 1.12 : 0.85,
-      duration: Math.max(100, phaseRemaining * 1000),
-      useNativeDriver: Platform.OS !== "web",
-    }).start();
-    return () => scale.stopAnimation();
-  }, [phase, running, reducedMotion]);
   function toggle() {
     if (active.current) pause();
     else resume();
@@ -1578,7 +1584,9 @@ function Breathing({ params }: { params: AnyRecord }) {
         </View>
       )}
       <View style={styles.momentArt}>
-        <Animated.View style={{ transform: [{ scale }] }}>
+        <Animated.View
+          style={{ transform: [{ scale: reducedMotion ? 1 : scale }] }}
+        >
           <Artwork kind="petal" size={270} />
         </Animated.View>
       </View>
@@ -1590,7 +1598,7 @@ function Breathing({ params }: { params: AnyRecord }) {
           lineHeight: 52,
         }}
       >
-        {!started ? "A moment for you" : !running ? "Rest here" : phase}
+        {!started ? "A moment for you" : !running ? "Rest here" : cue.phase}
       </Heading>
       {started && (
         <Copy
@@ -1602,7 +1610,7 @@ function Breathing({ params }: { params: AnyRecord }) {
             opacity: running ? 1 : 0,
           }}
         >
-          {Math.ceil(phaseRemaining)}s
+          {cue.remaining}s
         </Copy>
       )}
       <Copy

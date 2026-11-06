@@ -111,12 +111,15 @@ function Celebration({
 }) {
   const { colors } = useTheme();
   const reduced = useReducedMotion();
-  const reveal = useRef(new Animated.Value(1)).current;
+  const [reveal] = useState(() => new Animated.Value(1));
+  const revealed = useRef(false);
   useEffect(() => {
-    if (reduced) {
+    if (revealed.current || reduced) {
+      revealed.current = true;
       reveal.setValue(1);
       return;
     }
+    revealed.current = true;
     reveal.setValue(0);
     const animation = Animated.timing(reveal, {
       toValue: 1,

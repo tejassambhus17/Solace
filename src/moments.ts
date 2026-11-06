@@ -24,6 +24,16 @@ export function elapsedMomentMs(
   return Math.min(durationSec * 1000, Math.max(0, clock.elapsedMs + running));
 }
 
+/** Wake on the next visible second (or completion) without accumulating drift. */
+export function nextMomentTickDelay(elapsedMs: number, durationSec: number) {
+  return Math.max(
+    1,
+    Math.ceil(
+      Math.min(1000 - (elapsedMs % 1000), durationSec * 1000 - elapsedMs),
+    ),
+  );
+}
+
 export function resumeMoment(clock: MomentClock, now: number): MomentClock {
   return clock.runningSince === null ? { ...clock, runningSince: now } : clock;
 }
@@ -62,6 +72,21 @@ export function momentPosition(activity: SolaceMoment, elapsedMs: number) {
   throw new Error("This Moment has no guidance steps.");
 }
 
+function breathPhase(
+  phase: string,
+  remainingSeconds: number,
+  progress: number,
+  targetProgress: number,
+) {
+  return {
+    phase,
+    remaining: Math.ceil(remainingSeconds),
+    remainingMs: Math.round(remainingSeconds * 1000),
+    progress,
+    targetProgress,
+  };
+}
+
 export function breathingPosition(
   elapsedSec: number,
   pattern: NonNullable<SolaceMoment["breathing"]>,
@@ -70,28 +95,27 @@ export function breathingPosition(
   const cycle = exhaleEnd + (pattern.rest ?? 0);
   const position = Math.max(0, elapsedSec) % cycle;
   if (position < pattern.inhale)
-    return {
-      phase: "Breathe in",
-      remaining: Math.ceil(pattern.inhale - position),
-      progress: position / pattern.inhale,
-    };
+    return breathPhase(
+      "Breathe in",
+      pattern.inhale - position,
+      position / pattern.inhale,
+      1,
+    );
   if (position < pattern.inhale + pattern.hold)
-    return {
-      phase: pattern.rest ? "Hold gently" : "Rest gently",
-      remaining: Math.ceil(pattern.inhale + pattern.hold - position),
-      progress: 1,
-    };
+    return breathPhase(
+      pattern.rest ? "Hold gently" : "Rest gently",
+      pattern.inhale + pattern.hold - position,
+      1,
+      1,
+    );
   if (position < exhaleEnd)
-    return {
-      phase: "Breathe out",
-      remaining: Math.ceil(exhaleEnd - position),
-      progress: 1 - (position - pattern.inhale - pattern.hold) / pattern.exhale,
-    };
-  return {
-    phase: "Rest gently",
-    remaining: Math.ceil(cycle - position),
-    progress: 0,
-  };
+    return breathPhase(
+      "Breathe out",
+      exhaleEnd - position,
+      1 - (position - pattern.inhale - pattern.hold) / pattern.exhale,
+      0,
+    );
+  return breathPhase("Rest gently", cycle - position, 0, 0);
 }
 
 export function momentBreathingPosition(
@@ -103,11 +127,13 @@ export function momentBreathingPosition(
   if (!activity.breathing || position.complete) return null;
   // The three-step built-in breathing practices use the first and last steps
   // to arrive and return at a natural pace. The petal guides the middle step.
-  if (builtIn && activity.steps.length === 3)
-    return position.index === 1
-      ? breathingPosition(position.stepElapsed, activity.breathing)
-      : null;
-  return breathingPosition(elapsedMs / 1000, activity.breathing);
+  const staged = builtIn && activity.steps.length === 3;
+  if (staged && position.index !== 1) return null;
+  const cue = breathingPosition(
+    staged ? position.stepElapsed : elapsedMs / 1000,
+    activity.breathing,
+  );
+  return { ...cue, phaseEndsAtMs: Math.round(elapsedMs + cue.remainingMs) };
 }
 
 const boundedText = (value: unknown, maximum: number) =>

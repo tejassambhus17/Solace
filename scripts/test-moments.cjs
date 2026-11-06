@@ -31,6 +31,7 @@ const {
   resumeMoment,
   pauseMoment,
   elapsedMomentMs,
+  nextMomentTickDelay,
   momentPosition,
   breathingPosition,
   momentBreathingPosition,
@@ -85,6 +86,13 @@ test("completion requires the full active duration and delayed ticks never overc
   assert.equal(momentPosition(activity(), 99999999).stepRemaining, 0);
 });
 
+test("Moment wakeups align with active seconds and catch up after late callbacks", () => {
+  assert.equal(nextMomentTickDelay(0, 60), 1000);
+  assert.equal(nextMomentTickDelay(1750, 60), 250);
+  assert.equal(nextMomentTickDelay(2427.5, 60), 573);
+  assert.equal(nextMomentTickDelay(59_999.9, 60), 1);
+});
+
 test("repeated resume and pause events cannot reset or multiply recorded time", () => {
   const running = resumeMoment(emptyClock(), 1000);
   const duplicate = resumeMoment(running, 10000);
@@ -108,17 +116,23 @@ test("breathing visual phase and remaining seconds use the same actual clock", (
   assert.deepEqual(breathingPosition(0, pattern), {
     phase: "Breathe in",
     remaining: 4,
+    remainingMs: 4000,
     progress: 0,
+    targetProgress: 1,
   });
   assert.deepEqual(breathingPosition(4, pattern), {
     phase: "Rest gently",
     remaining: 2,
+    remainingMs: 2000,
     progress: 1,
+    targetProgress: 1,
   });
   assert.deepEqual(breathingPosition(6, pattern), {
     phase: "Breathe out",
     remaining: 6,
+    remainingMs: 6000,
     progress: 1,
+    targetProgress: 0,
   });
   assert.equal(breathingPosition(9, pattern).progress, 0.5);
   assert.equal(breathingPosition(12, pattern).phase, "Breathe in");
@@ -139,7 +153,9 @@ test("box breathing has four separate active phases and resumes at the same phas
   assert.deepEqual(breathingPosition(12, pattern), {
     phase: "Rest gently",
     remaining: 4,
+    remainingMs: 4000,
     progress: 0,
+    targetProgress: 0,
   });
   const clock = pauseMoment(resumeMoment(emptyClock(), 100), 13100, 60);
   assert.equal(
@@ -159,6 +175,28 @@ test("box breathing has four separate active phases and resumes at the same phas
     isPlayableMoment({ ...activity(), breathing: { ...pattern, rest: 5 } }),
     false,
   );
+});
+
+test("breathing motion shares a fixed phase end with the clock and resumes fractional progress", () => {
+  const value = activity();
+  const sample = (elapsedMs) =>
+    momentBreathingPosition(
+      value,
+      momentPosition(value, elapsedMs),
+      elapsedMs,
+      false,
+    );
+  assert.equal(sample(0).phaseEndsAtMs, 4000);
+  assert.equal(sample(1321.4).phaseEndsAtMs, 4000);
+  const paused = pauseMoment(resumeMoment(emptyClock(), 0), 5500, 60);
+  const cue = sample(elapsedMomentMs(paused, 9000, 60));
+  assert.equal(cue.phase, "Breathe out");
+  assert.equal(cue.progress, 0.75);
+  assert.equal(cue.remainingMs, 4500);
+  assert.equal(cue.targetProgress, 0);
+  assert.equal(cue.phaseEndsAtMs, 10000);
+  const resumed = resumeMoment(paused, 12000);
+  assert.equal(sample(elapsedMomentMs(resumed, 16500, 60)).phase, "Breathe in");
 });
 
 test("built-in breathing cues start at the guided step and stop during the return", () => {

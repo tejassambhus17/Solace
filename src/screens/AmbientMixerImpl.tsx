@@ -56,7 +56,7 @@ const defaultMix: AmbientMix = {
 const playerOptions = { updateInterval: 1000 };
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
-function Volume({
+const Volume = React.memo(function Volume({
   label,
   value,
   change,
@@ -169,7 +169,7 @@ function Volume({
       </Row>
     </View>
   );
-}
+});
 
 export function AmbientMixerImpl() {
   const app = useApp();
@@ -180,10 +180,10 @@ export function AmbientMixerImpl() {
   const [mix, setMix] = useState<AmbientMix>(() => stored || defaultMix);
   const currentMix = useRef(mix);
   currentMix.current = mix;
-  const rain = useAudioPlayer(sources.rain, playerOptions);
-  const ocean = useAudioPlayer(sources.ocean, playerOptions);
-  const forest = useAudioPlayer(sources.forest, playerOptions);
-  const wind = useAudioPlayer(sources.wind, playerOptions);
+  const rain = useAudioPlayer(null, playerOptions);
+  const ocean = useAudioPlayer(null, playerOptions);
+  const forest = useAudioPlayer(null, playerOptions);
+  const wind = useAudioPlayer(null, playerOptions);
   const players = useMemo(
     () => ({ rain, ocean, forest, wind }),
     [rain, ocean, forest, wind],
@@ -197,6 +197,9 @@ export function AmbientMixerImpl() {
   const active = useRef(false);
   const request = useRef(0);
   const saveLock = useRef(false);
+  const attached = useRef(new Set<AmbientTrack>());
+  const requested = useRef(new Set<AmbientTrack>());
+  const levels = useRef(new Map<AmbientTrack, number>());
   const heard = useRef(new Set<AmbientTrack>());
   const playbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -206,11 +209,12 @@ export function AmbientMixerImpl() {
     heard.current.clear();
     if (playbackTimer.current) clearTimeout(playbackTimer.current);
     playbackTimer.current = null;
-    for (const player of Object.values(players)) {
+    for (const track of requested.current) {
       try {
-        player.pause();
+        players[track].pause();
       } catch {}
     }
+    requested.current.clear();
   }, [players]);
 
   const pause = useCallback(
@@ -233,15 +237,18 @@ export function AmbientMixerImpl() {
       players[track].addListener("playbackStatusUpdate", (status) => {
         if (!active.current || !currentMix.current.volumes[track]) return;
         if (status.mediaServicesDidReset) {
+          attached.current.delete(track);
           pause("Sound was interrupted. Play again when you’re ready.");
         } else if (status.error) {
+          attached.current.delete(track);
           pause();
           setError("A sound couldn’t play. Try starting the mix again.");
         } else if (status.playing) {
+          const started = heard.current.size > 0;
           heard.current.add(track);
           if (playbackTimer.current) clearTimeout(playbackTimer.current);
           playbackTimer.current = null;
-          setPlayback("playing");
+          if (!started) setPlayback("playing");
         } else if (heard.current.has(track) && !status.isBuffering) {
           pause("Sound was interrupted. Play again when you’re ready.");
         }
@@ -259,15 +266,27 @@ export function AmbientMixerImpl() {
     (settings: AmbientMix) => {
       for (const track of ambientTracks) {
         const player = players[track];
-        player.loop = true;
-        // Leave headroom when all four independent loops are enabled.
-        player.volume =
-          (settings.volumes[track] * settings.masterVolume * 0.32) / 10000;
         if (settings.volumes[track]) {
-          if (!player.playing && !heard.current.has(track)) player.play();
-        } else {
+          if (!attached.current.has(track)) {
+            player.replace(sources[track]);
+            player.loop = true;
+            levels.current.delete(track);
+            attached.current.add(track);
+          }
+          // Leave headroom when all four independent loops are enabled.
+          const level =
+            (settings.volumes[track] * settings.masterVolume * 0.32) / 10000;
+          if (levels.current.get(track) !== level) {
+            player.volume = level;
+            levels.current.set(track, level);
+          }
+          if (!requested.current.has(track)) {
+            requested.current.add(track);
+            player.play();
+          }
+        } else if (requested.current.delete(track)) {
           heard.current.delete(track);
-          if (player.playing) player.pause();
+          player.pause();
         }
       }
     },
@@ -355,6 +374,33 @@ export function AmbientMixerImpl() {
 
   const canPlay =
     Object.values(mix.volumes).some(Boolean) && mix.masterVolume > 0;
+  const changeTrack = useMemo(
+    () =>
+      Object.fromEntries(
+        ambientTracks.map((track) => [
+          track,
+          (value: number) =>
+            setMix((previous) =>
+              previous.volumes[track] === value
+                ? previous
+                : {
+                    ...previous,
+                    volumes: { ...previous.volumes, [track]: value },
+                  },
+            ),
+        ]),
+      ) as Record<AmbientTrack, (value: number) => void>,
+    [],
+  );
+  const changeMaster = useCallback(
+    (masterVolume: number) =>
+      setMix((previous) =>
+        previous.masterVolume === masterVolume
+          ? previous
+          : { ...previous, masterVolume },
+      ),
+    [],
+  );
   return (
     <Screen title="Ambient sound mixer" back={app.back}>
       <View style={[styles.scene, { backgroundColor: colors.heroSurface }]}>
@@ -413,12 +459,7 @@ export function AmbientMixerImpl() {
             key={track}
             {...trackDetails[track]}
             value={mix.volumes[track]}
-            change={(value) =>
-              setMix((previous) => ({
-                ...previous,
-                volumes: { ...previous.volumes, [track]: value },
-              }))
-            }
+            change={changeTrack[track]}
           />
         ))}
       </Card>
@@ -427,9 +468,7 @@ export function AmbientMixerImpl() {
           label="Master volume"
           icon="volume-medium-outline"
           value={mix.masterVolume}
-          change={(masterVolume) =>
-            setMix((previous) => ({ ...previous, masterVolume }))
-          }
+          change={changeMaster}
         />
         <AppText variant="label">Sleep timer</AppText>
         <AppText variant="caption" color={colors.muted}>
