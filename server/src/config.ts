@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { AIConfig } from "./ai.js";
+import { readGoogleOAuthConfig } from "./google-auth.js";
 
 /** Only enable proxy trust when the number of controlled upstream hops is known. */
 export function parseTrustProxyHops(value: string | undefined): number {
@@ -58,5 +59,6 @@ export function readServerConfig(
       .map((value) => value.trim())
       .filter(Boolean),
     ai,
+    googleOAuth: readGoogleOAuthConfig(environment),
   };
 }

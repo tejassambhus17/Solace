@@ -6,6 +6,7 @@ import { Store } from "./database.js";
 import { createApp } from "./app.js";
 import { readServerConfig } from "./config.js";
 import { provider } from "./ai.js";
+import { recoveryMailerFromEnv } from "./password-recovery.js";
 
 async function start() {
   // Source and compiled entry points both live one directory below server/.
@@ -62,7 +63,9 @@ async function start() {
       store,
       trustProxyHops: configuration.trustProxyHops,
       ai: configuration.ai,
+      googleOAuth: configuration.googleOAuth,
       allowedOrigins: configuration.allowedOrigins,
+      recoveryMailer: recoveryMailerFromEnv(process.env),
     });
   } catch (error) {
     // No application requests were accepted. Finish database cleanup while the

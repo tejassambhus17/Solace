@@ -57,6 +57,14 @@ import {
   reflectOnJournal,
 } from "./journal-ai.js";
 import type { JournalSource } from "./journal-contract.js";
+import {
+  createGoogleAuthRoutes,
+  type GoogleOAuthConfig,
+} from "./google-auth.js";
+import {
+  createPasswordRecoveryRoutes,
+  type RecoveryMailer,
+} from "./password-recovery.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
@@ -78,6 +86,9 @@ export type AppConfig = {
   allowedOrigins?: string[];
   rateLimits?: boolean;
   trustProxyHops?: number;
+  googleOAuth?: GoogleOAuthConfig;
+  googleFetch?: typeof fetch;
+  recoveryMailer?: RecoveryMailer;
 };
 const asyncRoute =
   (
@@ -322,14 +333,14 @@ export function createApp(config: AppConfig) {
         input.email,
       ]);
       // Use a full scrypt operation even for a missing account to reduce account timing disclosure.
-      const valid = row
+      const valid = row?.password
         ? await verifyPassword(input.password, row.password)
         : await verifyPassword(
             input.password,
             "00112233445566778899aabbccddeeff:" + "0".repeat(128),
           );
       const current =
-        row && valid
+        row?.password && valid
           ? store.one<UserRow>(
               "SELECT * FROM users WHERE id=? AND password=?",
               [row.id, row.password],
@@ -346,6 +357,18 @@ export function createApp(config: AppConfig) {
       return res.json({ token, user: publicUser(current) });
     }),
   );
+  app.use(
+    "/api/auth/password",
+    createPasswordRecoveryRoutes(store, authLimit, config.recoveryMailer),
+  );
+  const google = createGoogleAuthRoutes({
+    store,
+    config: config.googleOAuth,
+    fetcher: config.googleFetch,
+    issueToken,
+    authLimit,
+  });
+  app.use("/api/auth/google", google.publicRoutes);
   app.use("/api", (req: AuthRequest, res, next) => {
     const token = /^Bearer ([A-Za-z0-9_-]{40,100})$/.exec(
       req.headers.authorization ?? "",
@@ -367,6 +390,7 @@ export function createApp(config: AppConfig) {
     req.token = token;
     next();
   });
+  app.use("/api/auth/google", google.linkedRoutes);
   app.get("/api/auth/me", (req: AuthRequest, res) =>
     res.json({ user: publicUser(user(req)) }),
   );
