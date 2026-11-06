@@ -83,6 +83,10 @@ The API normally uses port 3001 and Expo web uses 8081. Separate terminals can r
 
 Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. An Android debug build can also use an explicit loopback address over USB reverse. Release clients require an explicit HTTPS API and reject loopback, private network addresses and local-only hostnames. Reload Expo after public configuration changes and rebuild installed release binaries.
 
+Google sign-in on Android and iOS uses a system browser and the existing Solace session. To link an existing account, sign in first and open **Profile → Edit Profile → Google sign-in**. Google Cloud settings, the HTTPS callback, optional SMTP recovery and native rebuild steps are in the [authentication setup guide](docs/GOOGLE_AUTH_SETUP.md).
+
+Use **Profile → Appearance & preferences → Biometric Lock** to protect an existing session, My Journal or both on an enrolled device. Solace can lock immediately or after one or five minutes in the background. You can recover access through your normal sign-in. The web preview keeps the email/password session for the current browser tab.
+
 Provider credentials belong only in **server/.env** or the private server environment. Set `GEMINI_API_KEY` to use the default `gemini-3.1-flash-lite`, or set `GEMINI_MODEL` to a supported model, then restart the API. OpenAI handles text when only its key is configured. With both keys, `OPENAI_FALLBACK_ENABLED=true` opts into sending requests to OpenAI after transient Gemini failures. `AI_MODE=live` requires a key, `auto` selects live when configured, and `offline` uses the labeled built-in companion. See [server configuration](server/README.md).
 
 ## Project map
@@ -120,6 +124,7 @@ npm run server:test
 npm run test:tooling
 npm run test:api-config
 npm run test:session-state
+npm run test:google-auth
 npm run test:moments
 npm run test:progress
 npm run test:voice

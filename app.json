@@ -9,7 +9,10 @@
     "android": {
       "package": "com.solacewellness.app",
       "softwareKeyboardLayoutMode": "resize",
-      "permissions": ["android.permission.POST_NOTIFICATIONS"]
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_BIOMETRIC"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -17,7 +20,18 @@
     },
     "plugins": [
       "expo-notifications",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Allow Solace to use Face ID to unlock your saved sign-in or private journal."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Solace to use Face ID to unlock your saved sign-in or private journal."
+        }
+      ],
       "expo-font",
       [
         "expo-image-picker",

@@ -59,6 +59,19 @@ test("iOS microphone purpose explains voice while the unused camera permission r
   );
   assert.equal(mods.ios.infoPlist.NSCameraUsageDescription, undefined);
 });
+test("native prebuild gives Biometric Lock an explicit Face ID purpose and Android permission", () => {
+  assert.match(
+    mods.ios.infoPlist.NSFaceIDUsageDescription,
+    /unlock your saved sign-in or private journal/i,
+  );
+  assert.ok(
+    permissions.some(
+      (entry) =>
+        entry.$["android:name"] === "android.permission.USE_BIOMETRIC" &&
+        entry.$["tools:node"] !== "remove",
+    ),
+  );
+});
 test("voice and ambience do not enable background recording or playback services", () => {
   assert.ok(!(mods.ios.infoPlist.UIBackgroundModes || []).includes("audio"));
   const services = manifest.application.flatMap(

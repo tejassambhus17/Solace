@@ -56,10 +56,15 @@ import { routes } from "./src/routes";
 import { experienceDestination } from "./src/experience-links";
 import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
 import { AmbientMixerScreen } from "./src/screens/AmbientMixer";
+import {
+  DevicePrivacyCover,
+  DeviceUnlockScreen,
+} from "./src/screens/DeviceLock";
 import { MilestoneCelebration } from "./src/MilestoneCelebration";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
+import { GoogleLinkProvider } from "./src/google-auth";
 import {
   subscribeNotificationNavigation,
   restoreDeviceReminders,
@@ -148,7 +153,24 @@ const RetainedScreen = React.memo(function RetainedScreen({
 function Shell() {
   const app = useApp();
   useExperienceLinks(app);
-  return <AccountShell key={app.user?.id ?? "signed-out"} app={app} />;
+  return (
+    <View style={{ flex: 1 }}>
+      <View
+        style={{ flex: 1 }}
+        accessibilityElementsHidden={app.privacyCovered}
+        importantForAccessibility={
+          app.privacyCovered ? "no-hide-descendants" : "auto"
+        }
+      >
+        {app.appLocked ? (
+          <DeviceUnlockScreen scope="app" />
+        ) : (
+          <AccountShell key={app.user?.id ?? "signed-out"} app={app} />
+        )}
+      </View>
+      {app.privacyCovered && <DevicePrivacyCover />}
+    </View>
+  );
 }
 
 function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
@@ -160,12 +182,15 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   const selectTab = useCallback((tab: string) => tabAction.current(tab), []);
   const chatPositions = useRef(new Map<string, number>());
   const visitedRoots = useRef(new Set<RetainedRoot>());
-  const activeRoot = Object.hasOwn(retainedRoots, app.route)
-    ? (app.route as RetainedRoot)
-    : null;
+  const journalLocked = app.journalLocked && app.journalRouteProtected;
+  const activeRoot =
+    !journalLocked && Object.hasOwn(retainedRoots, app.route)
+      ? (app.route as RetainedRoot)
+      : null;
   const authenticated = !!app.user && !app.sessionExpired;
   if (!authenticated) visitedRoots.current.clear();
   else if (activeRoot) visitedRoots.current.add(activeRoot);
+  if (app.journalLocked) visitedRoots.current.delete(routes.journal);
   const [navigationHeight, setNavigationHeight] = useState(88);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
@@ -246,6 +271,7 @@ function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
       </Screen>
     );
   else if (!app.user || app.sessionExpired) content = <AuthScreen />;
+  else if (journalLocked) content = <DeviceUnlockScreen scope="journal" />;
   else if (activeRoot) content = null;
   else if (app.route === routes.solace) content = <SolaceHome />;
   else if (app.route === routes.companion)
@@ -443,7 +469,9 @@ function FontGate() {
     );
   return (
     <AppProvider>
-      <Shell />
+      <GoogleLinkProvider>
+        <Shell />
+      </GoogleLinkProvider>
     </AppProvider>
   );
 }

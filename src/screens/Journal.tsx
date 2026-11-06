@@ -10,6 +10,10 @@ import {
 import { localDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
 import { isRecordId, routes } from "../routes";
+import {
+  isJournalRecord as isJournal,
+  journalWriting as writing,
+} from "../journal-record";
 import { type EditorDraft, type Item, useApp } from "../store";
 import { artGradient, useTheme } from "../theme";
 import {
@@ -33,15 +37,6 @@ const landscapes = {
   dark: require("../../assets/redesign-explore-scene-dark.jpg"),
 };
 
-const writing = (record?: Item) =>
-  [record?.text, record?.content, record?.note].find(
-    (value): value is string => typeof value === "string" && !!value.trim(),
-  ) ?? "";
-const isJournal = (record: Item) =>
-  !!record.id &&
-  !record.weeklyPeriod &&
-  (record.kind === "journal" ||
-    (record.kind === undefined && !!writing(record)));
 const titleOf = (record: Item) =>
   typeof record.title === "string" && record.title.trim()
     ? record.title

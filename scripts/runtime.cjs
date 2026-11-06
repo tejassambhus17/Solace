@@ -53,6 +53,9 @@ async function main() {
     "native-config": {
       args: ["--test", file("test-native-config.cjs"), ...rest],
     },
+    "google-auth": {
+      args: ["--test", file("test-google-auth-flow.cjs"), ...rest],
+    },
     moments: { args: ["--test", file("test-moments.cjs"), ...rest] },
     voice: { args: ["--test", file("test-voice.cjs"), ...rest] },
     progress: { args: ["--test", file("test-progress.cjs"), ...rest] },

@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -16,6 +17,16 @@ import {
   type SolaceMode,
 } from "./routes";
 import { apiConnectionError, resolveApiConfiguration } from "./api-config";
+import { isJournalRecord } from "./journal-record";
+import {
+  deviceLockDelays,
+  persistDeviceLock,
+  provisionDeviceLock,
+  readDeviceLock,
+  verifyDeviceLock,
+  type DeviceLockPolicy,
+  type DeviceLockSettings,
+} from "./device-lock";
 import {
   createOfflineVault,
   isProtectedDraft,
@@ -174,25 +185,46 @@ export const newChatRequestId = () => {
   });
 };
 const persist = {
-  get: () =>
-    Platform.OS === "web"
-      ? AsyncStorage.getItem(TOKEN_KEY)
-      : SecureStore.getItemAsync(TOKEN_KEY),
+  async get() {
+    if (Platform.OS !== "web") return SecureStore.getItemAsync(TOKEN_KEY);
+    if (typeof window === "undefined") return null;
+    const current = window.sessionStorage.getItem(TOKEN_KEY);
+    // AsyncStorage used this localStorage key on the web preview.
+    const legacy = window.localStorage.getItem(TOKEN_KEY);
+    if (!legacy) return current;
+    if (!current) window.sessionStorage.setItem(TOKEN_KEY, legacy);
+    window.localStorage.removeItem(TOKEN_KEY);
+    return current ?? legacy;
+  },
   set: (value: string) =>
     Platform.OS === "web"
-      ? AsyncStorage.setItem(TOKEN_KEY, value)
-      : SecureStore.setItemAsync(TOKEN_KEY, value),
-  remove: () =>
-    Platform.OS === "web"
-      ? AsyncStorage.removeItem(TOKEN_KEY)
-      : SecureStore.deleteItemAsync(TOKEN_KEY),
+      ? window.sessionStorage.setItem(TOKEN_KEY, value)
+      : SecureStore.setItemAsync(TOKEN_KEY, value, {
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        }),
+  async remove() {
+    if (Platform.OS !== "web") return SecureStore.deleteItemAsync(TOKEN_KEY);
+    window.localStorage.removeItem(TOKEN_KEY);
+    return window.sessionStorage.removeItem(TOKEN_KEY);
+  },
 };
+type GoogleAuthFlow = { id: string; url: string };
+type GoogleAuthProof = { id: string; verifier: string; handoff: string };
+
 export type AppState = {
   user: Item | null;
   data: Data;
   initializing: boolean;
   sessionError: string | null;
   sessionExpired: boolean;
+  deviceLock: DeviceLockSettings | null;
+  deviceLockBusy: boolean;
+  appLocked: boolean;
+  journalLocked: boolean;
+  journalRouteProtected: boolean;
+  privacyCovered: boolean;
+  updateDeviceLock: (settings: DeviceLockSettings) => Promise<void>;
+  unlockDeviceLock: (scope: "app" | "journal") => Promise<void>;
   retrySession: () => Promise<void>;
   busy: boolean;
   error: string | null;
@@ -219,6 +251,28 @@ export type AppState = {
   discardPendingWrite: (id: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
+  googleConfiguration: (signal?: AbortSignal) => Promise<{ enabled: boolean }>;
+  googleLoginStart: (
+    challenge: string,
+    signal?: AbortSignal,
+  ) => Promise<GoogleAuthFlow>;
+  googleLogin: (proof: GoogleAuthProof, signal?: AbortSignal) => Promise<void>;
+  googleLinkStatus: (signal?: AbortSignal) => Promise<{ linked: boolean }>;
+  googleLinkStart: (
+    challenge: string,
+    signal?: AbortSignal,
+  ) => Promise<GoogleAuthFlow>;
+  googleLinkComplete: (
+    proof: GoogleAuthProof,
+    signal?: AbortSignal,
+  ) => Promise<{ linked: true }>;
+  requestPasswordReset: (email: string, signal?: AbortSignal) => Promise<void>;
+  resetPassword: (
+    email: string,
+    code: string,
+    password: string,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
   save: (
@@ -330,8 +384,9 @@ async function request(
         (typeof body?.error === "string" && body.error) ||
           (typeof body?.message === "string" && body.message) ||
           "Something went wrong. Please try again.",
-      ) as Error & { status?: number };
+      ) as Error & { status?: number; code?: string };
       error.status = response.status;
+      if (typeof body?.code === "string") error.code = body.code;
       throw error;
     }
     if (
@@ -352,6 +407,25 @@ async function request(
 }
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const generation = useRef(0);
+  const [localLock, setLocalLock] = useState({
+    policy: null as DeviceLockPolicy | null,
+    locked: false,
+    journalGranted: false,
+    covered: false,
+  });
+  const lockState = useRef(localLock);
+  const lockWrites = useRef<Promise<void>>(Promise.resolve());
+  const [deviceLockBusy, setDeviceLockBusy] = useState(false);
+  const prompting = useRef(false);
+  const backgroundSince = useRef<number | null>(null);
+  const backgroundGeneration = useRef(0);
+  const lastNativeState = useRef<string | null>(null);
+  const journalVisit = useRef(0);
+  const changeDeviceLock = (change: Partial<typeof localLock>) => {
+    const next = { ...lockState.current, ...change };
+    lockState.current = next;
+    setLocalLock(next);
+  };
   const inFlightChats = useRef(new Set<string>());
   const [chatPending, setChatPending] = useState<Record<string, string>>({});
   const sessionRequests = useRef<AbortController | null>(null);
@@ -416,7 +490,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
   };
   const canUseAccount = (version: number) =>
-    version === generation.current && accountTransition.current !== version;
+    version === generation.current &&
+    accountTransition.current !== version &&
+    !lockState.current.locked;
   const assertActiveSession = (version: number) => {
     assertSession(version);
     if (!canUseAccount(version))
@@ -427,6 +503,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const finishAccountTransition = (version: number) => {
     if (accountTransition.current === version) accountTransition.current = null;
     if (version === generation.current) setBusy(false);
+  };
+  const requireUnlockedJournal = () => {
+    if (lockState.current.policy?.journal && !lockState.current.journalGranted)
+      throw new Error(
+        "Unlock My Journal before opening or changing private writing.",
+      );
+  };
+  const saveDevicePolicy = (
+    policy: DeviceLockPolicy | null,
+    version: number,
+  ) => {
+    const job = lockWrites.current
+      .catch(() => {})
+      .then(async () => {
+        assertSession(version);
+        await persistDeviceLock(policy);
+        assertSession(version);
+        changeDeviceLock({
+          policy,
+          journalGranted: false,
+          locked: false,
+          covered: policy ? lockState.current.covered : false,
+        });
+      });
+    lockWrites.current = job;
+    return job;
+  };
+  const localBiometricPrompt = async <T,>(
+    work: (assertForeground: () => void) => Promise<T>,
+  ) => {
+    if (prompting.current)
+      throw new Error("A biometric prompt is already open.");
+    prompting.current = true;
+    setDeviceLockBusy(true);
+    const background = backgroundGeneration.current;
+    const assertForeground = () => {
+      if (background !== backgroundGeneration.current)
+        throw new Error(
+          "Solace went into the background. Try again when you’re ready.",
+        );
+    };
+    try {
+      const result = await work(assertForeground);
+      assertForeground();
+      return result;
+    } finally {
+      prompting.current = false;
+      setDeviceLockBusy(false);
+    }
   };
   const [user, setUser] = useState<Item | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -501,14 +626,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     !!current &&
     Object.keys(current).length === Object.keys(expected).length &&
     Object.keys(expected).every((field) => current[field] === expected[field]);
-  const flushEditorDrafts = async () => {
+  const flushEditorDrafts = async (checkpoint?: () => boolean) => {
     const account = owner.current;
-    if (!account || !canUseAccount(draftGeneration)) return false;
+    const canWrite = checkpoint ?? (() => canUseAccount(draftGeneration));
+    if (!account || !canWrite()) return false;
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = null;
     try {
       await vault.update(account, (snapshot) => {
-        if (!canUseAccount(draftGeneration)) return snapshot;
+        if (!canWrite()) return snapshot;
         const drafts = Object.fromEntries(
           Object.entries(editors.current).filter(([key]) =>
             isProtectedDraft(key),
@@ -516,15 +642,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
         return { ...snapshot, drafts };
       });
-      if (draftGeneration === generation.current) setOfflineError(null);
-      return draftGeneration === generation.current;
+      if (!canWrite()) return false;
+      setOfflineError(null);
+      return true;
     } catch (error) {
-      if (draftGeneration === generation.current)
+      if (canWrite()) {
         setOfflineError(
           error instanceof Error
             ? error.message
             : "Your draft is open here but could not be protected on this device.",
         );
+      }
       return false;
     }
   };
@@ -565,6 +693,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     )
       return;
     const expiredVersion = advanceSession();
+    changeDeviceLock({ journalGranted: false, locked: false });
     setToken(null);
     setSessionError(null);
     setSessionExpired(true);
@@ -595,7 +724,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
   };
-  const load = async (t: string, version = generation.current) => {
+  const load = async (
+    t: string,
+    version = generation.current,
+    verifiedOwner?: string,
+  ) => {
     assertSession(version);
     const startedAt = revision.current;
     const result = await request(
@@ -618,6 +751,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw new Error(
         "Solace could not read your saved space. Please try again.",
       );
+    if (verifiedOwner && result.user.id !== verifiedOwner)
+      throw Object.assign(
+        new Error("This saved sign-in has changed. Sign in again to continue."),
+        { status: 401 },
+      );
+    if (
+      lockState.current.policy &&
+      lockState.current.policy.owner !== result.user.id
+    )
+      await saveDevicePolicy(null, version);
     owner.current = String(result.user.id);
     if (writingOwner.current !== owner.current)
       await restoreWriting(owner.current, version);
@@ -628,10 +771,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setUser(result.user);
     }
   };
-  const restore = async (t: string, version = generation.current) => {
+  const restore = async (
+    t: string,
+    version = generation.current,
+    verifiedOwner?: string,
+  ) => {
     assertSession(version);
     try {
-      await load(t, version);
+      await load(t, version, verifiedOwner);
       assertSession(version);
       setToken(t);
       setSessionError(null);
@@ -658,8 +805,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const t = await persist.get();
-        if (t && active && version === generation.current)
-          await restore(t, version);
+        if (!active || version !== generation.current) return;
+        let policy: DeviceLockPolicy | null;
+        try {
+          policy = await readDeviceLock();
+        } catch (error) {
+          if (active && version === generation.current && t)
+            changeDeviceLock({ locked: true });
+          return;
+        }
+        if (!active || version !== generation.current) return;
+        const locked = !!t && !!policy && policy.appDelay !== null;
+        changeDeviceLock({ policy, locked });
+        if (t && !locked) await restore(t, version);
       } catch (e) {
         if (active && version === generation.current)
           setSessionError(
@@ -673,6 +831,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, []);
+  const updateDeviceLock = async (settings: DeviceLockSettings) => {
+    const version = draftGeneration;
+    assertActiveSession(version);
+    const account = owner.current;
+    if (Platform.OS === "web" || !token || !account)
+      throw new Error("Open Solace on a signed-in phone to set up biometrics.");
+    if (
+      settings.appDelay !== null &&
+      !deviceLockDelays.includes(settings.appDelay)
+    )
+      throw new Error("Choose a supported lock delay.");
+    const current = lockState.current.policy;
+    const next =
+      settings.appDelay !== null || settings.journal
+        ? { ...settings, owner: account }
+        : null;
+    if (!current && !next) return;
+    await localBiometricPrompt(async () => {
+      if (current?.owner === account)
+        await verifyDeviceLock(account, "Confirm changes to Biometric Lock");
+      else await provisionDeviceLock(account);
+    });
+    assertActiveSession(version);
+    await saveDevicePolicy(next, version);
+  };
+  const unlockDeviceLock = async (scope: "app" | "journal") => {
+    const version = draftGeneration;
+    assertSession(version);
+    const { policy, locked } = lockState.current;
+    if (!policy || (owner.current && owner.current !== policy.owner))
+      throw new Error(
+        "This device lock could not be read. Sign in again to recover access.",
+      );
+    const visit = journalVisit.current;
+    if (
+      (scope === "app" && !locked) ||
+      (scope === "journal" &&
+        (locked || !policy.journal || !token || !insideJournal))
+    )
+      return;
+    await localBiometricPrompt(async (assertForeground) => {
+      await verifyDeviceLock(
+        policy.owner,
+        scope === "app" ? "Unlock Solace" : "Unlock My Journal",
+      );
+      assertForeground();
+      assertSession(version);
+      if (scope === "journal") {
+        if (journalVisit.current === visit)
+          changeDeviceLock({ journalGranted: true });
+        return;
+      }
+      if (!token) {
+        const saved = await persist.get();
+        assertSession(version);
+        if (!saved)
+          throw new Error(
+            "This saved sign-in is unavailable. Sign in again to continue.",
+          );
+        await restore(saved, version, policy.owner);
+        assertSession(version);
+      }
+      assertForeground();
+      changeDeviceLock({ locked: false });
+    });
+  };
   const retrySession = async () => {
     const version = draftGeneration;
     assertActiveSession(version);
@@ -686,7 +910,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setInitializing(false);
     }
   };
-  const authorize = async (path: string, values: Item) => {
+  const authorize = async (
+    path: string,
+    values: Item,
+    signal?: AbortSignal,
+  ) => {
     assertActiveSession(draftGeneration);
     const version = advanceSession();
     accountTransition.current = version;
@@ -698,7 +926,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const result = await request(
         path,
         null,
-        { method: "POST", body: JSON.stringify(values) },
+        { method: "POST", body: JSON.stringify(values), signal },
         sessionRequests.current?.signal,
       );
       assertSession(version);
@@ -714,6 +942,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const sameAccount = owner.current === result.user.id;
       if (!sameAccount) await clearWriting(owner.current);
       assertSession(version);
+      if (
+        lockState.current.policy?.owner !== result.user.id &&
+        lockState.current.policy
+      )
+        await saveDevicePolicy(null, version);
       await writeCredential(result.token, version);
       assertSession(version);
       if (!sameAccount) {
@@ -728,6 +961,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setNavigation(initialNavigation());
       }
       owner.current = String(result.user.id);
+      changeDeviceLock({ journalGranted: false, locked: false });
       setUser(null);
       setToken(result.token);
       setSessionError(null);
@@ -756,6 +990,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     authorize("/auth/login", { email, password });
   const signUp = (name: string, email: string, password: string) =>
     authorize("/auth/register", { name, email, password });
+  const googleConfiguration = (signal?: AbortSignal) =>
+    request("/auth/google/config", null, { signal });
+  const googleLoginStart = (challenge: string, signal?: AbortSignal) =>
+    request("/auth/google/start", null, {
+      method: "POST",
+      body: JSON.stringify({ challenge }),
+      signal,
+    });
+  const googleLogin = (proof: GoogleAuthProof, signal?: AbortSignal) =>
+    authorize("/auth/google/complete", proof, signal);
+  const googleLinkStatus = (signal?: AbortSignal) =>
+    authenticatedRequest("/auth/google/link", { signal }, draftGeneration);
+  const googleLinkStart = (challenge: string, signal?: AbortSignal) =>
+    authenticatedRequest(
+      "/auth/google/link/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ challenge }),
+        signal,
+      },
+      draftGeneration,
+    );
+  const googleLinkComplete = (proof: GoogleAuthProof, signal?: AbortSignal) =>
+    authenticatedRequest(
+      "/auth/google/link/complete",
+      {
+        method: "POST",
+        body: JSON.stringify(proof),
+        signal,
+      },
+      draftGeneration,
+    );
+  const requestPasswordReset = async (email: string, signal?: AbortSignal) => {
+    await request("/auth/password/request", null, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+      signal,
+    });
+  };
+  const resetPassword = async (
+    email: string,
+    code: string,
+    password: string,
+    signal?: AbortSignal,
+  ) => {
+    await request("/auth/password/reset", null, {
+      method: "POST",
+      body: JSON.stringify({ email, code, password }),
+      signal,
+    });
+  };
   const signOut = async () => {
     assertSession(draftGeneration);
     const version = advanceSession();
@@ -766,7 +1051,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       // Do not report logout complete if protected writing could not be erased.
       try {
-        await clearWriting(owner.current);
+        await clearWriting(
+          owner.current ?? lockState.current.policy?.owner ?? null,
+        );
       } catch (error) {
         if (version === generation.current)
           setOfflineError(
@@ -776,7 +1063,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       assertSession(version);
       try {
-        if (token) await request("/auth/logout", token, { method: "POST" });
+        const saved =
+          token || (lockState.current.locked ? await persist.get() : null);
+        if (saved) await request("/auth/logout", saved, { method: "POST" });
       } catch {}
       if (version !== generation.current) return;
       try {
@@ -788,6 +1077,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           );
         throw error;
       }
+      assertSession(version);
+      if (lockState.current.policy || lockState.current.locked)
+        await saveDevicePolicy(null, version).catch(() => {
+          if (version === generation.current)
+            changeDeviceLock({
+              policy: null,
+              locked: false,
+              journalGranted: false,
+              covered: false,
+            });
+        });
       assertSession(version);
       owner.current = null;
       writingOwner.current = null;
@@ -948,6 +1248,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
     const id = record.id;
+    if (
+      collection === "reflections" &&
+      (record.kind === "journal" ||
+        (id &&
+          data.reflections.some(
+            (item) => item.id === id && isJournalRecord(item),
+          )))
+    )
+      requireUnlockedJournal();
     const queued = pending.current.find(
       (entry) => entry.collection === collection && entry.id === id,
     );
@@ -1060,6 +1369,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return saved;
   };
   const remove = async (collection: Collection, id: string) => {
+    if (
+      collection === "reflections" &&
+      data.reflections.some((item) => item.id === id && isJournalRecord(item))
+    )
+      requireUnlockedJournal();
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
     if (
@@ -1194,23 +1508,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertSession(version);
     return result;
   };
-  const reflectJournal: AppState["reflectJournal"] = (
+  const reflectJournal: AppState["reflectJournal"] = async (
     id,
     selection,
     action,
     signal,
-  ) =>
-    featureRequest(`/journal/${encodeURIComponent(id)}/reflect`, {
+  ) => {
+    requireUnlockedJournal();
+    return featureRequest(`/journal/${encodeURIComponent(id)}/reflect`, {
       method: "POST",
       body: JSON.stringify({ ...selection, action }),
       signal,
     });
+  };
   const discussJournal: AppState["discussJournal"] = async (
     id,
     selection,
     requestId,
     signal,
   ) => {
+    requireUnlockedJournal();
     const result = await featureRequest(
       `/journal/${encodeURIComponent(id)}/discuss`,
       {
@@ -1333,6 +1650,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setNavigation(initialNavigation());
       try {
         await writeCredential(null, version);
+        if (lockState.current.policy) await saveDevicePolicy(null, version);
       } catch {
         if (version === generation.current)
           setSessionError(
@@ -1354,6 +1672,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const exportData = async () => {
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
+    const policy = lockState.current.policy;
+    if (policy?.journal && policy.owner === owner.current) {
+      assertActiveSession(version);
+      await localBiometricPrompt(() =>
+        verifyDeviceLock(policy.owner, "Confirm to export private writing"),
+      );
+    }
     const result = await authenticatedRequest("/export", {}, version);
     assertSession(version);
     return result;
@@ -1361,6 +1686,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { activeTab, stacks } = navigation;
   const stack = stacks[activeTab]!;
   const current = stack[stack.length - 1];
+  const insideJournal =
+    journalRoutes.has(current.name) ||
+    ([routes.reflectionDetail, "reflection"].includes(current.name) &&
+      data.reflections.some(
+        (record) =>
+          isJournalRecord(record) &&
+          record.id === (current.params.id ?? current.params.editId),
+      ));
+  const journalLocked =
+    !!localLock.policy?.journal && !localLock.journalGranted;
+  const displayedData = useMemo(() => {
+    if (!localLock.policy?.journal || (insideJournal && !journalLocked))
+      return data;
+    return {
+      ...data,
+      // Journey can still count and link private entries without displaying
+      // titles, content, tags, or notes on an unlocked secondary screen.
+      reflections: data.reflections.map((record) =>
+        isJournalRecord(record)
+          ? {
+              id: record.id,
+              kind: "journal",
+              title: "Private journal entry",
+              day: record.day,
+              createdAt: record.createdAt,
+              updatedAt: record.updatedAt,
+              localOnly: record.localOnly,
+            }
+          : record,
+      ),
+    };
+  }, [data, insideJournal, journalLocked, localLock.policy?.journal]);
   const switchSolaceMode = (mode: SolaceMode) => {
     if (draftGeneration !== generation.current) return;
     setNavigation((old) => {
@@ -1640,6 +1997,75 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ).catch(() => {});
   }, [navigation.solaceMode, user?.id]);
   useEffect(() => {
+    if (insideJournal) return;
+    journalVisit.current += 1;
+    if (lockState.current.journalGranted)
+      changeDeviceLock({ journalGranted: false });
+  }, [insideJournal]);
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const cancelSensitiveWork = () => {
+      // Local drafts may finish one protected checkpoint while remote calls
+      // are aborted. A later logout or account transition still invalidates it.
+      let checkpointVersion = generation.current;
+      const account = owner.current;
+      if (token && account && Object.keys(editors.current).length)
+        void flushEditorDrafts(
+          () =>
+            generation.current === checkpointVersion &&
+            accountTransition.current === null &&
+            owner.current === account,
+        );
+      checkpointVersion = advanceSession();
+      flushLock.current = null;
+      setSyncingWrites(false);
+    };
+    const relockApp = () => {
+      if (lockState.current.locked || accountTransition.current !== null)
+        return;
+      changeDeviceLock({ locked: true, journalGranted: false });
+      cancelSensitiveWork();
+    };
+    const subscription = NativeAppState?.addEventListener?.(
+      "change",
+      (state) => {
+        const enteredBackground =
+          state === "background" && lastNativeState.current !== "background";
+        lastNativeState.current = state;
+        if (enteredBackground) backgroundGeneration.current += 1;
+      const since = backgroundSince.current;
+      if (state === "active") backgroundSince.current = null;
+        const policy = lockState.current.policy;
+        if (
+          !policy ||
+          (policy.owner !== owner.current && !lockState.current.locked)
+        )
+          return;
+        if (state === "inactive" || state === "background") {
+          changeDeviceLock({ covered: true });
+        }
+        if (state === "background" && backgroundSince.current === null) {
+          backgroundSince.current = Date.now();
+          if (policy.appDelay === 0) relockApp();
+          else if (policy.journal && lockState.current.journalGranted) {
+            changeDeviceLock({ journalGranted: false });
+            cancelSensitiveWork();
+          }
+        }
+        if (state === "active") {
+          if (
+            since !== null &&
+            policy.appDelay !== null &&
+            Date.now() - since >= policy.appDelay * 1000
+          )
+            relockApp();
+          changeDeviceLock({ covered: false });
+        }
+      },
+    );
+    return () => subscription?.remove();
+  }, [token, user?.id, localLock.policy, draftGeneration]);
+  useEffect(() => {
     if (!owner.current || !token) return;
     const subscription = NativeAppState?.addEventListener?.(
       "change",
@@ -1651,7 +2077,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => subscription?.remove();
   }, [token, user?.id, draftGeneration]);
   useEffect(() => {
-    if (!token || !user?.id || !pendingWrites.length || sessionExpired) return;
+    if (
+      !token ||
+      !user?.id ||
+      !pendingWrites.length ||
+      sessionExpired ||
+      localLock.locked
+    )
+      return;
     const retry = () => {
       void flushPendingWrites().catch(() => {});
     };
@@ -1673,15 +2106,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (Platform.OS === "web" && typeof window !== "undefined")
         window.removeEventListener("online", retry);
     };
-  }, [token, user?.id, pendingWrites.length, sessionExpired]);
+  }, [token, user?.id, pendingWrites.length, sessionExpired, localLock.locked]);
   return (
     <Context.Provider
       value={{
         user,
-        data,
+        data: displayedData,
         initializing,
         sessionError,
         sessionExpired,
+        deviceLock: localLock.policy,
+        deviceLockBusy,
+        appLocked: localLock.locked,
+        journalLocked,
+        journalRouteProtected: insideJournal,
+        privacyCovered: localLock.covered,
+        updateDeviceLock,
+        unlockDeviceLock,
         retrySession,
         busy,
         error,
@@ -1704,6 +2145,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         discardPendingWrite,
         signIn,
         signUp,
+        googleConfiguration,
+        googleLoginStart,
+        googleLogin,
+        googleLinkStatus,
+        googleLinkStart,
+        googleLinkComplete,
+        requestPasswordReset,
+        resetPassword,
         signOut,
         refresh,
         save,

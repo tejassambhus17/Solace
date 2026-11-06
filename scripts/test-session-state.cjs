@@ -18,6 +18,7 @@ function harness(options = {}) {
   const effects = [];
   const appStateListeners = new Set();
   const storage = options.storage || new Map();
+  const legacyStorage = options.legacyStorage || new Map();
   let cursor = 0;
   let heldWrite = null;
   let current;
@@ -54,6 +55,9 @@ function harness(options = {}) {
           slots[index] = typeof next === "function" ? next(slots[index]) : next;
         },
       ];
+    },
+    useMemo(factory) {
+      return factory();
     },
     useEffect(effect, deps) {
       const index = cursor++;
@@ -108,6 +112,8 @@ function harness(options = {}) {
     routes.exports,
   );
   const module = { exports: {} };
+  const deviceLock = { exports: {} };
+  const journalRecord = { exports: {} };
   const requireMock = (name) => {
     if (name === "react") return react;
     if (name === "react-native")
@@ -124,8 +130,22 @@ function harness(options = {}) {
       return storageMock;
     if (name === "expo-secure-store")
       return {
-        getItemAsync: storageMock.getItem,
-        setItemAsync: async (key, value) => {
+        getItemAsync: async (key, settings) => {
+          if (h.failSecureGet?.(key))
+            throw Error("Protected device storage unavailable");
+          if (settings?.requireAuthentication) {
+            h.biometricReads = (h.biometricReads || 0) + 1;
+            if (h.biometricError) throw Error(h.biometricError);
+            if (h.biometricRead) await h.biometricRead;
+            if (h.biometricInvalidated) return null;
+          }
+          return storageMock.getItem(key);
+        },
+        setItemAsync: async (key, value, settings) => {
+          if (settings?.requireAuthentication) {
+            h.biometricWrites = (h.biometricWrites || 0) + 1;
+            if (h.biometricError) throw Error(h.biometricError);
+          }
           if (h.failSecureSet?.(key))
             throw Error("Protected device storage unavailable");
           await storageMock.setItem(key, value);
@@ -135,20 +155,58 @@ function harness(options = {}) {
             throw Error("Protected device storage unavailable");
           await storageMock.removeItem(key);
         },
+        canUseBiometricAuthentication: () => h.biometricUsable !== false,
         WHEN_UNLOCKED_THIS_DEVICE_ONLY: "unlocked-this-device",
+      };
+    if (name === "expo-local-authentication")
+      return {
+        hasHardwareAsync: async () => h.biometricHardware !== false,
+        isEnrolledAsync: async () => h.biometricEnrolled !== false,
+        getEnrolledLevelAsync: async () => h.biometricLevel ?? 3,
+        SecurityLevel: { BIOMETRIC_STRONG: 3 },
       };
     if (name === "./offline") return offline.exports;
     if (name === "./api-config") return apiConfig.exports;
     if (name === "./routes") return routes.exports;
+    if (name === "./device-lock") return deviceLock.exports;
+    if (name === "./journal-record") return journalRecord.exports;
     throw Error(`Unexpected dependency: ${name}`);
   };
+  new Function(
+    "module",
+    "exports",
+    "require",
+    compile("../src/device-lock.ts"),
+  )(deviceLock, deviceLock.exports, requireMock);
+  new Function("module", "exports", compile("../src/journal-record.ts"))(
+    journalRecord,
+    journalRecord.exports,
+  );
   vm.runInNewContext(compiled, {
     module,
     exports: module.exports,
     require: requireMock,
     process: { env: { EXPO_PUBLIC_API_URL: options.apiUrl } },
+    window: {
+      sessionStorage: {
+        ...storageMock,
+        getItem: (key) => storage.get(key) ?? null,
+      },
+      localStorage: {
+        getItem: (key) => legacyStorage.get(key) ?? null,
+        removeItem: (key) => legacyStorage.delete(key),
+      },
+      location: { hostname: "localhost" },
+      addEventListener() {},
+      removeEventListener() {},
+    },
     __DEV__: options.development ?? true,
     AbortController,
+    Date: class extends Date {
+      static now() {
+        return h.now ?? Date.now();
+      }
+    },
     setTimeout,
     clearTimeout,
     setInterval,
@@ -210,6 +268,53 @@ async function signedIn(id = "account-a") {
   h.render();
   return h;
 }
+
+test("Google completion uses the shared secure session and clears a previous account", async (t) => {
+  const h = harness({ platform: "android" });
+  t.after(() => h.close());
+  await settle();
+  h.onRequest = accountTransport("first", "token-first");
+  await h.render().signIn("first@example.test", "test-only-password");
+  h.render().setChatDraft("new", "First account private draft");
+  const transport = async (route, options) => {
+    if (route === "/auth/google/complete") {
+      assert.equal(options.headers.Authorization, undefined);
+      assert.equal(JSON.parse(options.body).id, "synthetic-flow");
+      return ok({ token: "token-google", user: { id: "google-owner" } });
+    }
+    assert.equal(options.headers.Authorization, "Bearer token-google");
+    return accountTransport("google-owner", "token-google")(route);
+  };
+  h.onRequest = transport;
+  await h
+    .render()
+    .googleLogin({
+      id: "synthetic-flow",
+      verifier: "test-proof",
+      handoff: "test-browser-proof",
+    });
+  assert.equal(h.render().user.id, "google-owner");
+  assert.equal(h.render().chatDrafts.new, undefined);
+  assert.equal(h.storage.get("solace.session"), "token-google");
+  const restarted = harness({ platform: "android", storage: h.storage });
+  t.after(() => restarted.close());
+  restarted.onRequest = transport;
+  await until(() => restarted.render().user?.id === "google-owner");
+  await restarted.render().signOut();
+  assert.equal(h.storage.has("solace.session"), false);
+});
+
+test("browser preview migrates a legacy session to tab storage and erases it on logout", async (t) => {
+  const legacyStorage = new Map([["solace.session", "legacy-token"]]);
+  const h = harness({ legacyStorage });
+  t.after(() => h.close());
+  h.onRequest = accountTransport("browser-owner", "legacy-token");
+  await until(() => h.render().user?.id === "browser-owner");
+  assert.equal(legacyStorage.has("solace.session"), false);
+  assert.equal(h.storage.get("solace.session"), "legacy-token");
+  await h.render().signOut();
+  assert.equal(h.storage.has("solace.session"), false);
+});
 
 test("runtime expiry preserves same-account drafts and route; a different account clears them", async () => {
   const h = await signedIn();
@@ -472,6 +577,281 @@ test("Solace modes keep their own route and Journal handoff returns to its origi
   assert.equal(h.render().params.id, "reply-after-mode-switch");
   h.render().switchSolaceMode("journal");
   assert.equal(h.render().route, "journal-reflect");
+  h.close();
+});
+
+const biometricPolicyKey = "solace.biometric.policy.v1";
+const biometricProofKey = "solace.biometric.proof.v1";
+
+async function biometricAccount(data = empty(), options = {}) {
+  const h = harness({ platform: "android", ...options });
+  await settle();
+  h.onRequest = accountTransport("biometric-owner", "session-token", data);
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  h.render();
+  return h;
+}
+
+test("biometric lock checks hardware, enrollment, and strong Android security before persisting", async () => {
+  const h = await biometricAccount();
+  const settings = { appDelay: 60, journal: false };
+  h.biometricHardware = false;
+  await assert.rejects(
+    h.render().updateDeviceLock(settings),
+    /supported biometrics/,
+  );
+  h.biometricHardware = true;
+  h.biometricEnrolled = false;
+  await assert.rejects(
+    h.render().updateDeviceLock(settings),
+    /supported biometrics/,
+  );
+  h.biometricEnrolled = true;
+  h.biometricLevel = 2;
+  await assert.rejects(
+    h.render().updateDeviceLock(settings),
+    /supported biometrics/,
+  );
+  assert.equal(h.storage.has(biometricPolicyKey), false);
+  h.biometricLevel = 3;
+  h.biometricError = "User canceled";
+  await assert.rejects(
+    h.render().updateDeviceLock(settings),
+    /setup did not finish/,
+  );
+  assert.equal(h.render().deviceLock, null);
+  h.biometricError = null;
+  await h.render().updateDeviceLock(settings);
+  assert.equal(h.render().deviceLock.appDelay, 60);
+  assert.equal(h.storage.get(biometricProofKey), "biometric-owner");
+  await h.render().updateDeviceLock({ appDelay: null, journal: false });
+  assert.equal(h.biometricReads, 1);
+  assert.equal(h.storage.has(biometricPolicyKey), false);
+  assert.equal(h.storage.has(biometricProofKey), false);
+  h.close();
+});
+
+test("a protected cold session restores only after a successful biometric read", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 60, journal: false });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  const requests = [];
+  h.onRequest = async (route, options) => {
+    requests.push(route);
+    assert.equal(options.headers.Authorization, "Bearer session-token");
+    return accountTransport("biometric-owner", "session-token")(route);
+  };
+  await settle();
+  assert.equal(h.render().appLocked, true);
+  assert.equal(h.render().user, null);
+  assert.deepEqual(requests, []);
+  h.biometricError = "User canceled";
+  await assert.rejects(h.render().unlockDeviceLock("app"), /did not finish/);
+  assert.equal(h.render().appLocked, true);
+  assert.deepEqual(requests, []);
+  h.biometricError = null;
+  await h.render().unlockDeviceLock("app");
+  assert.equal(h.render().user.id, "biometric-owner");
+  assert.equal(h.render().appLocked, false);
+  assert.deepEqual(requests, ["/state"]);
+  h.close();
+});
+
+test("a biometric proof for one account never restores another account's saved credential", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 0, journal: true });
+  setup.storage.set("solace.session", "different-owner-token");
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  h.onRequest = accountTransport("other-owner", "different-owner-token", {
+    ...empty(),
+    reflections: [{ id: "other-journal", kind: "journal", text: "Other account" }],
+  });
+  await settle();
+  await h.render().unlockDeviceLock("app");
+  assert.equal(h.render().user, null);
+  assert.equal(h.render().data.reflections.length, 0);
+  assert.equal(h.storage.has("solace.session"), false);
+  h.close();
+});
+
+test("expired or changed biometric enrollment keeps startup private and permits normal sign-in recovery", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 0, journal: true });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  h.onRequest = accountTransport("biometric-owner", "fresh-server-session");
+  await settle();
+  h.biometricInvalidated = true;
+  await assert.rejects(
+    h.render().unlockDeviceLock("app"),
+    /Biometrics may have changed/,
+  );
+  assert.equal(h.render().user, null);
+  assert.equal(h.render().appLocked, true);
+  await h.render().signOut();
+  assert.equal(h.render().appLocked, false);
+  assert.equal(h.storage.has("solace.session"), false);
+  assert.equal(h.storage.has(biometricPolicyKey), false);
+  assert.equal(h.storage.has(biometricProofKey), false);
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  assert.equal(h.render().token, "fresh-server-session");
+  assert.equal(h.render().deviceLock, null);
+  h.close();
+});
+
+test("temporary inactive events preserve the session and the configured background threshold locks on resume", async () => {
+  const h = await biometricAccount();
+  await h.render().updateDeviceLock({ appDelay: 60, journal: false });
+  h.render();
+  h.now = 1000;
+  h.appState("inactive");
+  assert.equal(h.render().privacyCovered, true);
+  h.appState("active");
+  assert.equal(h.render().privacyCovered, false);
+  assert.equal(h.render().appLocked, false);
+  h.appState("background");
+  h.now += 59000;
+  h.appState("active");
+  assert.equal(h.render().appLocked, false);
+  h.appState("background");
+  h.now += 61000;
+  h.appState("active");
+  assert.equal(h.render().appLocked, true);
+  assert.equal(h.render().token, "session-token");
+  await h.render().unlockDeviceLock("app");
+  assert.equal(h.render().appLocked, false);
+  assert.equal(h.biometricReads, 1);
+  h.close();
+});
+
+test("immediate lock aborts sensitive requests and never starts two biometric prompts", async () => {
+  const h = await biometricAccount();
+  await h.render().updateDeviceLock({ appDelay: 0, journal: false });
+  const response = deferred();
+  let signal;
+  h.onRequest = async (_route, options) => {
+    signal = options.signal;
+    await response.promise;
+    return ok({ user: { id: "biometric-owner" }, data: empty() });
+  };
+  const result = h
+    .render()
+    .refresh()
+    .catch((error) => error);
+  assert.ok(signal);
+  h.appState("background");
+  assert.equal(h.render().appLocked, true);
+  assert.equal(signal.aborted, true);
+  response.resolve();
+  assert.match((await result).message, /session changed/);
+  h.appState("active");
+  const held = deferred();
+  h.biometricRead = held.promise;
+  const unlock = h.render().unlockDeviceLock("app");
+  await assert.rejects(h.render().unlockDeviceLock("app"), /already open/);
+  held.resolve();
+  await unlock;
+  assert.equal(h.render().appLocked, false);
+  assert.equal(h.biometricReads, 1);
+  h.close();
+});
+
+test("immediate biometric lock still checkpoints the most recent private draft", async () => {
+  const h = await biometricAccount();
+  await h.render().updateDeviceLock({ appDelay: 0, journal: true });
+  h.render().navigate("journal");
+  await h.render().unlockDeviceLock("journal");
+  const draft = {
+    title: "Synthetic",
+    text: "A test-only draft before locking",
+  };
+  h.render().setEditorDraft("journal:new", draft);
+  h.appState("background");
+  await until(() => {
+    const prefix = "solace.writing.v1.biometric-owner";
+    const raw = h.storage.get(`${prefix}.index`);
+    if (!raw) return false;
+    const { active, counts } = JSON.parse(raw);
+    const parts = Array.from({ length: counts[active] }, (_, index) =>
+      h.storage.get(`${prefix}.${active}.${index}`),
+    );
+    return (
+      parts.length > 0 &&
+      parts.every((part) => part !== undefined) &&
+      JSON.parse(parts.join("")).drafts["journal:new"]?.text === draft.text
+    );
+  });
+  const restored = harness({ platform: "android", storage: h.storage });
+  h.close();
+  restored.onRequest = accountTransport("biometric-owner", "session-token");
+  await settle();
+  assert.equal(restored.render().appLocked, true);
+  assert.equal(restored.render().editorDrafts["journal:new"], undefined);
+  await restored.render().unlockDeviceLock("app");
+  assert.equal(restored.render().editorDrafts["journal:new"].text, draft.text);
+  restored.close();
+});
+
+test("Journal protection redacts previews, guards deep links and export, and relocks on leaving", async () => {
+  const record = {
+    id: "journal-one",
+    kind: "journal",
+    title: "Private title",
+    content: "Private text",
+  };
+  const legacy = {
+    id: "journal-legacy",
+    title: "Private legacy title",
+    text: "Private legacy text",
+  };
+  const h = await biometricAccount({
+    ...empty(),
+    reflections: [record, legacy],
+  });
+  await h.render().updateDeviceLock({ appDelay: null, journal: true });
+  assert.equal(h.render().data.reflections[0].title, "Private journal entry");
+  assert.equal(h.render().data.reflections[0].content, undefined);
+  assert.equal(h.render().data.reflections[1].title, "Private journal entry");
+  assert.equal(h.render().data.reflections[1].text, undefined);
+  await assert.rejects(
+    h.render().remove("reflections", record.id),
+    /Unlock My Journal/,
+  );
+  await assert.rejects(
+    h.render().reflectJournal(record.id, { start: 0, end: 4 }, "insight"),
+    /Unlock My Journal/,
+  );
+  h.render().navigate("reflection-detail", { id: legacy.id });
+  assert.equal(h.render().journalRouteProtected, true);
+  assert.equal(h.render().journalLocked, true);
+  h.render().navigate("journal-entry", { id: record.id });
+  assert.equal(h.render().journalRouteProtected, true);
+  assert.equal(h.render().journalLocked, true);
+  await h.render().unlockDeviceLock("journal");
+  assert.equal(h.render().journalLocked, false);
+  assert.equal(h.render().data.reflections[0].content, record.content);
+  h.appState("background");
+  h.appState("active");
+  assert.equal(h.render().journalLocked, true);
+  await h.render().unlockDeviceLock("journal");
+  h.render().navigate("today");
+  h.render();
+  assert.equal(h.render().journalLocked, true);
+  assert.equal(h.render().data.reflections[0].content, undefined);
+  let exported = false;
+  h.onRequest = async (route) => {
+    assert.equal(route, "/export");
+    exported = true;
+    return ok({ reflections: [record] });
+  };
+  h.biometricError = "User canceled";
+  await assert.rejects(h.render().exportData(), /did not finish/);
+  assert.equal(exported, false);
+  h.biometricError = null;
+  await h.render().exportData();
+  assert.equal(exported, true);
   h.close();
 });
 

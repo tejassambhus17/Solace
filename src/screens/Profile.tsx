@@ -33,6 +33,8 @@ import {
   rememberDeviceSchedule,
 } from "../notifications";
 import ProfileHome from "./ProfileHome";
+import { DeviceLockSettingsCard } from "./DeviceLock";
+import { GoogleAccountLink } from "./GoogleAccountLink";
 
 const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const memoryCategories = [
@@ -320,6 +322,7 @@ export default function ProfileScreen({ name }: { name: string }) {
             </Pressable>
           ))}
         </Row>
+        <DeviceLockSettingsCard />
         <Card style={{ marginBottom: 16 }}>
           <AppText variant="heading">Sound and accessibility</AppText>
           <AppText color={colors.muted} style={{ marginTop: 7 }}>
@@ -1333,6 +1336,11 @@ export default function ProfileScreen({ name }: { name: string }) {
           </>
         )}
         {status}
+        {!privacyOnly && (
+          <View style={{ marginTop: 24 }}>
+            <GoogleAccountLink />
+          </View>
+        )}
         {!!app.pendingWrites.length && (
           <Card
             style={{

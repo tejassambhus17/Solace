@@ -27,6 +27,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useApp } from "../store";
 import { routes } from "../routes";
+import { useGoogleAuth } from "../google-auth";
 import { Companion, useReducedMotion } from "../Companion";
 import { localDay, recordDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
@@ -49,6 +50,8 @@ import {
   ChatWelcome,
 } from "./ChatDetails";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { GoogleAuthAction } from "./GoogleAuthAction";
+import { PasswordRecoveryScreen } from "./PasswordRecovery";
 import {
   AppText,
   Artwork,
@@ -91,18 +94,25 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
   const [notice, setNotice] = useState("");
+  const google = useGoogleAuth(
+    "login",
+    !showRecovery && (page === "login" || page === "signup"),
+  );
+  const authBusy = app.busy || google.busy;
   const submitting = useRef(false);
   const emailField = useRef<React.ComponentRef<typeof TextInput>>(null);
   const passwordField = useRef<React.ComponentRef<typeof TextInput>>(null);
   function changePage(next: "welcome" | "intro" | "login" | "signup") {
-    if (submitting.current || app.busy) return;
+    if (submitting.current || google.pending.current || app.busy) return;
     setPage(next);
     setNotice("");
+    google.clearMessage();
     setShowPassword(false);
   }
   async function submit() {
-    if (submitting.current || app.busy) return;
+    if (submitting.current || google.pending.current || app.busy) return;
     setNotice("");
     if (!email.trim() || !password || (page === "signup" && !name.trim())) {
       setNotice("Please complete each field.");
@@ -123,6 +133,13 @@ export function AuthScreen() {
       submitting.current = false;
     }
   }
+  if (showRecovery)
+    return (
+      <PasswordRecoveryScreen
+        initialEmail={email}
+        onBack={() => setShowRecovery(false)}
+      />
+    );
   if (page === "welcome")
     return (
       <Screen style={{ flex: 1, paddingTop: 0, paddingBottom: 28 }}>
@@ -299,7 +316,7 @@ export function AuthScreen() {
                 placeholder="What should we call you?"
                 value={name}
                 onChangeText={setName}
-                editable={!app.busy}
+                editable={!authBusy}
                 autoCapitalize="words"
                 autoComplete="name"
                 textContentType="name"
@@ -317,7 +334,7 @@ export function AuthScreen() {
               placeholder="you@example.com"
               value={email}
               onChangeText={setEmail}
-              editable={!app.busy}
+              editable={!authBusy}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -339,7 +356,7 @@ export function AuthScreen() {
                 }
                 value={password}
                 onChangeText={setPassword}
-                editable={!app.busy}
+                editable={!authBusy}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -360,6 +377,28 @@ export function AuthScreen() {
               </View>
             </View>
           </View>
+          {page === "login" && (
+            <Pressable
+              accessibilityRole="button"
+              disabled={authBusy}
+              onPress={() => {
+                if (submitting.current || google.pending.current || app.busy)
+                  return;
+                Keyboard.dismiss();
+                setNotice("");
+                setShowRecovery(true);
+              }}
+              style={({ pressed }) => ({
+                alignSelf: "flex-end",
+                minHeight: 48,
+                justifyContent: "center",
+                marginVertical: -8,
+                opacity: pressed || authBusy ? 0.64 : 1,
+              })}
+            >
+              <AppText variant="label">Forgot password?</AppText>
+            </Pressable>
+          )}
           {!!notice && (
             <AppText accessibilityRole="alert" color={colors.danger}>
               {notice}
@@ -369,8 +408,38 @@ export function AuthScreen() {
             title={page === "signup" ? "Create account" : "Log in"}
             icon="arrow-forward"
             onPress={submit}
-            loading={app.busy}
+            loading={app.busy && !google.busy}
+            disabled={google.busy}
             style={{ marginTop: 6 }}
+          />
+          <Row style={{ gap: 12 }}>
+            <View
+              style={{
+                flex: 1,
+                height: StyleSheet.hairlineWidth,
+                backgroundColor: colors.border,
+              }}
+            />
+            <AppText variant="caption" color={colors.muted}>
+              or
+            </AppText>
+            <View
+              style={{
+                flex: 1,
+                height: StyleSheet.hairlineWidth,
+                backgroundColor: colors.border,
+              }}
+            />
+          </Row>
+          <GoogleAuthAction
+            auth={google}
+            title="Continue with Google"
+            disabled={app.busy && !google.busy}
+            onPress={() => {
+              if (submitting.current || app.busy) return;
+              setNotice("");
+              void google.start();
+            }}
           />
           <Button
             title={
@@ -379,7 +448,7 @@ export function AuthScreen() {
                 : "Create an account"
             }
             variant="secondary"
-            disabled={app.busy}
+            disabled={authBusy}
             onPress={() => changePage(page === "signup" ? "login" : "signup")}
           />
         </View>
