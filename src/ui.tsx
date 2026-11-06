@@ -22,7 +22,9 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { StatusBar } from "expo-status-bar";
 import { useTheme } from "./theme";
+import { spacing, useScreenGutter } from "./layout";
 
 // Floating navigation shares its measured height with scrolling and fixed composers.
 export const NavigationInset = createContext(0);
@@ -57,13 +59,13 @@ export function AppText({
     title: {
       fontFamily: "CormorantGaramond_600SemiBold",
       fontSize: 37,
-      lineHeight: 41,
+      lineHeight: Platform.OS === "android" ? 46 : 41,
       letterSpacing: -0.6,
     },
     heading: {
       fontFamily: "CormorantGaramond_600SemiBold",
       fontSize: 26,
-      lineHeight: 30,
+      lineHeight: Platform.OS === "android" ? 33 : 30,
     },
     body: { fontFamily: "Inter_400Regular", fontSize: 15, lineHeight: 23 },
     caption: { fontFamily: "Inter_400Regular", fontSize: 13, lineHeight: 19 },
@@ -90,6 +92,7 @@ export function Screen({
   contentContainerStyle,
   edgeToEdge = false,
   edgeToEdgeTop = false,
+  heroStatusBar,
   adjustKeyboardInsets = true,
 }: {
   children: React.ReactNode;
@@ -103,25 +106,32 @@ export function Screen({
   contentContainerStyle?: StyleProp<ViewStyle>;
   edgeToEdge?: boolean;
   edgeToEdgeTop?: boolean;
+  heroStatusBar?: "light" | "dark";
   adjustKeyboardInsets?: boolean;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const gutter = useScreenGutter();
   const navigationInset = useNavigationInset();
-  const { bottom } = useSafeAreaInsets();
+  const { bottom, top } = useSafeAreaInsets();
   const bottomClearance = Math.max(navigationInset, bottom);
+  const edgeTop = edgeToEdge || edgeToEdgeTop;
+  const protectStatusBar =
+    edgeTop && scroll && top > 0 && Platform.OS !== "web";
+  const [scrolled, setScrolled] = useState(false);
+  const statusStyle = resolved === "dark" ? "light" : "dark";
   const content = (
     <View
       style={[
         {
-          paddingHorizontal: 24,
-          paddingTop: 18,
-          paddingBottom: 32 + (scroll ? 0 : bottomClearance),
+          paddingHorizontal: gutter,
+          paddingTop: spacing.screenTop,
+          paddingBottom: spacing.bottom + (scroll ? 0 : bottomClearance),
         },
         style,
       ]}
     >
       {title && (
-        <Row style={{ marginBottom: 18 }}>
+        <Row style={{ marginBottom: spacing.screenTop }}>
           {back && (
             <Pressable
               accessibilityRole="button"
@@ -151,7 +161,7 @@ export function Screen({
   );
   return (
     <SafeAreaView
-      edges={edgeToEdge || edgeToEdgeTop ? [] : ["top"]}
+      edges={edgeTop ? [] : ["top"]}
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       {scroll ? (
@@ -165,8 +175,17 @@ export function Screen({
               ? "interactive"
               : "on-drag"
           }
-          onScroll={onScroll}
-          scrollEventThrottle={onScroll ? 16 : undefined}
+          onScroll={
+            protectStatusBar
+              ? (event) => {
+                  const pastStatusArea =
+                    event.nativeEvent.contentOffset.y > top;
+                  if (pastStatusArea !== scrolled) setScrolled(pastStatusArea);
+                  onScroll?.(event);
+                }
+              : onScroll
+          }
+          scrollEventThrottle={onScroll || protectStatusBar ? 16 : undefined}
           onContentSizeChange={onContentSizeChange}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -180,6 +199,26 @@ export function Screen({
         </ScrollView>
       ) : (
         content
+      )}
+      {protectStatusBar && (
+        <>
+          <StatusBar
+            style={scrolled ? statusStyle : heroStatusBar || statusStyle}
+          />
+          {scrolled && (
+            <View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                height: top,
+                backgroundColor: colors.bg,
+              }}
+            />
+          )}
+        </>
       )}
     </SafeAreaView>
   );

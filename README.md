@@ -4,7 +4,7 @@ A personal wellness companion built with React Native + Expo, a Node.js API and 
 
 ## Current implementation
 
-The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The four main tabs are **Today → Solace → Journey → Profile**. The center **Explore** shortcut opens Solace Moments, breathing, grounding, reflections, the saved toolkit, guides, reflective check-ins, plans, affirmations and challenges in one tap. Moments is also available from Today and the Solace header.
+The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The five tabs are **Today → Solace → Explore → Journey → Profile**. Explore includes Solace Moments, breathing, grounding, reflections, the saved toolkit, guides, reflective check-ins, plans, affirmations and challenges. Moments is also available from Today and the Solace header.
 
 Local Gemini responses and physical Android QA have separate verification records. Public hosting and full native release acceptance remain separate work. See [requirements](docs/REQUIREMENTS.md), [the implementation milestones](docs/IMPLEMENTATION_PLAN.md) and [actual verification results](docs/VERIFICATION.md).
 
@@ -12,11 +12,11 @@ Local Gemini responses and physical Android QA have separate verification record
 
 ## The daily experience
 
-Today opens with a scenic greeting, actual check-in and Moment counts, and the latest recorded mood. Tap a watercolor petal to open the check-in, or start the five-minute Calm Reset. The focus controls also open the daily pause and a personalized Moment. Quick Actions open breathing, reflection, sleep, and grounding. The Journey ring shows recorded steps for the day.
+Today opens with a scenic greeting, actual check-in and Moment counts, and the latest recorded mood. Tap a watercolor petal to open the check-in, or start the five-minute Calm Reset. Daily Pause tracks check-in, Moment and reflection from saved activity and opens the next step. Quick Actions open breathing, reflection, sleep, and grounding.
 
 The loved light theme remains blush-ivory and forest. Dark mode uses a black canvas, neutral graphite, warm ivory text, champagne actions and restrained lilac/peach/sage accents. Welcome, login, signup and Today have no upper-right profile shortcut. Typography and artwork follow [the existing design system](DESIGN.md), including [matched daily-pause artwork](assets/DAILY_PAUSE_ARTWORK.md).
 
-The floating navigation respects safe-area and keyboard clearance. Supported iOS uses guarded native Liquid Glass, with blur and Reduce Transparency fallbacks. Android uses an opaque tonal surface, selected indicators and native ripple. Browser rendering does not establish native-material or gesture behavior.
+The floating navigation respects safe-area and keyboard clearance. Each tab keeps its navigation stack while you switch. A circular spotlight follows the active tab and moves immediately when Reduce Motion is enabled. Supported iOS uses guarded native Liquid Glass, with blur and Reduce Transparency fallbacks. Android uses an opaque tonal surface.
 
 ## Solace Moments and the companion
 
@@ -28,7 +28,7 @@ The recognizable petal companion has idle, listening, thinking, speaking, celebr
 
 ## Conversation and voice
 
-Chat opens with a woodland lotus scene, contextual quick replies, and a two-minute Guided Breath card. Actual turns show their recorded timestamps and reply source. The header opens Moments, new conversation, history, and Voice Talk. The composer menu offers practices, support, and reply playback. Urgent replies provide a direct human support action. Unsent text stays in account-scoped memory across navigation and recoverable errors.
+New chat opens with a woodland lotus scene, contextual quick replies, and a two-minute Guided Breath card. After the first send, the conversation uses a compact companion header. Saved conversations open in that layout with recorded timestamps and reply sources. The header opens Moments, history, and Voice Talk. The composer menu offers practices, support, and reply playback. Urgent replies provide a direct human support action. Unsent text stays in account-scoped memory across navigation and recoverable errors.
 
 Explore opens with a twilight lake, compact category filters including Sleep, search, and a shortcut to the saved toolkit. Below the five-minute Calm Your Mind Moment, a two-column grid offers a three-minute Breath Reset, five-minute Five Senses grounding, Quick Reflection with a four-minute estimate for the self-paced journal, and a ten-minute Sleep Wind Down. Create Your Wellness Plan opens the editable three-day plan, which can be saved and reopened. Explore More links to Guided Programs, Wellness Toolkit, and Check-Ins. Its additional tools include the timed practice builder, where you can choose a focus and preview the steps before starting. A completed timed practice can be saved to Journey.
 

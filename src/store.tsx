@@ -66,9 +66,33 @@ export type Collection =
   | "goals";
 export type Data = Record<Collection, Item[]>;
 export type EditorDraft = Record<string, string>;
-const mainTabs = new Set(["today", "chat", "journey", "profile"]);
+const mainTabs = ["today", "chat", "explore", "journey", "profile"] as const;
+export const immersiveRoutes = new Set([
+  "breathing",
+  "moment",
+  "grounding",
+  "moment-player",
+  "voice-talk",
+]);
+type MainTab = (typeof mainTabs)[number];
+type RouteEntry = { key: symbol; name: string; params: Record<string, any> };
+type NavigationState = {
+  activeTab: MainTab;
+  stacks: Partial<Record<MainTab, RouteEntry[]>>;
+};
+
 const mainTabFor = (name: string) =>
-  name === "solace" ? "chat" : mainTabs.has(name) ? name : null;
+  name === "solace" ? "chat" : mainTabs.find((tab) => tab === name);
+
+const routeEntry = (
+  name: string,
+  params: Record<string, any> = {},
+): RouteEntry => ({ key: Symbol(name), name, params });
+
+const initialNavigation = (): NavigationState => ({
+  activeTab: "today",
+  stacks: { today: [routeEntry("today")] },
+});
 const emptyData = (): Data => ({
   checkins: [],
   conversations: [],
@@ -126,12 +150,12 @@ export type AppState = {
   busy: boolean;
   error: string | null;
   route: string;
-  activeTab: string;
-  inExplore: boolean;
+  activeTab: MainTab;
   params: Record<string, any>;
   canGoBack: boolean;
   token: string | null;
   chatDrafts: Record<string, string>;
+  chatPending: Record<string, string>;
   setChatDraft: (key: string, text: string, expected?: string) => void;
   editorDrafts: Record<string, EditorDraft>;
   setEditorDraft: (
@@ -177,6 +201,7 @@ export type AppState = {
   exportData: () => Promise<any>;
 };
 const Context = createContext<AppState | null>(null);
+export const AppRouteScope = Context.Provider;
 async function request(
   path: string,
   token: string | null,
@@ -261,10 +286,16 @@ async function request(
 }
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const generation = useRef(0);
+  const inFlightChats = useRef(new Set<string>());
+  const [chatPending, setChatPending] = useState<Record<string, string>>({});
   const sessionRequests = useRef<AbortController | null>(null);
   sessionRequests.current ??= new AbortController();
   const advanceSession = () => {
     const version = ++generation.current;
+    if (inFlightChats.current.size) {
+      inFlightChats.current.clear();
+      setChatPending({});
+    }
     const previous = sessionRequests.current;
     sessionRequests.current = new AbortController();
     previous?.abort();
@@ -386,6 +417,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setChatDraft = (key: string, text: string, expected?: string) => {
     // A late completion from an old account must never restore its private text.
     if (!canUseAccount(draftGeneration)) return;
+    if (expected === undefined && inFlightChats.current.has(key)) return;
     if (
       expected === undefined &&
       chatAttempts.current.get(key)?.text !== text.trim()
@@ -458,9 +490,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sessionExpired, setSessionExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [stack, setStack] = useState<
-    { name: string; params: Record<string, any> }[]
-  >([{ name: "today", params: {} }]);
+  const [navigation, setNavigation] = useState(initialNavigation);
   const expireSession = (error: unknown, version: number) => {
     if (
       (error as Error & { status?: number }).status !== 401 ||
@@ -628,7 +658,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setChatDrafts({});
         setEditorDrafts({});
         setData(emptyData());
-        setStack([{ name: "today", params: {} }]);
+        setNavigation(initialNavigation());
       }
       owner.current = String(result.user.id);
       setUser(null);
@@ -706,7 +736,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chatAttempts.current.clear();
       setChatDrafts({});
       setEditorDrafts({});
-      setStack([{ name: "today", params: {} }]);
+      setNavigation(initialNavigation());
     } finally {
       finishAccountTransition(version);
     }
@@ -997,10 +1027,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertActiveSession(version);
     if (!token) throw new Error("Please sign in first.");
     const key = conversationId || "new";
+    if (inFlightChats.current.has(key))
+      throw new Error("Solace is still replying. Wait a moment and try again.");
     const previous = chatAttempts.current.get(key);
     const attempt =
       previous?.text === text ? previous : { text, id: newChatRequestId() };
     chatAttempts.current.set(key, attempt);
+    inFlightChats.current.add(key);
+    setChatPending((pending) => ({ ...pending, [key]: text }));
     const forgetAttempt = () => {
       if (chatAttempts.current.get(key) === attempt)
         chatAttempts.current.delete(key);
@@ -1025,6 +1059,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
         forgetAttempt();
       throw error;
+    } finally {
+      if (version === generation.current) {
+        inFlightChats.current.delete(key);
+        setChatPending((pending) => {
+          const next = { ...pending };
+          delete next[key];
+          return next;
+        });
+      }
     }
     assertSession(version);
     if (
@@ -1138,7 +1181,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setEditorDrafts({});
       setSessionExpired(false);
       setSessionError(null);
-      setStack([{ name: "today", params: {} }]);
+      setNavigation(initialNavigation());
       try {
         await writeCredential(null, version);
       } catch {
@@ -1166,43 +1209,87 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertSession(version);
     return result;
   };
+  const { activeTab, stacks } = navigation;
+  const stack = stacks[activeTab]!;
+  const current = stack[stack.length - 1];
   const navigate = (name: string, params: Record<string, any> = {}) => {
     if (draftGeneration !== generation.current) return;
     const tab = mainTabFor(name);
-    setStack((old) => {
-      if (tab) return [{ name: tab, params }];
-      if (name === "explore") {
-        const index = old.findIndex((entry) => entry.name === "explore");
-        if (index !== -1)
-          return index === old.length - 1 ? old : old.slice(0, index + 1);
+    const entry = routeEntry(tab || name, params);
+    setNavigation((old) => {
+      if (tab) {
+        const saved = old.stacks[tab];
+        const reopenExplore = tab === "explore" && !Object.keys(params).length;
+        if (reopenExplore && old.activeTab === tab && saved?.length === 1)
+          return old;
+        const previousStack = old.stacks[old.activeTab]!;
+        const previousRoute = previousStack[previousStack.length - 1];
+        const leavingPlayer =
+          old.activeTab !== tab && immersiveRoutes.has(previousRoute.name);
+        return {
+          activeTab: tab,
+          stacks: {
+            ...old.stacks,
+            ...(leavingPlayer && {
+              [old.activeTab]: previousStack.slice(0, -1),
+            }),
+            [tab]: reopenExplore && saved ? saved.slice(0, 1) : [entry],
+          },
+        };
       }
-      return [...old, { name, params }];
+      return {
+        ...old,
+        stacks: {
+          ...old.stacks,
+          [old.activeTab]: [...old.stacks[old.activeTab]!, entry],
+        },
+      };
     });
   };
   const setParams = (params: Record<string, any>) => {
     if (draftGeneration !== generation.current) return;
-    setStack((old) =>
-      old.map((entry, index) =>
-        index === old.length - 1
-          ? { ...entry, params: { ...entry.params, ...params } }
-          : entry,
-      ),
-    );
+    setNavigation((old) => {
+      const saved = old.stacks[activeTab];
+      const index =
+        saved?.findIndex((entry) => entry.key === current.key) ?? -1;
+      if (!saved || index === -1) return old;
+      const entry = saved[index];
+      if (
+        Object.keys(params).every((key) =>
+          Object.is(params[key], entry.params[key]),
+        )
+      )
+        return old;
+      const updated = [...saved];
+      updated[index] = { ...entry, params: { ...entry.params, ...params } };
+      return { ...old, stacks: { ...old.stacks, [activeTab]: updated } };
+    });
   };
   const back = () => {
     if (draftGeneration !== generation.current) return;
-    setStack((old) =>
-      old.length > 1 ? old.slice(0, -1) : [{ name: "today", params: {} }],
-    );
+    setNavigation((old) => {
+      const activeStack = old.stacks[old.activeTab]!;
+      if (activeStack.length === 1) return old;
+      return {
+        ...old,
+        stacks: { ...old.stacks, [old.activeTab]: activeStack.slice(0, -1) },
+      };
+    });
   };
   const setTab = (name: string) => {
     if (draftGeneration !== generation.current) return;
     const tab = mainTabFor(name);
-    if (tab) setStack([{ name: tab, params: {} }]);
+    if (!tab) return;
+    setNavigation((old) => {
+      if (old.activeTab === tab) return old;
+      return {
+        activeTab: tab,
+        stacks: old.stacks[tab]
+          ? old.stacks
+          : { ...old.stacks, [tab]: [routeEntry(tab)] },
+      };
+    });
   };
-  const current = stack[stack.length - 1];
-  const activeTab = mainTabFor(stack[0].name) || "today";
-  const inExplore = stack.some((entry) => entry.name === "explore");
   useEffect(() => {
     const version = draftGeneration;
     const account = owner.current;
@@ -1270,11 +1357,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         error,
         route: current.name,
         activeTab,
-        inExplore,
         params: current.params,
         canGoBack: stack.length > 1,
         token,
         chatDrafts,
+        chatPending,
         setChatDraft,
         editorDrafts,
         setEditorDraft,

@@ -16,11 +16,10 @@ import {
   selectionAsync,
 } from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
 import { useReducedMotion } from "../Companion";
-import { localDay, recordDay } from "../content";
+import { localDay } from "../content";
 import { createExplorePractice, exploreShortcuts } from "../explore-practices";
-import { journeyRecords } from "../progress";
+import { spacing, useScreenGutter } from "../layout";
 import { pickDailyRoutine } from "../routine";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
@@ -71,14 +70,12 @@ type MoodChoice = (typeof moodPetals)[number];
 function TodayMoodOption({
   choice: { mood, image },
   status,
-  compact,
   largeText,
   reducedMotion,
   onPress,
 }: {
   choice: MoodChoice;
   status?: "saved" | "pending";
-  compact: boolean;
   largeText: boolean;
   reducedMotion: boolean;
   onPress: () => void;
@@ -150,7 +147,7 @@ function TodayMoodOption({
       <AppText
         variant={selected ? "label" : "caption"}
         color={selected ? colors.lavenderText : colors.text}
-        style={[styles.moodText, compact && styles.compactMoodText]}
+        style={styles.moodText}
       >
         {mood}
       </AppText>
@@ -190,6 +187,12 @@ const artwork = {
   },
 };
 
+const dailyActions = {
+  checkin: "Start check-in",
+  practice: "Take a Moment",
+  reflection: "Reflect",
+} as const;
+
 function useToday() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -209,11 +212,17 @@ export function TodayScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const { width, fontScale } = useWindowDimensions();
+  const gutter = useScreenGutter();
   const { top } = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   const dark = resolved === "dark";
   const largeText = fontScale > 1.2;
   const compact = width < 360;
+  const moodPadding = compact ? spacing.compact : spacing.row;
+  const moodGap = compact ? 6 : spacing.compact;
+  const moodWidth =
+    (Math.min(width, 480) - 2 * (gutter + moodPadding + 1) - 4 * moodGap) / 5;
+  const wrapMoods = largeText || moodWidth < 50 * fontScale + 6;
   const now = useToday();
   const today = localDay(now);
   const [showReason, setShowReason] = useState(false);
@@ -221,13 +230,7 @@ export function TodayScreen() {
     () => pickDailyRoutine(app.data, app.user, now),
     [app.data, app.user, now],
   );
-  const selectedCheckin = useMemo(
-    () =>
-      journeyRecords({ checkins: app.data.checkins }, now, true).checkins.find(
-        (record) => recordDay(record) === today,
-      ),
-    [app.data.checkins, now, today],
-  );
+  const selectedCheckin = routine.todayCheckin;
   const environment = app.data.preferences.find(
     (item) => item.id === "wellness",
   )?.environment;
@@ -244,12 +247,14 @@ export function TodayScreen() {
   const next = routine.nextStep;
   const stepCount = routine.steps.length;
   const progress = (routine.completedCount / stepCount) * 100;
-  const stepLabel = routine.completedCount + " of " + stepCount + " steps";
+  const stepLabel = `${routine.completedCount} of ${stepCount} steps`;
   const panel = {
     backgroundColor: dark ? "#211C2B" : colors.surface,
     borderColor: dark ? "#51415E" : colors.heroBorder,
   };
   const secondary = dark ? "#CEC4DA" : colors.heroMuted;
+  const dailyPrimary = dark ? "#E7C7A8" : colors.primary;
+  const dailyPrimaryInk = dark ? "#2B211A" : colors.primaryText;
   const accents = dark
     ? {
         breathe: { background: "#202C2B", border: "#3D514D", icon: "#84F4BF" },
@@ -292,9 +297,9 @@ export function TodayScreen() {
           environment === "ocean" || environment === "twilight"
             ? environment
             : "forest",
-        provider: "offline",
-        source: "today",
       },
+      provider: "offline",
+      source: "today",
     });
   }
 
@@ -315,9 +320,13 @@ export function TodayScreen() {
   }
 
   return (
-    <Screen edgeToEdge style={styles.screen}>
-      <StatusBar style="light" />
-      <View style={[styles.hero, { paddingTop: top + 3 }]}>
+    <Screen edgeToEdge heroStatusBar="light" style={styles.screen}>
+      <View
+        style={[
+          styles.hero,
+          { paddingTop: top + 3, paddingHorizontal: gutter },
+        ]}
+      >
         <Image
           source={artwork[resolved].scene}
           style={coverImageStyle}
@@ -407,7 +416,7 @@ export function TodayScreen() {
         </View>
       </View>
 
-      <View style={styles.content}>
+      <View style={[styles.content, { paddingHorizontal: gutter }]}>
         {app.pendingWrites.length > 0 && (
           <Pressable
             accessibilityRole="button"
@@ -434,7 +443,14 @@ export function TodayScreen() {
           </Pressable>
         )}
 
-        <View style={[styles.moods, panel, dark && styles.moodDepth]}>
+        <View
+          style={[
+            styles.moods,
+            compact && styles.compactMoods,
+            panel,
+            dark && styles.moodDepth,
+          ]}
+        >
           <Row style={styles.moodHead}>
             <AppText
               variant="heading"
@@ -466,7 +482,13 @@ export function TodayScreen() {
               </View>
             </Pressable>
           </Row>
-          <Row style={[styles.moodRow, largeText && styles.wrap]}>
+          <Row
+            style={[
+              styles.moodRow,
+              compact && styles.compactMoodRow,
+              wrapMoods && styles.wrap,
+            ]}
+          >
             {moodPetals.map((choice) => (
               <TodayMoodOption
                 key={choice.mood}
@@ -478,8 +500,7 @@ export function TodayScreen() {
                       : "saved"
                     : undefined
                 }
-                compact={compact}
-                largeText={largeText}
+                largeText={wrapMoods}
                 reducedMotion={reducedMotion}
                 onPress={() => openCheckin(choice.mood)}
               />
@@ -510,8 +531,8 @@ export function TodayScreen() {
               StyleSheet.absoluteFill,
               {
                 backgroundImage: dark
-                  ? "linear-gradient(90deg, #211C2DEB 0%, #211C2DAB 44%, #221B2A00 83%)"
-                  : "linear-gradient(90deg, #14281CEB 0%, #172D20AB 44%, #14281C00 85%)",
+                  ? "linear-gradient(90deg, #211C2DF5 0%, #211C2DCC 56%, #221B2A24 100%)"
+                  : "linear-gradient(90deg, #14281CF5 0%, #172D20CC 56%, #14281C24 100%)",
               },
             ]}
           />
@@ -536,7 +557,7 @@ export function TodayScreen() {
               (compact || largeText) && styles.wideCopy,
             ]}
           >
-            A 5-minute guided pause to slow down and settle.
+            A guided pause to slow down and settle.
           </AppText>
           <Row style={styles.focusFooter}>
             <Pressable
@@ -590,7 +611,9 @@ export function TodayScreen() {
                   },
                 ]}
               >
-                <Icon name={action.icon} color={tone.icon} size={25} />
+                <View style={styles.quickIcon}>
+                  <Icon name={action.icon} color={tone.icon} size={23} />
+                </View>
                 <AppText variant="label" style={styles.quickLabel}>
                   {action.title}
                 </AppText>
@@ -631,7 +654,7 @@ export function TodayScreen() {
               color={secondary}
               style={styles.journeyDetail}
             >
-              Build a consistent wellbeing routine.
+              Your Daily Pause progress
             </AppText>
             <Row style={styles.progressRow}>
               <View
@@ -689,7 +712,9 @@ export function TodayScreen() {
               <Icon name="chevron-forward" size={14} />
             </Pressable>
           </Row>
-          <Row style={[styles.exploreCards, largeText && styles.wrap]}>
+          <Row
+            style={[styles.exploreCards, (compact || largeText) && styles.wrap]}
+          >
             {exploreShortcuts.map((shortcut) => {
               const art = exploreArt[shortcut.route];
               return (
@@ -700,7 +725,8 @@ export function TodayScreen() {
                   onPress={() => app.navigate(shortcut.route)}
                   style={({ pressed }) => [
                     styles.exploreCard,
-                    largeText && styles.largeExploreCard,
+                    (compact || largeText) && styles.largeExploreCard,
+                    fontScale > 1.5 && styles.fullExploreCard,
                     {
                       borderColor: dark ? "#6D5B7A75" : colors.border,
                       opacity: pressed ? 0.8 : 1,
@@ -742,32 +768,138 @@ export function TodayScreen() {
           </Row>
         </View>
 
-        <View style={[styles.daily, { borderTopColor: colors.border }]}>
+        <View style={[styles.daily, panel, dark && styles.journeyDepth]}>
+          <Row style={styles.dailyHeading}>
+            <View
+              style={[
+                styles.dailyMark,
+                { backgroundColor: colors.lavenderSurface },
+              ]}
+            >
+              <LotusMark size={24} />
+            </View>
+            <AppText
+              variant="heading"
+              accessibilityRole="header"
+              style={styles.fill}
+            >
+              Your Daily Pause
+            </AppText>
+          </Row>
+          <AppText variant="caption" color={secondary}>
+            {next
+              ? "Make a little room for yourself today."
+              : "You made time for yourself today. Come back to any step anytime."}
+          </AppText>
+          <Row style={[styles.dailySteps, largeText && styles.stackedSteps]}>
+            {routine.steps.map((step, index) => {
+              const current = next?.id === step.id;
+              const status = step.complete
+                ? "Completed"
+                : current
+                  ? "Next step"
+                  : "Available";
+              const emphasis = current || step.complete;
+              const stepInk = current
+                ? dailyPrimaryInk
+                : emphasis
+                  ? colors.sageText
+                  : secondary;
+              const indicator = (
+                <View
+                  style={[
+                    styles.stepIndicator,
+                    {
+                      borderColor: emphasis ? "transparent" : panel.borderColor,
+                      backgroundColor: current
+                        ? dailyPrimary
+                        : step.complete
+                          ? colors.sageSurface
+                          : "transparent",
+                    },
+                  ]}
+                >
+                  {step.complete ? (
+                    <Icon name="checkmark" size={16} color={stepInk} />
+                  ) : (
+                    <AppText
+                      variant="label"
+                      color={stepInk}
+                      style={styles.stepNumber}
+                    >
+                      {index + 1}
+                    </AppText>
+                  )}
+                </View>
+              );
+              const stepStyle = [
+                styles.dailyStep,
+                largeText && styles.stackedStep,
+              ];
+              const label = (
+                <AppText
+                  variant="label"
+                  style={[
+                    styles.stepLabel,
+                    largeText && styles.stackedStepLabel,
+                  ]}
+                >
+                  {step.title}
+                </AppText>
+              );
+              return current ? (
+                <View
+                  key={step.id}
+                  accessible
+                  accessibilityLabel={`${step.title}. ${status}`}
+                  style={stepStyle}
+                >
+                  {indicator}
+                  {label}
+                </View>
+              ) : (
+                <Pressable
+                  key={step.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${step.title}. ${status}`}
+                  onPress={() => app.navigate(step.route, step.params)}
+                  style={({ pressed }) => [
+                    stepStyle,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  {indicator}
+                  {label}
+                </Pressable>
+              );
+            })}
+          </Row>
+          {next?.id === "practice" && (
+            <AppText variant="caption" color={secondary}>
+              {routine.suggestion.title} · {routine.suggestion.duration}
+            </AppText>
+          )}
           <Pressable
             accessibilityRole="button"
             onPress={() =>
               next
                 ? app.navigate(next.route, next.params)
-                : app.navigate("breathing", { durationSec: 180 })
+                : app.navigate("journey-activity", { day: routine.day })
             }
             style={({ pressed }) => [
               styles.dailyAction,
-              { opacity: pressed ? 0.68 : 1 },
+              { backgroundColor: dailyPrimary },
+              pressed && styles.pressed,
             ]}
           >
-            <View style={styles.fill}>
-              <AppText variant="heading" style={styles.journeyTitle}>
-                Your Daily Pause
-              </AppText>
-              <AppText variant="caption" color={secondary}>
-                {next?.id === "practice"
-                  ? routine.suggestion.title
-                  : next
-                    ? next.title
-                    : "Complete for today. Take another pause anytime."}
-              </AppText>
-            </View>
-            <Icon name="chevron-forward" size={16} />
+            <AppText
+              variant="label"
+              color={dailyPrimaryInk}
+              style={styles.startLabel}
+            >
+              {next ? dailyActions[next.id] : "View today’s pause"}
+            </AppText>
+            <Icon name="arrow-forward" size={16} color={dailyPrimaryInk} />
           </Pressable>
           {next?.id === "practice" && (
             <>
@@ -775,7 +907,10 @@ export function TodayScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ expanded: showReason }}
                 onPress={() => setShowReason((value) => !value)}
-                style={styles.reason}
+                style={({ pressed }) => [
+                  styles.reason,
+                  pressed && styles.pressed,
+                ]}
               >
                 <AppText variant="caption" color={secondary}>
                   Why this pause?
@@ -800,17 +935,17 @@ export function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 22 },
-  hero: { overflow: "hidden", paddingHorizontal: 18, paddingBottom: 23 },
+  screen: { paddingHorizontal: 0, paddingTop: 0 },
+  hero: { overflow: "hidden", paddingBottom: spacing.section },
   heroFade: { position: "absolute", bottom: 0, left: 0, right: 0, height: 42 },
-  header: { minHeight: 44, justifyContent: "space-between", gap: 6 },
+  header: { minHeight: 48, justifyContent: "space-between", gap: 6 },
   brand: { gap: 6, flexShrink: 1 },
   brandName: { fontSize: 24, lineHeight: 28 },
   headerActions: { gap: 4 },
   headerAction: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -826,7 +961,11 @@ const styles = StyleSheet.create({
   },
   greeting: { marginTop: 3, maxWidth: "100%" },
   salutation: { fontSize: 12, lineHeight: 16, letterSpacing: 1.25 },
-  name: { fontSize: 41, lineHeight: 44, marginTop: 1 },
+  name: {
+    fontSize: 41,
+    lineHeight: Platform.OS === "android" ? 54 : 48,
+    marginTop: 1,
+  },
   welcome: {
     marginTop: 3,
     fontSize: 12.5,
@@ -836,7 +975,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
     textShadowOffset: { width: 0, height: 1 },
   },
-  content: { paddingHorizontal: 12, marginTop: -4 },
+  content: { marginTop: -4 },
   fill: { flex: 1, minWidth: 0 },
   unsynced: {
     marginBottom: 12,
@@ -850,18 +989,23 @@ const styles = StyleSheet.create({
   moods: {
     borderRadius: 20,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingBottom: 10,
+    paddingHorizontal: spacing.row,
+    paddingBottom: spacing.row,
   },
+  compactMoods: { paddingHorizontal: spacing.compact },
   moodDepth: {
     backgroundImage:
       "linear-gradient(140deg, #2D233B 0%, #211B2A 53%, #201A28 100%)",
   },
-  moodHead: { justifyContent: "space-between", gap: 4 },
+  moodHead: {
+    justifyContent: "space-between",
+    gap: spacing.compact,
+    marginBottom: 4,
+  },
   moodHeading: { flex: 1, fontSize: 21, lineHeight: 26 },
   moodEntry: {
-    minHeight: 44,
-    minWidth: 44,
+    minHeight: 48,
+    minWidth: 48,
     justifyContent: "center",
     alignItems: "flex-end",
   },
@@ -873,30 +1017,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  moodRow: { gap: 6, alignItems: "stretch" },
+  moodRow: { gap: spacing.compact, alignItems: "stretch" },
+  compactMoodRow: { gap: 6 },
   wrap: { flexWrap: "wrap" },
   mood: {
     flex: 1,
     minWidth: 0,
-    minHeight: 51,
+    minHeight: 64,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderRadius: 18,
-    paddingHorizontal: 2,
-    paddingVertical: 5,
-    gap: 3,
+    paddingHorizontal: 1,
+    paddingVertical: spacing.compact,
+    gap: 4,
   },
   largeMood: { flexBasis: "28%", flexGrow: 1 },
   moodTint: { ...StyleSheet.absoluteFill, borderRadius: 17 },
   moodPetal: { width: 29, height: 24 },
   moodText: { textAlign: "center", fontSize: 11, lineHeight: 15 },
-  compactMoodText: { fontSize: 10 },
   focus: {
-    minHeight: 152,
-    marginTop: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
+    minHeight: 176,
+    marginTop: spacing.section,
+    padding: spacing.card,
     justifyContent: "center",
     overflow: "hidden",
     borderRadius: 20,
@@ -912,16 +1055,16 @@ const styles = StyleSheet.create({
     borderColor: "#F7CB9273",
     backgroundColor: "#D5AC7630",
   },
-  focusLabel: { fontSize: 10.5, lineHeight: 14 },
-  focusTitle: { width: "78%", fontSize: 29, lineHeight: 32, marginTop: 4 },
+  focusLabel: { fontSize: 11, lineHeight: 15 },
+  focusTitle: { width: "78%", fontSize: 31, lineHeight: 36, marginTop: 4 },
   fullWidth: { width: "100%" },
-  focusDetail: { maxWidth: "66%", fontSize: 12, lineHeight: 15, marginTop: 2 },
+  focusDetail: { maxWidth: "66%", fontSize: 13, lineHeight: 18, marginTop: 3 },
   wideCopy: { maxWidth: "90%" },
   focusFooter: {
-    marginTop: 5,
+    marginTop: spacing.row,
     justifyContent: "space-between",
     flexWrap: "wrap",
-    gap: 6,
+    gap: spacing.compact,
   },
   focusAction: {
     flexDirection: "row",
@@ -929,7 +1072,7 @@ const styles = StyleSheet.create({
     gap: 7,
     paddingHorizontal: 13,
     paddingVertical: 5,
-    minHeight: 44,
+    minHeight: 48,
     borderRadius: 24,
     flexShrink: 1,
   },
@@ -944,31 +1087,41 @@ const styles = StyleSheet.create({
     borderColor: "#FFF5EA48",
   },
   durationText: { fontSize: 11, lineHeight: 14 },
-  quickActions: { marginTop: 12, alignItems: "stretch", gap: 8 },
+  quickActions: {
+    marginTop: spacing.row,
+    alignItems: "stretch",
+    gap: spacing.compact,
+  },
   quickAction: {
     flex: 1,
     minWidth: 0,
-    minHeight: 64,
+    minHeight: 74,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 3,
-    paddingVertical: 7,
-    gap: 3,
+    paddingVertical: spacing.compact,
+    gap: 4,
     borderWidth: 1,
     borderRadius: 15,
+  },
+  quickIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   largeQuickAction: { flexBasis: "43%" },
   quickLabel: { textAlign: "center", fontSize: 13, lineHeight: 18 },
   journey: {
-    marginTop: 12,
+    marginTop: spacing.section,
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: "row",
-    gap: 9,
+    gap: spacing.row,
     alignItems: "center",
     minHeight: 76,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.card,
+    paddingVertical: spacing.row,
   },
   journeyDepth: {
     backgroundImage:
@@ -983,52 +1136,103 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   journeyTitle: { fontSize: 19, lineHeight: 23 },
-  journeyDetail: { fontSize: 11, lineHeight: 15, marginTop: 1 },
-  progressRow: { marginTop: 3, gap: 7 },
-  progressTrack: { flex: 1, height: 6, borderRadius: 3, overflow: "hidden" },
+  journeyDetail: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  progressRow: { marginTop: 6, gap: spacing.compact },
+  progressTrack: {
+    flex: 1,
+    minWidth: 18,
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
   progressFill: { height: "100%", borderRadius: 3 },
-  progressText: { flexShrink: 1, fontSize: 10.5, lineHeight: 14 },
-  explore: { marginTop: 10 },
+  progressText: { flexShrink: 1, fontSize: 11, lineHeight: 15 },
+  explore: { marginTop: spacing.section },
   exploreHead: {
     justifyContent: "space-between",
     gap: 4,
-    paddingHorizontal: 3,
+    marginBottom: 4,
   },
   exploreTitle: { flex: 1, minWidth: 0, gap: 8 },
   exploreHeading: { flex: 1, fontSize: 19, lineHeight: 24 },
-  seeAll: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 3 },
-  seeAllText: { fontSize: 11.5, lineHeight: 16 },
-  exploreCards: { gap: 8, alignItems: "stretch" },
+  seeAll: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 3 },
+  seeAllText: { fontSize: 12, lineHeight: 17, flexShrink: 1 },
+  exploreCards: { gap: spacing.row, alignItems: "stretch" },
   exploreCard: {
     flex: 1,
     minWidth: 0,
     minHeight: 112,
-    paddingHorizontal: 9,
-    paddingTop: 12,
-    paddingBottom: 9,
+    padding: spacing.row,
     overflow: "hidden",
     borderRadius: 16,
     borderWidth: 1,
     backgroundColor: "#282137",
   },
   largeExploreCard: { flexBasis: "45%" },
+  fullExploreCard: { flexBasis: "100%" },
   exploreScrim: {
     backgroundImage:
       "linear-gradient(180deg, #18122020 0%, #201829B0 42%, #17121FF5 100%)",
   },
-  exploreCardTitle: { fontSize: 12.5, lineHeight: 17, marginTop: 6 },
-  exploreDetail: { fontSize: 10.5, lineHeight: 14, marginTop: 3 },
-  daily: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 14,
-    paddingTop: 7,
-    paddingHorizontal: 3,
+  exploreCardTitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: spacing.compact,
   },
+  exploreDetail: { fontSize: 12, lineHeight: 16, marginTop: 3 },
+  daily: {
+    borderWidth: 1,
+    borderRadius: 20,
+    marginTop: spacing.section,
+    padding: spacing.card,
+    gap: spacing.compact,
+  },
+  dailyHeading: { gap: spacing.compact },
+  dailyMark: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dailySteps: { gap: 4, alignItems: "stretch", marginVertical: 4 },
+  stackedSteps: { flexDirection: "column" },
+  dailyStep: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    gap: 4,
+    alignItems: "center",
+  },
+  stackedStep: { flexDirection: "row", gap: spacing.compact },
+  stepIndicator: {
+    width: 26,
+    height: 26,
+    borderWidth: 1,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepNumber: { fontSize: 11, lineHeight: 15 },
+  stepLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
+  stackedStepLabel: { flexShrink: 1, textAlign: "left" },
   dailyAction: {
     flexDirection: "row",
+    alignSelf: "flex-start",
     minHeight: 48,
     alignItems: "center",
-    gap: 8,
+    gap: spacing.compact,
+    paddingHorizontal: spacing.card,
+    paddingVertical: spacing.compact,
+    maxWidth: "100%",
+    borderRadius: 24,
   },
-  reason: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 5 },
+  pressed: { opacity: 0.72 },
+  reason: {
+    minHeight: 48,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
 });

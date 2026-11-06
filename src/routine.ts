@@ -1,7 +1,8 @@
 import { localDay, recordDay } from "./content";
+import { createExplorePractice } from "./explore-practices";
+import { isCompletedMoment, journeyRecords } from "./progress";
 type RecordItem = Record<string, any>;
-export type RoutineActivity =
-  "breathing" | "grounding" | "reflection" | "resource";
+export type RoutineActivity = "breathing" | "grounding" | "reflection" | "rest";
 export type RoutineSuggestion = {
   activity: RoutineActivity;
   title: string;
@@ -10,6 +11,8 @@ export type RoutineSuggestion = {
   route: string;
   params: Record<string, any>;
 };
+const reflectiveMoment = createExplorePractice("reflect", 3);
+const restfulMoment = createExplorePractice("rest", 3);
 const suggestions: Record<
   RoutineActivity,
   Omit<RoutineSuggestion, "reason">
@@ -30,17 +33,21 @@ const suggestions: Record<
   },
   reflection: {
     activity: "reflection",
-    title: "Make room for a thought",
+    title: reflectiveMoment.title,
     duration: "3 min",
-    route: "reflection",
-    params: { prompt: "What feels important to make room for today?" },
+    route: "moment-player",
+    params: {
+      activity: reflectiveMoment,
+      provider: "offline",
+      source: "today",
+    },
   },
-  resource: {
-    activity: "resource",
-    title: "A softer landing tonight",
-    duration: "3 min read",
-    route: "resource",
-    params: { id: "sleep" },
+  rest: {
+    activity: "rest",
+    title: restfulMoment.title,
+    duration: "3 min",
+    route: "moment-player",
+    params: { activity: restfulMoment, provider: "offline", source: "today" },
   },
 };
 function preferenceActivity(text: string): RoutineActivity | null {
@@ -50,7 +57,7 @@ function preferenceActivity(text: string): RoutineActivity | null {
   if (/\b(breathing|breathwork|breathe)\b/i.test(text)) return "breathing";
   if (/\b(journaling|journal|reflection|writing)\b/i.test(text))
     return "reflection";
-  if (/\b(sleep|bedtime)\b/i.test(text)) return "resource";
+  if (/\b(sleep|bedtime)\b/i.test(text)) return "rest";
   return null;
 }
 const newest = (records: RecordItem[]) =>
@@ -74,9 +81,16 @@ export function pickDailyRoutine(
     const recordedDay = recordDay(record);
     return !!recordedDay && recordedDay <= day;
   };
-  const todayCheckin = newest(
-    (data.checkins || []).filter((record) => recordDay(record) === day),
-  )[0];
+  const { checkins, reflections, sessions } = data;
+  const records = journeyRecords(
+    { checkins, reflections, sessions },
+    now,
+    true,
+  );
+  const todayCheckins = records.checkins.filter(
+    (record) => recordDay(record) === day,
+  );
+  const todayCheckin = todayCheckins[0];
   let activity: RoutineActivity = "breathing";
   let reason = "A short, curated pause. Choose what feels right for you.";
   let source: "curated" | "today-checkin" | "preference" | "feedback" =
@@ -106,21 +120,22 @@ export function pickDailyRoutine(
         "Chosen from an activity preference you approved. You can change preferences in Profile.";
       source = "preference";
     } else {
-      const helpful = newest(
-        (data.sessions || []).filter(
-          (record) =>
-            eligible(record) &&
-            record.completed === true &&
-            record.feedback === "Helped" &&
-            ["breathing", "grounding", "reflection", "resource"].includes(
-              record.type,
-            ),
-        ),
-      )[0];
+      const helpful = records.sessions.find(
+        (record) =>
+          record.localOnly !== true &&
+          record.completed === true &&
+          record.feedback === "Helped" &&
+          (["breathing", "grounding", "reflection", "rest"].includes(
+            record.type,
+          ) ||
+            (record.type === "resource" && record.resourceId === "sleep")),
+      );
       if (helpful) {
-        activity = helpful.type;
+        activity = helpful.type === "resource" ? "rest" : helpful.type;
         reason =
-          "You marked this kind of activity helpful before. Try it again, or choose something else.";
+          helpful.type === "resource"
+            ? "You found a sleep guide helpful before. This is a short guided rest."
+            : "You marked this kind of activity helpful before. Try it again, or choose something else.";
         source = "feedback";
       }
     }
@@ -130,18 +145,17 @@ export function pickDailyRoutine(
     params: { ...suggestions[activity].params },
     reason,
   };
-  const checkinComplete = !!todayCheckin;
-  const savedReflection = (data.reflections || []).some(
+  const savedToday = (record: RecordItem) =>
+    record.localOnly !== true && recordDay(record) === day;
+  const checkinComplete = todayCheckins.some(savedToday);
+  const reflectionComplete = records.reflections.some(
     (record) =>
-      recordDay(record) === day &&
+      savedToday(record) &&
       !!String(record.text || record.content || record.note || "").trim(),
   );
-  const practiceComplete =
-    (activity === "reflection" && savedReflection) ||
-    (data.sessions || []).some(
-      (record) => recordDay(record) === day && record.completed === true,
-    );
-  const reflectionComplete = savedReflection;
+  const practiceComplete = records.sessions.some(
+    (record) => savedToday(record) && isCompletedMoment(record),
+  );
   const steps = [
     {
       id: "checkin",
@@ -152,7 +166,7 @@ export function pickDailyRoutine(
     },
     {
       id: "practice",
-      title: "Take a moment",
+      title: "Take a Moment",
       complete: practiceComplete,
       route: suggestion.route,
       params: suggestion.params,
@@ -167,9 +181,10 @@ export function pickDailyRoutine(
           "What would you like to carry from this moment into the rest of your day?",
       },
     },
-  ];
+  ] as const;
   return {
     day,
+    todayCheckin,
     suggestion,
     source,
     steps,

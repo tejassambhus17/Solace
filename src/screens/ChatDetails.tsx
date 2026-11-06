@@ -1,28 +1,30 @@
 import React from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 import { Companion, type CompanionState } from "../Companion";
+import { spacing } from "../layout";
 import { useTheme } from "../theme";
 import { AppText, coverImageStyle, Icon, Row } from "../ui";
 
 export function ChatScene({
   height,
-  offset = 0,
-  viewportHeight = height,
+  children,
 }: {
   height: number;
-  offset?: number;
-  viewportHeight?: number;
+  children: React.ReactNode;
 }) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
   return (
     <View
-      pointerEvents="none"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={[styles.scene, { height: viewportHeight }]}
+      style={[
+        styles.scene,
+        {
+          minHeight: height,
+          backgroundColor: dark ? colors.heroSurface : "#343E27",
+        },
+      ]}
     >
-      <View style={{ height, top: -offset }}>
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         <Image
           source={
             dark
@@ -44,6 +46,7 @@ export function ChatScene({
           ]}
         />
       </View>
+      {children}
     </View>
   );
 }
@@ -54,13 +57,16 @@ export function ChatHeaderButton({
   onPress,
   disabled,
   featured,
+  scenic,
 }: {
   icon: string;
   label: string;
   onPress: () => void;
   disabled: boolean;
   featured?: boolean;
+  scenic?: boolean;
 }) {
+  const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
@@ -80,17 +86,60 @@ export function ChatHeaderButton({
         style={[
           styles.headerIcon,
           {
-            backgroundColor: featured ? "#FAE7BE45" : "#FAE7BE24",
+            backgroundColor: scenic
+              ? featured
+                ? "#FAE7BE45"
+                : "#FAE7BE24"
+              : featured
+                ? colors.sageSurface
+                : colors.surface,
+            borderColor: scenic ? "#FFF4D978" : colors.border,
           },
         ]}
       >
-        <Icon name={icon} color="#FFF7E9" size={20} />
+        <Icon name={icon} color={scenic ? "#FFF7E9" : colors.text} size={20} />
       </View>
     </Pressable>
   );
 }
 
-export function ChatBubble({
+export function ChatAvatar({
+  size = 34,
+  state = "idle",
+}: {
+  size?: number;
+  state?: CompanionState;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={[
+        styles.avatar,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: colors.surface2,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      {state === "idle" ? (
+        <Image
+          source={require("../../assets/redesign-chat-avatar.jpg")}
+          accessible={false}
+          resizeMode="cover"
+          fadeDuration={0}
+          style={coverImageStyle}
+        />
+      ) : (
+        <Companion size={size - 5} state={state} />
+      )}
+    </View>
+  );
+}
+
+export const ChatBubble = React.memo(function ChatBubble({
   children,
   user = false,
   label,
@@ -118,22 +167,8 @@ export function ChatBubble({
   return (
     <View style={[styles.turn, user && styles.userTurn]}>
       {!user && avatar && (
-        <View
-          style={[
-            styles.avatar,
-            { backgroundColor: dark ? "#3A312A" : "#D8B79A" },
-          ]}
-        >
-          {avatarState === "idle" ? (
-            <Image
-              source={require("../../assets/redesign-chat-avatar.jpg")}
-              accessible={false}
-              fadeDuration={0}
-              style={{ width: "100%", height: "100%" }}
-            />
-          ) : (
-            <Companion size={29} state={avatarState} />
-          )}
+        <View style={styles.turnAvatar}>
+          <ChatAvatar state={avatarState} />
         </View>
       )}
       <View style={styles.turnContent}>
@@ -194,7 +229,7 @@ export function ChatBubble({
       </View>
     </View>
   );
-}
+});
 
 export function ChatWelcome({
   mood,
@@ -228,28 +263,24 @@ export function ChatQuickReplies({
   onActivity,
   onTalk,
   disabled,
-  reflection,
 }: {
   onActivity: () => void;
   onTalk: () => void;
   disabled: boolean;
-  reflection?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <Row style={styles.replies}>
       {[
         {
-          title: reflection
-            ? "Yes, I’d like to reflect"
-            : "Yes, a quick reset sounds good",
-          icon: reflection ? "book-outline" : "leaf-outline",
+          title: "Try a quick reset",
+          icon: "leaf-outline",
           background: colors.sageSurface,
           color: colors.sageText,
           onPress: onActivity,
         },
         {
-          title: "Actually, I’d like to talk for a bit",
+          title: "I’d like to talk",
           icon: "ellipsis-horizontal",
           background: colors.surface,
           color: colors.text,
@@ -355,10 +386,6 @@ export function ChatResetCard({
 
 const styles = StyleSheet.create({
   scene: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
     overflow: "hidden",
   },
   headerIcon: {
@@ -366,7 +393,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#FFF4D978",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -380,16 +406,12 @@ const styles = StyleSheet.create({
   userTurn: { alignSelf: "flex-end", maxWidth: "83%" },
   turnContent: { flexShrink: 1, minWidth: 0 },
   avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
     borderWidth: 1,
-    borderColor: "#FFF1DD9C",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 4,
     overflow: "hidden",
   },
+  turnAvatar: { marginTop: 4 },
   bubble: {
     paddingVertical: 11,
     paddingHorizontal: 15,
@@ -408,14 +430,14 @@ const styles = StyleSheet.create({
   userMeta: { alignSelf: "flex-end" },
   replyLabel: { fontSize: 11, lineHeight: 16 },
   moodContext: { marginLeft: 42, fontSize: 12, lineHeight: 17 },
-  replies: { gap: 8, alignItems: "stretch" },
+  replies: { gap: spacing.compact, alignItems: "stretch" },
   reply: {
     flex: 1,
     minWidth: 0,
-    minHeight: 84,
+    minHeight: 62,
     alignItems: "center",
     justifyContent: "center",
-    padding: 10,
+    padding: spacing.compact,
     gap: 5,
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,

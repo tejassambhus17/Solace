@@ -4,14 +4,14 @@ Sources: the original 11-page hackathon PDF, approved botanical references, the 
 
 ## Current delivery scope
 
-The user directed feature implementation to continue while deferring provider, hosting and device setup. The four main tabs are **Today, Solace, Journey, Profile**. The labeled **Explore** shortcut between Solace and Journey opens the practice library directly. Moments is available from Explore, Today and the Solace header.
+The current tabs are **Today, Solace, Explore, Journey, Profile**. Explore has its own root and detail stack. Moments is available from Explore, Today and the Solace header.
 
 The November 6 stabilization pass exercised the connected Android handset and browser flows. For the current evidence and native/provider limits, see the [stabilization report](QA_STABILIZATION.md) and [verification record](VERIFICATION.md).
 
 | Source | Capability | Current implementation | Verification boundary |
 |---|---|---|---|
 | PDF2–3 / core | Splash, onboarding, accounts and sessions | Branded loading/welcome, signup/login/logout, server-validated sessions and recovery | Browser auth verified. Physical Android debug installation, onboarding, signup and cold restart passed. |
-| PDF3–4 / workspace | Personal home and four main tabs | Scenic Today with mood check-in, a five-minute featured Moment, four practice shortcuts, factual Journey progress, and the Explore More section | Reference comparison and route verification in VERIFICATION.md. Native materials and gestures remain separate. |
+| PDF3–4 / workspace | Personal home and five tabs | Scenic Today with mood check-in, a featured Moment, practice shortcuts, and Daily Pause progress backed by saved check-ins, Moments and reflections | See the [UI repair QA report](QA_UI_REPAIR.md) for device and route coverage. |
 | PDF4–5 / core | Real contextual conversations | Gemini primary, optional OpenAI failover, bounded conversation and consented context, built-in companion label, navigation-safe drafts and retry identity | Live Gemini recalled a synthetic prior turn. Browser send/retry and Android built-in exchange also passed. |
 | PDF5–6 / core | Conversation history | Start new, search, rename, continue, delete; recent-conversation entry and unsent-text recovery | Server and browser coverage. Physical Android debug history showed saved test conversations after reopening. |
 | Master 1 | Expressive companion | Reusable lightweight petal with idle, listening, thinking, speaking, celebration and breathing states driven by actual events; reduced-motion support | Source, lifecycle tests and browser activity states; native recording/playback animation correspondence pending |
@@ -44,7 +44,7 @@ The November 6 stabilization pass exercised the connected Android handset and br
 | Moments and Journey | Optional environment controls expand on demand. Changed feelings invalidate old previews. Canceling exit keeps a paused Moment paused. Calendar month and selected day stay in sync. | Focused helper tests and browser generation, pause, completion, feedback and calendar checks. |
 | Reminder preferences | Four-digit time input, clear edit/reset, explicit delete confirmation, serialized restore and edit, deduplicated tap routing. | Coordination tests and browser preference saving and editing. Native scheduling, delivery and tap acceptance remain separate. |
 | Preview and motion | Packaged web preview serves real audio MIME and byte ranges. Web motion uses its available driver, and mobile retains native animation. | Local HTTP smoke check, browser playback state and Expo exports. |
-| Explore library | Twilight hero, compact filters including Sleep, search and saved toolkit, a five-minute featured Moment, and four recommendations for breathing, grounding, journaling and relaxation. The plan banner opens the editable three-day plan. Explore More links to Guided Programs, Wellness Toolkit and Check-Ins, with the timed practice builder among the additional tools. | See [verification](VERIFICATION.md) for route and layout checks. Installed phone appearance is a separate check. |
+| Explore library | Twilight hero, filters including Sleep, search, saved toolkit, and a featured Moment. Guided Programs, Wellness Toolkit and Check-Ins remain reachable. More wellness tools and Build a timed practice are distinct expandable sections. Explore restores its view when returning from tools and other tabs. | See [UI repair QA](QA_UI_REPAIR.md) for routes and timed completion evidence. |
 
 ## Current exclusions and limits
 

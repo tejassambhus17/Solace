@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
+  Animated,
+  Easing,
+  I18nManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -13,7 +16,7 @@ import {
   isGlassEffectAPIAvailable,
   isLiquidGlassAvailable,
 } from "expo-glass-effect";
-import { useApp } from "./store";
+import { useReducedMotion } from "./Companion";
 import { useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
 
@@ -39,17 +42,58 @@ const destinations = [
     active: "person",
   },
 ];
+const rowPadding = 5;
+const spotlightSize = 36;
 
-export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
-  const app = useApp();
+export const TabBar = React.memo(function TabBar({
+  activeTab,
+  route,
+  onSelect,
+  onHeight,
+}: {
+  activeTab: string;
+  route: string;
+  onSelect: (name: string) => void;
+  onHeight: (height: number) => void;
+}) {
   const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
-  const onToday = app.route === "today";
-  const onExplore = app.route === "explore";
+  const onToday = route === "today";
+  const onExplore = route === "explore";
   const twilight = resolved === "dark" && onToday;
   const twilightExplore = resolved === "dark" && onExplore;
   const bottomInset = Math.max(insets.bottom, 10);
+  const reducedMotion = useReducedMotion();
+  const [rowWidth, setRowWidth] = useState(0);
+  const spotlightX = useRef(new Animated.Value(0)).current;
+  const measuredWidth = useRef(0);
+  const selectedIndex = destinations.findIndex(
+    ({ name }) => name === activeTab,
+  );
+  useLayoutEffect(() => {
+    if (!rowWidth || selectedIndex < 0) return;
+    const index = I18nManager.isRTL
+      ? destinations.length - 1 - selectedIndex
+      : selectedIndex;
+    const tabWidth = (rowWidth - rowPadding * 2) / destinations.length;
+    const center = rowPadding + (index + 0.5) * tabWidth;
+    const target = center - spotlightSize / 2;
+    if (reducedMotion || measuredWidth.current !== rowWidth) {
+      measuredWidth.current = rowWidth;
+      spotlightX.setValue(target);
+      return;
+    }
+    const motion = Animated.timing(spotlightX, {
+      toValue: target,
+      duration: 165,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== "web",
+      isInteraction: false,
+    });
+    motion.start();
+    return () => motion.stop();
+  }, [reducedMotion, rowWidth, selectedIndex, spotlightX]);
   // Start opaque until the OS accessibility preference has been read.
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
@@ -75,95 +119,50 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
     isGlassEffectAPIAvailable() &&
     isLiquidGlassAvailable();
   const items = (
-    <View style={{ flexDirection: "row", padding: 5, alignItems: "stretch" }}>
+    <View
+      accessibilityRole="tablist"
+      onLayout={({ nativeEvent }) => setRowWidth(nativeEvent.layout.width)}
+      style={styles.items}
+    >
+      {rowWidth > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          accessible={false}
+          style={[
+            styles.spotlight,
+            {
+              backgroundColor: colors.tabActiveSurface,
+              transform: [{ translateX: spotlightX }],
+            },
+          ]}
+        />
+      )}
       {destinations.map((destination) => {
-        const explore = destination.name === "explore";
-        const selected = explore
-          ? app.inExplore
-          : !app.inExplore && app.activeTab === destination.name;
-        const today = destination.name === "today";
-        const selectedSurface =
-          today && twilight
-            ? "#322742"
-            : explore && twilightExplore
-              ? "#352741"
-              : today
-                ? colors.sageSurface
-                : explore || resolved === "light"
-                  ? colors.lavenderSurface
-                  : colors.surface2;
-        const selectedInk =
-          today && twilight
-            ? "#D7B6FA"
-            : explore && twilightExplore
-              ? "#D7B6FA"
-              : today
-                ? colors.sageText
-                : explore || resolved === "light"
-                  ? colors.lavenderText
-                  : colors.primary;
+        const selected = activeTab === destination.name;
+        const ink = selected ? colors.tabActiveText : colors.muted;
         return (
           <Pressable
             key={destination.name}
-            onPress={() =>
-              explore ? app.navigate("explore") : app.setTab(destination.name)
-            }
-            accessibilityRole={explore ? "button" : "tab"}
+            onPress={() => onSelect(destination.name)}
+            accessibilityRole="tab"
             accessibilityState={{ selected }}
-            aria-selected={explore ? undefined : selected}
             accessibilityLabel={destination.title}
-            android_ripple={{
-              color: colors.lavenderSurface,
-              borderless: false,
-            }}
-            style={({ pressed }) => ({
-              flex: 1,
-              minHeight: 52,
-              minWidth: android ? 48 : 44,
-              borderRadius: 29,
-              paddingVertical: 5,
-              paddingHorizontal: 1,
-              gap: 2,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor:
-                selected && !android && !twilight
-                  ? selectedSurface
-                  : "transparent",
-              overflow: "hidden",
-              opacity: pressed ? 0.65 : 1,
-            })}
+            style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
           >
-            <View
-              style={
-                android
-                  ? {
-                      width: "100%",
-                      maxWidth: 54,
-                      height: 30,
-                      borderRadius: 16,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      backgroundColor: selected
-                        ? selectedSurface
-                        : "transparent",
-                    }
-                  : undefined
-              }
-            >
+            <View style={styles.iconFrame}>
               <Icon
                 name={selected ? destination.active : destination.icon}
                 size={22}
-                color={selected ? selectedInk : colors.muted}
+                color={ink}
               />
             </View>
             <AppText
               variant="caption"
-              color={selected ? selectedInk : colors.muted}
+              color={ink}
               style={{
                 fontSize: 11,
                 lineHeight: 15,
-                fontFamily: selected ? "Inter_600SemiBold" : "Inter_400Regular",
+                textAlign: "center",
               }}
             >
               {destination.title}
@@ -255,8 +254,32 @@ export function TabBar({ onHeight }: { onHeight: (height: number) => void }) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   bottomSafeArea: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  items: { flexDirection: "row", padding: rowPadding, alignItems: "stretch" },
+  spotlight: {
+    position: "absolute",
+    left: 0,
+    top: rowPadding,
+    width: spotlightSize,
+    height: spotlightSize,
+    borderRadius: spotlightSize / 2,
+  },
+  tab: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 52,
+    alignItems: "center",
+    paddingBottom: 3,
+    borderRadius: 24,
+  },
+  pressed: { opacity: 0.65 },
+  iconFrame: {
+    width: spotlightSize,
+    height: spotlightSize,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

@@ -1,4 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  Activity,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   BackHandler,
@@ -16,7 +23,12 @@ import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
 import { CormorantGaramond_600SemiBold } from "@expo-google-fonts/cormorant-garamond/600SemiBold";
 import { ThemeProvider, useTheme } from "./src/theme";
-import { AppProvider, useApp } from "./src/store";
+import {
+  AppProvider,
+  AppRouteScope,
+  immersiveRoutes,
+  useApp,
+} from "./src/store";
 import { AppText, Button, NavigationInset, Petal, Screen } from "./src/ui";
 import {
   AuthScreen,
@@ -50,13 +62,6 @@ const profileScreens = new Set([
   "support",
   "about",
 ]);
-const immersiveScreens = new Set([
-  "breathing",
-  "moment",
-  "grounding",
-  "moment-player",
-  "voice-talk",
-]);
 const wellnessScreens = new Set([
   "checkin",
   "assessments",
@@ -79,11 +84,59 @@ const wellnessScreens = new Set([
   "grounding",
   "toolkit",
 ]);
+const retainedRoots = {
+  today: TodayScreen,
+  explore: ExploreScreen,
+  journey: JourneyScreen,
+  profile: () => <ProfileScreen name="profile" />,
+};
+type RetainedRoot = keyof typeof retainedRoots;
+
+const RetainedScreen = React.memo(function RetainedScreen({
+  route,
+  app,
+}: {
+  route: RetainedRoot;
+  app: ReturnType<typeof useApp> | null;
+}) {
+  // A hidden screen keeps its own route snapshot. Activity suspends its
+  // effects while preserving native views, local controls and scroll state.
+  const scopedApp = useRef(app);
+  if (app) scopedApp.current = app;
+  const state = scopedApp.current;
+  const Root = retainedRoots[route];
+  const content = useMemo(
+    () =>
+      state && (
+        <AppRouteScope value={state}>
+          <Root />
+        </AppRouteScope>
+      ),
+    [Root, state],
+  );
+  return <Activity mode={app ? "visible" : "hidden"}>{content}</Activity>;
+});
+
 function Shell() {
   const app = useApp();
+  return <AccountShell key={app.user?.id ?? "signed-out"} app={app} />;
+}
+
+function AccountShell({ app }: { app: ReturnType<typeof useApp> }) {
   const { colors, resolved } = useTheme();
   const navigate = useRef(app.navigate);
   navigate.current = app.navigate;
+  const tabAction = useRef(app.setTab);
+  tabAction.current = app.setTab;
+  const selectTab = useCallback((tab: string) => tabAction.current(tab), []);
+  const chatPositions = useRef(new Map<string, number>());
+  const visitedRoots = useRef(new Set<RetainedRoot>());
+  const activeRoot = Object.hasOwn(retainedRoots, app.route)
+    ? (app.route as RetainedRoot)
+    : null;
+  const authenticated = !!app.user && !app.sessionExpired;
+  if (!authenticated) visitedRoots.current.clear();
+  else if (activeRoot) visitedRoots.current.add(activeRoot);
   const [navigationHeight, setNavigationHeight] = useState(88);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
@@ -105,7 +158,7 @@ function Shell() {
     !!app.user &&
     !app.sessionExpired &&
     !keyboardOpen &&
-    !immersiveScreens.has(app.route);
+    !immersiveRoutes.has(app.route);
   useEffect(() => {
     if (!app.user || app.sessionExpired) return;
     restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
@@ -124,7 +177,7 @@ function Shell() {
       !app.user ||
       app.sessionExpired ||
       !app.canGoBack ||
-      immersiveScreens.has(app.route)
+      immersiveRoutes.has(app.route)
     )
       return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -164,18 +217,16 @@ function Shell() {
       </Screen>
     );
   else if (!app.user || app.sessionExpired) content = <AuthScreen />;
-  else if (app.route === "today") content = <TodayScreen />;
+  else if (activeRoot) content = null;
   else if (app.route === "chat" || app.route === "solace")
-    content = <ChatScreen />;
+    content = <ChatScreen scrollMemory={chatPositions.current} />;
   else if (app.route === "voice-talk") content = <VoiceTalkScreen />;
   else if (app.route === "history") content = <HistoryScreen />;
-  else if (app.route === "journey") content = <JourneyScreen />;
   else if (app.route === "journey-activity")
     content = <JourneyActivityScreen />;
   else if (app.route === "journey-milestones")
     content = <JourneyMilestonesScreen />;
   else if (app.route === "journey-goal") content = <JourneyGoalScreen />;
-  else if (app.route === "explore") content = <ExploreScreen />;
   else if (app.route === "moments") content = <MomentsScreen />;
   else if (app.route === "moment-player")
     content = <MomentPlayerScreen key={app.params?.activity?.id || "player"} />;
@@ -238,8 +289,23 @@ function Shell() {
           <NavigationInset.Provider
             value={showNavigation ? navigationHeight : 0}
           >
+            {authenticated &&
+              Array.from(visitedRoots.current, (route) => (
+                <RetainedScreen
+                  key={route}
+                  route={route}
+                  app={activeRoot === route ? app : null}
+                />
+              ))}
             {content}
-            {showNavigation && <TabBar onHeight={setNavigationHeight} />}
+            {showNavigation && (
+              <TabBar
+                activeTab={app.activeTab}
+                route={app.route}
+                onSelect={selectTab}
+                onHeight={setNavigationHeight}
+              />
+            )}
           </NavigationInset.Provider>
         )}
       </View>

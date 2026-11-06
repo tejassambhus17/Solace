@@ -957,7 +957,7 @@ function PlayableMoment({
             )}
             <Button
               title="See your Journey"
-              onPress={() => app.setTab("journey")}
+              onPress={() => app.navigate("journey")}
             />
             {saveSnapshot.current?.feedback === "Helped" && (
               <Button
@@ -976,7 +976,7 @@ function PlayableMoment({
             <Button
               title="Return to Today"
               variant="ghost"
-              onPress={() => app.setTab("today")}
+              onPress={() => app.navigate("today")}
               style={{ marginTop: 8 }}
             />
           </View>

@@ -1,5 +1,9 @@
 # Verification record
 
+## Cross-platform UI repair — 6 November 2026
+
+The [UI repair QA report](QA_UI_REPAIR.md) records matched visual evidence, physical Android recordings, the Explore and Daily Pause completion journeys, and the measured tab-rendering changes. All 162 client checks and 76 backend tests passed. Native iOS materials, public release sign-in, and final Android release performance remain separate checks.
+
 ## Gemini integration — 6 November 2026
 
 - The configured server-side key listed `gemini-3.1-flash-lite` and generated a reply. The compiled API then passed a synthetic smoke test with the local `AI_MODE=auto`, an in-memory database and OpenAI disabled for the run. Gemini recalled a detail from a prior chat turn, both turns were saved, a validated structured Moment used the approved synthetic preference, and a weekly question was generated from counts. Explicit urgent input still took the built-in support route.

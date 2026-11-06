@@ -7,6 +7,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { spacing, useScreenGutter } from "../layout";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
@@ -51,9 +52,11 @@ export default function ProfileHome() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const { width, fontScale } = useWindowDimensions();
+  const gutter = useScreenGutter();
   const { top } = useSafeAreaInsets();
   const dark = resolved === "dark";
-  const compact = width < 360 || fontScale > 1.2;
+  const compact = width < 390 || fontScale > 1.2;
+  const stackHero = fontScale > 1.35;
   const avatar = app.user?.avatar;
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const avatarSize = compact ? 62 : 80;
@@ -69,7 +72,7 @@ export default function ProfileHome() {
       links: [
         {
           title: "Gentle reminders",
-          subtitle: "Stay consistent with mindful nudges.",
+          subtitle: "Set reminders for mindful pauses.",
           icon: "notifications-outline",
           tone: "peach",
           route: "reminders",
@@ -104,7 +107,7 @@ export default function ProfileHome() {
       links: [
         {
           title: "Privacy & data",
-          subtitle: "Your information, export, and deletion controls.",
+          subtitle: "View, export, or delete your data.",
           icon: "lock-closed-outline",
           tone: "sage",
           route: "account",
@@ -139,7 +142,7 @@ export default function ProfileHome() {
       style={[styles.screen, { paddingTop: top + 5 }]}
       contentContainerStyle={{ backgroundColor: canvas }}
     >
-      <View style={styles.content}>
+      <View style={{ paddingHorizontal: gutter }}>
         <BotanicalBackdrop
           style={[styles.botanical, { opacity: dark ? 0.23 : 0.49 }]}
         />
@@ -152,6 +155,7 @@ export default function ProfileHome() {
         <Row
           style={[
             styles.hero,
+            stackHero && styles.stackedHero,
             {
               backgroundColor: dark ? "#21182B" : colors.heroSurface,
               borderColor: dark ? "#776582" : colors.heroBorder,
@@ -192,23 +196,20 @@ export default function ProfileHome() {
               },
             ]}
           >
-            {avatar && avatar !== failedAvatar ? (
+            <Icon name="person-outline" size={31} color={colors.lavenderText} />
+            {avatar && avatar !== failedAvatar && (
               <Image
+                key={avatar}
                 accessibilityLabel="Your profile photo"
                 source={{ uri: avatar }}
                 resizeMode="cover"
+                fadeDuration={0}
                 onError={() => setFailedAvatar(avatar)}
-                style={styles.photo}
-              />
-            ) : (
-              <Icon
-                name="person-outline"
-                size={31}
-                color={colors.lavenderText}
+                style={coverImageStyle}
               />
             )}
           </View>
-          <View style={styles.nameBlock}>
+          <View style={stackHero ? styles.stackedNameBlock : styles.nameBlock}>
             <AppText
               variant="title"
               accessibilityRole="header"
@@ -346,7 +347,7 @@ export default function ProfileHome() {
           </View>
         ))}
       </View>
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingHorizontal: gutter }]}>
         <Image
           source={profileArt[resolved].footer}
           style={coverImageStyle}
@@ -375,20 +376,23 @@ export default function ProfileHome() {
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingBottom: 0 },
-  content: { paddingHorizontal: 10 },
+  screen: { paddingHorizontal: 0 },
   botanical: { width: 185, height: 128, right: -41, top: -20 },
-  masthead: { minHeight: 46, paddingLeft: 11, gap: 8, marginBottom: 8 },
+  masthead: {
+    minHeight: 48,
+    gap: spacing.compact,
+    marginBottom: spacing.compact,
+  },
   brand: { fontSize: 24, lineHeight: 28 },
   hero: {
-    minHeight: 113,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 11,
+    minHeight: 136,
+    padding: spacing.card,
+    gap: spacing.row,
     borderRadius: 19,
     borderWidth: 1,
     overflow: "hidden",
   },
+  stackedHero: { flexDirection: "column", alignItems: "flex-start" },
   avatar: {
     flexShrink: 0,
     overflow: "hidden",
@@ -396,71 +400,71 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  photo: { width: "100%", height: "100%" },
   nameBlock: { flex: 1, minWidth: 0 },
-  name: { fontSize: 32, lineHeight: 35 },
-  subtitle: { fontSize: 12.5, lineHeight: 17, marginTop: 2 },
+  stackedNameBlock: { alignSelf: "stretch" },
+  name: { fontSize: 32, lineHeight: 38 },
+  subtitle: { fontSize: 13, lineHeight: 19, marginTop: 2 },
   editTarget: {
     alignSelf: "flex-start",
     maxWidth: "100%",
-    minHeight: 44,
+    minHeight: 48,
     justifyContent: "center",
   },
   editPill: {
-    gap: 6,
-    paddingHorizontal: 11,
+    gap: spacing.compact,
+    paddingHorizontal: spacing.row,
     paddingVertical: 4,
-    minHeight: 29,
+    minHeight: 36,
     borderRadius: 18,
   },
-  editLabel: { fontSize: 12, lineHeight: 16, flexShrink: 1 },
+  editLabel: { fontSize: 13, lineHeight: 18, flexShrink: 1 },
   pressed: { opacity: 0.72 },
-  section: { marginTop: 12 },
-  groupHeading: { gap: 9, marginBottom: 7, paddingHorizontal: 10 },
+  section: { marginTop: spacing.section },
+  groupHeading: { gap: spacing.compact, marginBottom: spacing.compact },
   groupTitle: { flex: 1, fontSize: 22, lineHeight: 26 },
   group: {
     borderWidth: 1,
     borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 2,
+    paddingHorizontal: spacing.row,
+    paddingVertical: 4,
   },
   link: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 49,
-    gap: 9,
-    paddingVertical: 5,
+    minHeight: 64,
+    gap: spacing.row,
+    paddingVertical: spacing.compact,
   },
   linkIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
-  linkCopy: { flex: 1, minWidth: 0, gap: 1 },
-  linkTitle: { fontSize: 18, lineHeight: 21 },
-  linkSubtitle: { fontSize: 11, lineHeight: 15 },
+  linkCopy: { flex: 1, minWidth: 0, gap: 3 },
+  linkTitle: { fontSize: 19, lineHeight: 23 },
+  linkSubtitle: { fontSize: 12, lineHeight: 17 },
   divider: { height: StyleSheet.hairlineWidth },
   badge: {
     alignSelf: "center",
     overflow: "hidden",
     borderRadius: 13,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    fontSize: 10,
-    lineHeight: 14,
+    paddingHorizontal: spacing.compact,
+    paddingVertical: 3,
+    fontSize: 11,
+    lineHeight: 16,
     textAlign: "center",
   },
-  badgeInline: { alignSelf: "flex-start", marginTop: 2 },
+  badgeInline: { alignSelf: "flex-start" },
   footer: {
     overflow: "hidden",
-    minHeight: 127,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 39,
+    minHeight: 138,
+    paddingTop: spacing.section,
+    paddingBottom: spacing.section,
     alignItems: "center",
-    gap: 6,
+    gap: spacing.compact,
   },
   footerQuote: {
     textAlign: "center",

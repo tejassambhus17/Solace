@@ -23,6 +23,7 @@ import {
   type JourneyPeriod,
 } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
+import { spacing, useScreenGutter } from "../layout";
 import { momentClockText } from "../moments";
 import {
   activeSeconds,
@@ -624,8 +625,10 @@ export function JourneyScreen() {
   const dark = resolved === "dark";
   const { top } = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
+  const gutter = useScreenGutter();
   const large = fontScale > 1.25;
-  const compact = width < 350;
+  const compact = width < 360;
+  const reflowMilestones = width < 390 || large;
   const now = useJourneyClock();
   const today = localDay(now);
   const requestedDay = app.params?.day;
@@ -687,7 +690,12 @@ export function JourneyScreen() {
   ];
   return (
     <Screen edgeToEdgeTop style={styles.screen}>
-      <View style={[styles.hero, { paddingTop: top + 3 }]}>
+      <View
+        style={[
+          styles.hero,
+          { paddingTop: top + 3, paddingHorizontal: gutter },
+        ]}
+      >
         <Image
           source={artwork[resolved].hero}
           style={coverImageStyle}
@@ -768,7 +776,7 @@ export function JourneyScreen() {
           ink={selectedInk}
         />
       </View>
-      <View style={styles.body}>
+      <View style={[styles.body, { paddingHorizontal: gutter }]}>
         {options && (
           <View style={[styles.panel, panel, styles.options]}>
             <Button
@@ -825,20 +833,13 @@ export function JourneyScreen() {
                   },
                 ]}
               >
+                <Icon name={metric.icon} color={tone.ink} size={22} />
                 <Row style={styles.metricTop}>
-                  <Icon
-                    name={metric.icon}
-                    color={tone.ink}
-                    size={compact ? 19 : 23}
-                  />
-                  <AppText
-                    variant="title"
-                    style={[styles.metricValue, compact && styles.smallValue]}
-                  >
+                  <AppText variant="label" style={styles.metricValue}>
                     {display}
                   </AppText>
                   {timed && (
-                    <AppText variant="heading" style={styles.metricUnit}>
+                    <AppText variant="caption" style={styles.metricUnit}>
                       min
                     </AppText>
                   )}
@@ -864,7 +865,14 @@ export function JourneyScreen() {
             );
           })}
         </Row>
-        <View style={[styles.panel, panel, styles.calendar]}>
+        <View
+          style={[
+            styles.panel,
+            panel,
+            styles.calendar,
+            compact && styles.compactCalendar,
+          ]}
+        >
           <Row style={styles.calendarHead}>
             <Pressable
               accessibilityRole="button"
@@ -1005,8 +1013,8 @@ export function JourneyScreen() {
               StyleSheet.absoluteFill,
               {
                 backgroundImage: dark
-                  ? "linear-gradient(90deg, #23192E 0%, #23192ED4 48%, #23192E00 88%)"
-                  : "linear-gradient(90deg, #FFF2E3 0%, #FFF2E3F0 47%, #FFF2E300 90%)",
+                  ? "linear-gradient(90deg, #23192E 0%, #23192EED 55%, #23192E38 100%)"
+                  : "linear-gradient(90deg, #FFF2E3 0%, #FFF2E3F5 55%, #FFF2E338 100%)",
               },
             ]}
           />
@@ -1019,14 +1027,17 @@ export function JourneyScreen() {
             <AppText
               variant="heading"
               accessibilityRole="header"
-              style={styles.sectionTitle}
+              style={[styles.sectionTitle, styles.flex]}
             >
               Your weekly reflection
             </AppText>
           </Row>
           <AppText
             color={colors.text}
-            style={[styles.reflectionCopy, large && styles.fullCopy]}
+            style={[
+              styles.reflectionCopy,
+              (large || compact) && styles.fullCopy,
+            ]}
           >
             Look back, notice patterns, and be kinder to yourself.
           </AppText>
@@ -1101,25 +1112,36 @@ export function JourneyScreen() {
                 : "Set a target that feels right for you."}
             </AppText>
             {progress && goal?.active !== false && (
-              <View
-                style={[
-                  styles.progressTrack,
-                  { backgroundColor: progressTrack },
-                ]}
-              >
+              <>
                 <View
                   style={[
-                    styles.progressFill,
-                    {
-                      width: progress.percentage + "%",
-                      backgroundColor: progressInk,
-                    },
+                    styles.progressTrack,
+                    { backgroundColor: progressTrack },
                   ]}
-                />
-              </View>
+                >
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: progress.percentage + "%",
+                        backgroundColor: progressInk,
+                      },
+                    ]}
+                  />
+                </View>
+                {large && (
+                  <AppText
+                    variant="caption"
+                    color={muted}
+                    style={styles.goalCopy}
+                  >
+                    {progress.percentage}% complete
+                  </AppText>
+                )}
+              </>
             )}
           </View>
-          {progress && goal?.active !== false && (
+          {progress && goal?.active !== false && !large && (
             <ProgressRing
               value={progress.percentage}
               track={progressTrack}
@@ -1149,7 +1171,7 @@ export function JourneyScreen() {
               <Icon name="arrow-forward" size={14} />
             </Pressable>
           </Row>
-          <Row style={[styles.badges, large && styles.wrap]}>
+          <Row style={[styles.badges, reflowMilestones && styles.wrap]}>
             {analytics.milestones.slice(0, 4).map((item, index) => {
               const tone = tones[resolved][index % 3];
               return (
@@ -1168,7 +1190,7 @@ export function JourneyScreen() {
                   }
                   style={({ pressed }) => [
                     styles.badge,
-                    large && styles.largeTile,
+                    reflowMilestones && styles.largeTile,
                     { opacity: pressed ? 0.7 : 1 },
                   ]}
                 >
@@ -1187,19 +1209,21 @@ export function JourneyScreen() {
                   <AppText variant="caption" style={styles.badgeLabel}>
                     {item.title}
                   </AppText>
-                  <Icon
-                    name={
-                      item.earned ? "checkmark-circle" : "lock-closed-outline"
-                    }
-                    size={13}
-                    color={
-                      item.earned
-                        ? dark
-                          ? "#BAEDAA"
-                          : "#347145"
-                        : colors.muted
-                    }
-                  />
+                  <View style={styles.badgeStatus}>
+                    <Icon
+                      name={
+                        item.earned ? "checkmark-circle" : "lock-closed-outline"
+                      }
+                      size={14}
+                      color={
+                        item.earned
+                          ? dark
+                            ? "#BAEDAA"
+                            : "#347145"
+                          : colors.muted
+                      }
+                    />
+                  </View>
                 </Pressable>
               );
             })}
@@ -1238,14 +1262,12 @@ export function JourneyScreen() {
                   size={compact ? 16 : 20}
                   color={dark ? "#EAB9EB" : colors.heroMuted}
                 />
-                <View style={{ minWidth: 0 }}>
-                  <AppText variant="heading" style={styles.storyCount}>
-                    {item.count}
-                  </AppText>
-                  <AppText variant="caption" style={styles.storyLabel}>
-                    {item.label}
-                  </AppText>
-                </View>
+                <AppText variant="label" style={styles.storyCount}>
+                  {item.count}
+                </AppText>
+                <AppText variant="caption" style={styles.storyLabel}>
+                  {item.label}
+                </AppText>
               </Pressable>
             ))}
           </Row>
@@ -1256,15 +1278,15 @@ export function JourneyScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 18 },
-  hero: { paddingHorizontal: 22, paddingBottom: 6, overflow: "hidden" },
+  screen: { paddingHorizontal: 0, paddingTop: 0 },
+  hero: { paddingBottom: spacing.card, overflow: "hidden" },
   heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 49 },
   masthead: { justifyContent: "space-between", gap: 8 },
   brand: { gap: 7 },
   wordmark: { fontSize: 20, lineHeight: 25 },
   iconTarget: {
-    width: 44,
-    minHeight: 44,
+    width: 48,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1276,24 +1298,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 37, lineHeight: 39, marginTop: -5 },
-  subtitle: { fontSize: 12, lineHeight: 17, marginTop: 1 },
+  title: { fontSize: 37, lineHeight: 43 },
+  subtitle: { fontSize: 13, lineHeight: 19, marginTop: 2 },
   segments: {
     alignSelf: "center",
-    width: "79%",
-    marginTop: 7,
+    width: "100%",
+    marginTop: spacing.row,
     borderRadius: 24,
     borderWidth: 1,
     flexDirection: "row",
-    minHeight: 35,
+    minHeight: 54,
     padding: 2,
   },
   segment: {
     flex: 1,
-    minHeight: 29,
+    minHeight: 48,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
   },
   segmentPill: {
     position: "absolute",
@@ -1302,91 +1325,93 @@ const styles = StyleSheet.create({
     left: 2,
     borderRadius: 22,
   },
-  segmentLabel: { fontSize: 11, lineHeight: 15, textAlign: "center" },
-  body: { paddingHorizontal: 12, gap: 7 },
+  segmentLabel: { fontSize: 13, lineHeight: 18, textAlign: "center" },
+  body: { gap: spacing.card },
   panel: { borderWidth: 1, borderRadius: 17, overflow: "hidden" },
-  options: { padding: 6, gap: 2 },
-  metricRow: { gap: 7, alignItems: "stretch" },
+  options: { padding: spacing.compact, gap: 4 },
+  metricRow: { gap: spacing.compact, alignItems: "stretch" },
   metric: {
-    minHeight: 76,
+    minHeight: 116,
     flex: 1,
     minWidth: 0,
     borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 4,
-    paddingVertical: 5,
-    justifyContent: "center",
+    paddingHorizontal: 6,
+    paddingVertical: spacing.row,
+    gap: 4,
     alignItems: "center",
   },
   wrap: { flexWrap: "wrap" },
   largeTile: { flexBasis: "45%", flexGrow: 1 },
-  metricTop: { justifyContent: "center", gap: 3, flexWrap: "wrap" },
-  metricValue: { fontSize: 27, lineHeight: 30 },
-  smallValue: { fontSize: 23, lineHeight: 27 },
-  metricUnit: {
-    fontSize: 13,
-    lineHeight: 17,
-    alignSelf: "flex-end",
-    marginBottom: 4,
+  metricTop: {
+    justifyContent: "center",
+    alignItems: "baseline",
+    gap: 3,
+    flexWrap: "wrap",
   },
-  metricLabel: { fontSize: 10.5, lineHeight: 14, textAlign: "center" },
+  metricValue: { fontSize: 24, lineHeight: 29, fontVariant: ["tabular-nums"] },
+  metricUnit: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  metricLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
   metricNote: {
-    fontSize: 9,
-    lineHeight: 12,
+    fontSize: 11,
+    lineHeight: 15,
     textAlign: "center",
     marginTop: 2,
   },
-  calendar: { paddingHorizontal: 7, paddingBottom: 6 },
+  calendar: { paddingHorizontal: spacing.compact, paddingBottom: spacing.row },
+  compactCalendar: { paddingHorizontal: 4 },
   calendarHead: { justifyContent: "space-between", gap: 4 },
-  month: { flex: 1, textAlign: "center", fontSize: 19, lineHeight: 23 },
-  weekdays: { gap: 0 },
-  weekday: { flex: 1, textAlign: "center", fontSize: 10, lineHeight: 14 },
+  month: { flex: 1, textAlign: "center", fontSize: 20, lineHeight: 25 },
+  weekdays: { marginBottom: 4 },
+  weekday: { flex: 1, textAlign: "center", fontSize: 11, lineHeight: 15 },
   calendarGrid: { flexDirection: "row", flexWrap: "wrap" },
   dayCell: { width: "14.2857%", padding: 1 },
   day: {
-    minHeight: 40,
+    minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 11,
   },
-  dayNumber: { fontSize: 12, lineHeight: 16 },
-  dots: { minHeight: 7, gap: 2 },
+  dayNumber: { fontSize: 13, lineHeight: 18, fontVariant: ["tabular-nums"] },
+  dots: { minHeight: 8, gap: 3 },
   dot: { width: 5, height: 5, borderRadius: 3 },
   calendarNote: {
     textAlign: "center",
-    fontSize: 10,
-    lineHeight: 14,
-    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: spacing.compact,
   },
   reflection: {
-    minHeight: 101,
-    paddingVertical: 4,
-    paddingHorizontal: 13,
+    minHeight: 148,
+    padding: spacing.card,
     justifyContent: "center",
   },
-  reflectionHeading: { gap: 6 },
-  sectionTitle: { fontSize: 19, lineHeight: 23 },
-  reflectionCopy: { fontSize: 11, lineHeight: 13, width: "64%" },
+  reflectionHeading: { gap: spacing.compact },
+  sectionTitle: { fontSize: 22, lineHeight: 26 },
+  reflectionCopy: { fontSize: 13, lineHeight: 19, width: "70%", marginTop: 4 },
   fullCopy: { width: "100%" },
   reflectButton: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    gap: 7,
-    borderRadius: 21,
-    minHeight: 42,
-    paddingHorizontal: 11,
-    paddingVertical: 3,
-    marginTop: 4,
+    gap: spacing.compact,
+    borderRadius: 24,
+    minHeight: 48,
+    paddingHorizontal: spacing.row,
+    paddingVertical: 4,
+    marginTop: spacing.compact,
   },
-  reflectLabel: { fontSize: 11, lineHeight: 15, flexShrink: 1 },
+  reflectLabel: { fontSize: 13, lineHeight: 18, flexShrink: 1 },
   goal: {
-    minHeight: 57,
+    minHeight: 74,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    gap: spacing.row,
+    paddingHorizontal: spacing.card,
+    paddingVertical: spacing.row,
   },
   goalIcon: {
     width: 36,
@@ -1396,8 +1421,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   flex: { flex: 1, minWidth: 0 },
-  goalTitle: { fontSize: 17, lineHeight: 19 },
-  goalCopy: { fontSize: 10, lineHeight: 13 },
+  goalTitle: { fontSize: 20, lineHeight: 24 },
+  goalCopy: { fontSize: 12, lineHeight: 17 },
   progressTrack: {
     height: 5,
     borderRadius: 3,
@@ -1431,47 +1456,48 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   ringText: { fontSize: 11, lineHeight: 15 },
-  sectionHead: { paddingLeft: 4, gap: 5 },
+  sectionHead: { gap: spacing.compact },
   inlineAction: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 34,
+    minHeight: 48,
     gap: 4,
     paddingHorizontal: 3,
   },
-  viewAll: { fontSize: 10, lineHeight: 14 },
-  badges: { alignItems: "stretch", gap: 3, marginBottom: 2 },
+  viewAll: { fontSize: 12, lineHeight: 16, flexShrink: 1 },
+  badges: { alignItems: "stretch", gap: spacing.compact },
   badge: {
     flex: 1,
     minWidth: 0,
     alignItems: "center",
-    gap: 3,
+    gap: 4,
     paddingHorizontal: 2,
-    paddingVertical: 2,
+    paddingVertical: spacing.compact,
   },
   badgeDisc: {
-    width: 43,
-    height: 38,
+    width: 46,
+    height: 43,
     borderRadius: 15,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  badgeLabel: { fontSize: 9.5, lineHeight: 13, textAlign: "center" },
-  story: { paddingHorizontal: 10, paddingTop: 5, paddingBottom: 5 },
+  badgeLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
+  badgeStatus: { marginTop: "auto", minHeight: 18, justifyContent: "center" },
+  story: { padding: spacing.card, gap: spacing.compact },
   storyRow: { gap: 0, alignItems: "stretch" },
   storyItem: {
     flex: 1,
     minWidth: 0,
-    minHeight: 44,
-    flexDirection: "row",
+    minHeight: 72,
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
-    paddingHorizontal: 3,
+    gap: 4,
+    paddingHorizontal: 2,
+    paddingVertical: 4,
   },
-  storyCount: { fontSize: 20, lineHeight: 21 },
-  storyLabel: { fontSize: 9.5, lineHeight: 13 },
+  storyCount: { fontSize: 18, lineHeight: 23, fontVariant: ["tabular-nums"] },
+  storyLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
   detailIntro: { marginBottom: 13 },
   entryRow: { minHeight: 48, paddingVertical: 8 },
   milestoneDetail: { alignItems: "center", paddingVertical: 24, gap: 12 },

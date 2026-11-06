@@ -26,8 +26,11 @@ function sourceModule(file, dependencies = {}) {
   return module.exports;
 }
 const content = sourceModule("../src/content.ts");
+const explore = sourceModule("../src/explore-practices.ts");
 const { pickDailyRoutine } = sourceModule("../src/routine.ts", {
   "./content": content,
+  "./explore-practices": explore,
+  "./progress": sourceModule("../src/progress.ts", { "./content": content }),
 });
 const now = () => new Date(2026, 10, 5, 12);
 const today = { createdAt: "2026-11-05T06:00:00.000Z", day: "2026-11-05" };
@@ -68,7 +71,8 @@ test("today's directly supplied mood can offer a local curated option without hi
   assert.equal(routine.suggestion.activity, "grounding");
   assert.equal(routine.source, "today-checkin");
   assert.match(routine.suggestion.reason, /checked in with today/);
-  assert.equal(routine.nextStep.id, "practice");
+  assert.equal(routine.nextStep.id, "checkin");
+  assert.equal(routine.todayCheckin.localOnly, true);
 });
 
 test("consented approved activity preferences explain their source; unapproved and future memories are ignored", () => {
@@ -83,8 +87,9 @@ test("consented approved activity preferences explain their source; unapproved a
     { personalization: true },
     now(),
   );
-  assert.equal(routine.suggestion.activity, "resource");
-  assert.equal(routine.suggestion.params.id, "sleep");
+  assert.equal(routine.suggestion.activity, "rest");
+  assert.equal(routine.suggestion.route, "moment-player");
+  assert.equal(routine.suggestion.params.activity.durationSec, 180);
   assert.equal(routine.source, "preference");
   assert.match(routine.suggestion.reason, /preference you approved/);
 });
@@ -144,7 +149,7 @@ test("local-calendar completion requires actual saved records, not future record
     {
       checkins: [{ ...today, mood: "Okay" }],
       sessions: [{ ...today, completed: true }],
-      reflections: [{ ...today, text: "A saved thought", localOnly: true }],
+      reflections: [{ ...today, text: "A saved thought" }],
     },
     null,
     now(),
@@ -153,21 +158,31 @@ test("local-calendar completion requires actual saved records, not future record
   assert.equal(completed.nextStep, null);
 });
 
-test("a writing practice completes from a real reflection without stranding the routine", () => {
-  const routine = pickDailyRoutine(
-    {
-      memories: [{ ...today, text: "I prefer journaling", approved: true }],
-      checkins: [{ ...today, mood: "Okay" }],
-      reflections: [{ ...today, text: "I made room for myself." }],
-    },
-    { personalization: true },
-    now(),
-  );
+test("a journal entry completes Reflect only and a guided writing Moment completes the practice", () => {
+  const user = { personalization: true };
+  const data = {
+    memories: [{ ...today, text: "I prefer journaling", approved: true }],
+    checkins: [{ ...today, mood: "Okay" }],
+    reflections: [{ ...today, text: "I made room for myself." }],
+    sessions: [],
+  };
+  const routine = pickDailyRoutine(data, user, now());
   assert.equal(routine.suggestion.activity, "reflection");
-  assert.equal(routine.completedCount, 3);
+  assert.equal(routine.nextStep.id, "practice");
+  assert.equal(routine.nextStep.route, "moment-player");
+  assert.deepEqual(routine.nextStep.params, {
+    activity: explore.createExplorePractice("reflect", 3),
+    source: "today",
+    provider: "offline",
+  });
+  assert.equal(routine.completedCount, 2);
+  data.sessions.push({ ...today, type: "reflection", completed: true });
+  const completed = pickDailyRoutine(data, user, now());
+  assert.equal(completed.completedCount, 3);
+  assert.equal(completed.nextStep, null);
 });
 
-test("a fully completed resource guide advances the practice stage; partial progress does not", () => {
+test("a resource checklist does not complete a Moment, even after all steps are checked", () => {
   const data = {
     checkins: [{ ...today, mood: "Okay" }],
     memories: [{ ...today, approved: true, text: "I prefer sleep routines" }],
@@ -188,8 +203,28 @@ test("a fully completed resource guide advances the practice stage; partial prog
   data.sessions[0].completed = true;
   assert.equal(
     pickDailyRoutine(data, { personalization: true }, now()).nextStep.id,
-    "reflection",
+    "practice",
   );
+});
+
+test("a pending entry is available for the mood tray but does not replace recorded progress", () => {
+  const data = {
+    checkins: [
+      { ...today, mood: "Calm" },
+      {
+        ...today,
+        createdAt: "2026-11-05T06:30:00.000Z",
+        mood: "Low",
+        localOnly: true,
+      },
+    ],
+    sessions: [{ ...today, type: "breathing", completed: true }],
+    reflections: [{ ...today, text: "Waiting to sync", localOnly: true }],
+  };
+  const routine = pickDailyRoutine(data, null, now());
+  assert.equal(routine.todayCheckin.mood, "Low");
+  assert.equal(routine.completedCount, 2);
+  assert.equal(routine.nextStep.id, "reflection");
 });
 
 test("selection is deterministic and does not mutate account records", () => {

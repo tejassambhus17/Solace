@@ -410,27 +410,112 @@ test("details keep their originating tab and main destinations start a stack wit
   h.render().navigate("explore");
   h.render().navigate("moments");
   h.render().navigate("grounding");
-  assert.equal(h.render().activeTab, "today");
+  assert.equal(h.render().activeTab, "explore");
 });
 
-test("Explore returns to its open library without stacking duplicates and keeps the original Back destination", async () => {
+test("Explore is a tab with a root and preserves its branch and view across switches", async () => {
   const h = await signedIn();
   h.render().setTab("chat");
   h.render().navigate("history");
   h.render().navigate("explore");
-  h.render().navigate("explore");
+  const explore = h.render();
+  assert.equal(explore.route, "explore");
+  assert.equal(explore.activeTab, "explore");
+  assert.equal(explore.canGoBack, false);
   h.render().navigate("moments");
-  assert.equal(h.render().inExplore, true);
-  h.render().navigate("explore");
-  assert.equal(h.render().route, "explore");
-  h.render().back();
+  explore.setParams({ exploreView: { category: "Sleep", y: 240 } });
+  assert.equal(h.render().params.exploreView, undefined);
+  h.render().setTab("chat");
   assert.equal(h.render().route, "history");
   assert.equal(h.render().activeTab, "chat");
-  assert.equal(h.render().inExplore, false);
-  h.render().navigate("explore");
-  h.render().setTab("journey");
-  assert.equal(h.render().inExplore, false);
+  h.render().setTab("explore");
+  assert.equal(h.render().route, "moments");
+  assert.equal(h.render().canGoBack, true);
+  h.render().back();
+  assert.equal(h.render().route, "explore");
   assert.equal(h.render().canGoBack, false);
+  assert.equal(h.render().params.exploreView.y, 240);
+  h.render().navigate("moments");
+  h.render().navigate("explore");
+  assert.equal(h.render().route, "explore");
+  assert.equal(h.render().params.exploreView.category, "Sleep");
+});
+
+test("late chat updates can update their own tab but never a replacement route or another tab", async () => {
+  const h = await signedIn();
+  h.render().setTab("chat");
+  const firstChat = h.render();
+  firstChat.setTab("today");
+  firstChat.setParams({ id: "finished-in-background" });
+  assert.equal(h.render().params.id, undefined);
+  h.render().setTab("chat");
+  assert.equal(h.render().params.id, "finished-in-background");
+  h.render().navigate("chat", { id: "opened-from-history" });
+  firstChat.setParams({ id: "stale" });
+  assert.equal(h.render().params.id, "opened-from-history");
+});
+
+test("leaving a player for another tab returns to its parent on a later tab switch", async () => {
+  const h = await signedIn();
+  h.render().setTab("explore");
+  h.render().navigate("moments");
+  h.render().navigate("moment-player", { activity: { id: "practice" } });
+  h.render().navigate("journey");
+  assert.equal(h.render().route, "journey");
+  h.render().setTab("explore");
+  assert.equal(h.render().route, "moments");
+});
+
+test("a first chat turn stays pending across tab switches and cannot be sent twice", async () => {
+  const h = await signedIn();
+  const reply = deferred();
+  let requests = 0;
+  h.onRequest = async (route) => {
+    assert.equal(route, "/chat");
+    requests++;
+    return reply.promise;
+  };
+  h.render().setTab("chat");
+  const chatScreen = h.render();
+  chatScreen.setChatDraft("new", "Synthetic message");
+  const sending = chatScreen.chat("Synthetic message").then((result) => {
+    chatScreen.setChatDraft("new", "", "Synthetic message");
+    chatScreen.setParams({ id: result.conversation.id });
+  });
+
+  h.render().setTab("today");
+  h.render().setTab("chat");
+  assert.equal(h.render().chatPending.new, "Synthetic message");
+  h.render().setChatDraft("new", "Edited while sending");
+  assert.equal(h.render().chatDrafts.new, "Synthetic message");
+  await assert.rejects(h.render().chat("Synthetic message"), /still replying/);
+  assert.equal(requests, 1);
+
+  h.render().setTab("today");
+  reply.resolve(ok({ conversation: { id: "saved-turn", messages: [] } }));
+  await sending;
+  assert.equal(h.render().params.id, undefined);
+  h.render().setTab("chat");
+  assert.equal(h.render().params.id, "saved-turn");
+  assert.equal(h.render().chatPending.new, undefined);
+  assert.equal(h.render().chatDrafts.new, undefined);
+  assert.equal(h.render().data.conversations.length, 1);
+  h.close();
+});
+
+test("signing out clears pending chat text before an old request resolves", async () => {
+  const h = await signedIn();
+  const reply = deferred();
+  h.onRequest = async (route) => (route === "/chat" ? reply.promise : ok({}));
+  const sending = h.render().chat("Synthetic pending text");
+  const rejected = assert.rejects(sending);
+  assert.equal(h.render().chatPending.new, "Synthetic pending text");
+  await h.render().signOut();
+  assert.equal(h.render().chatPending.new, undefined);
+  reply.resolve(ok({ conversation: { id: "old-turn", messages: [] } }));
+  await rejected;
+  assert.equal(h.render().data.conversations.length, 0);
+  h.close();
 });
 
 test("retrying an idempotent toolkit add cannot duplicate a favorite in account state", async () => {
