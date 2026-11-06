@@ -18,6 +18,8 @@ The loved light theme remains blush-ivory and forest. Dark mode uses a black can
 
 The floating navigation respects safe-area and keyboard clearance. Each tab keeps its navigation stack while you switch. A circular spotlight follows the active tab and moves immediately when Reduce Motion is enabled. Supported iOS uses guarded native Liquid Glass, with blur and Reduce Transparency fallbacks. Android uses an opaque tonal surface.
 
+The [performance report](docs/PERFORMANCE_OPTIMIZATION_REPORT.md) records emulator diagnostics, long-list and player regressions, and release checks. Use the [physical-device checklist](docs/PHYSICAL_DEVICE_QA_CHECKLIST.md) to verify frame pacing, keyboard behavior and native audio on Android and iPhone.
+
 ## Solace Moments and the companion
 
 The Solace tab opens with Companion and My Journal choices and remembers the last used mode for each account. Companion keeps the existing text, history and turn-based voice flows. My Journal supports drafts, saved entries, mood, tags, bookmarks and search. AI reflection and Companion handoff require selecting an excerpt and approving the provider disclosure. Explore opens Guided Techniques, which uses the same Moment player and Journey completion records. The navigation map, privacy behavior and device acceptance steps are in the [Companion, Journal and Guided Techniques QA report](docs/COMPANION_JOURNAL_TECHNIQUES.md).

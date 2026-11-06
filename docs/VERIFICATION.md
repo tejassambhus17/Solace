@@ -1,5 +1,9 @@
 # Verification record
 
+## Performance and motion pass — 7 November 2026
+
+[Emulator measurements, browser regressions and build results](PERFORMANCE_OPTIMIZATION_REPORT.md). The [physical Android and iPhone checklist](PHYSICAL_DEVICE_QA_CHECKLIST.md) covers native frame pacing, audio, keyboard, navigation and release memory.
+
 ## Companion, Journal and Guided Techniques
 
 The [connected QA report](COMPANION_JOURNAL_TECHNIQUES.md) records navigation and persistence checks, live Gemini requests, rendered phone layouts, device checks and outstanding release gates.

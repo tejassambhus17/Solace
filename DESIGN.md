@@ -63,7 +63,7 @@ Profile opens with a compact scenic card that shows the signed-in name and photo
 
 ## Artwork and implementation
 
-`PauseArtwork` in `src/ui.tsx` pairs the original `assets/moment-light.png` with `assets/daily-pause-dark-v2.png` for shared practice artwork. Today’s twilight lotus, stacked stones, and three Explore thumbnails are documented in [artwork provenance](assets/ARTWORK.md). Text, progress, and controls are rendered separately. Keep the left reading zone clear.
+Today’s twilight lotus, stacked stones, and three Explore thumbnails are documented in [artwork provenance](assets/ARTWORK.md). Text, progress, and controls are rendered separately. Keep the left reading zone clear.
 
 Artwork and decorative icons are hidden from assistive technology and cannot intercept controls. Keep explicit accessible names, expanded/selected states, and progress values on meaningful UI. Bundling and browser rendering do not establish native scrim projection, VoiceOver/TalkBack behavior or device contrast.
 
