@@ -1,14 +1,7 @@
-import type { SolaceMoment } from "../server/src/moment-contract";
+import type { MomentResult, SolaceMoment } from "../server/src/moment-contract";
 
-export type MomentEnvironment = "forest" | "ocean" | "twilight";
-export type GeneratedMoment = {
-  activity: SolaceMoment | null;
-  provider: "live" | "offline";
-  explanation: string;
-  usedMemoryIds: string[];
-  support?: boolean;
-  message?: string;
-};
+export type { MomentEnvironment } from "../server/src/moment-contract";
+export type GeneratedMoment = MomentResult;
 
 export type MomentClock = { elapsedMs: number; runningSince: number | null };
 export const emptyClock = (): MomentClock => ({

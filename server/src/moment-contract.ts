@@ -16,6 +16,7 @@ export type MomentResult = {
   activity: SolaceMoment | null;
   provider: "live" | "offline";
   explanation: string;
+  explanationBasis?: "general" | "conversation" | "personalized";
   usedMemoryIds: string[];
   support?: boolean;
   message?: string;

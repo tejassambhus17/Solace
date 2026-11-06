@@ -19,16 +19,9 @@ import {
   type WritingCollection,
 } from "./offline";
 
-import type { SolaceMoment } from "../server/src/moment-contract";
+import type { MomentResult } from "../server/src/moment-contract";
 
-export type MomentResult = {
-  activity: SolaceMoment | null;
-  provider: "live" | "offline";
-  explanation: string;
-  usedMemoryIds: string[];
-  support?: boolean;
-  message?: string;
-};
+export type { MomentResult } from "../server/src/moment-contract";
 export type WeeklyReflectionResult = {
   provider: "live" | "offline";
   hasActivity: boolean;

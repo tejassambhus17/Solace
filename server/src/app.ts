@@ -36,6 +36,7 @@ import {
   type AIConfig,
   type Message,
 } from "./ai.js";
+import { availableChatEvidence } from "./chat-evidence.js";
 import { AvatarError, prepareAvatar } from "./avatar.js";
 import { generateMoment, environments, type MomentMemory } from "./moments.js";
 import {
@@ -46,6 +47,7 @@ import {
   weeklyReflection,
   weeklyTimeZone,
 } from "./weekly.js";
+import { savedWeeklyStory } from "./weekly-facts.js";
 import { transcribeAudio, voiceAvailable, audioTypes } from "./voice.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
@@ -508,6 +510,17 @@ export function createApp(config: AppConfig) {
         );
     }
     const existing = get(user(req).id, collection, record.id);
+    if (!existing && collection === "reflections" && record.weeklyPeriod) {
+      const { end } = record.weeklyPeriod as { end: string };
+      const saved = savedWeeklyStory(list(user(req).id, "reflections"), end);
+      if (saved)
+        return apiError(
+          res,
+          409,
+          "This week already has a saved story. Reopen it from Journey to edit it.",
+          "WEEKLY_STORY_EXISTS",
+        );
+    }
     // Adding a saved practice is idempotent, including rapid taps or retries
     // after a response was lost. Identity is scoped by the authenticated owner.
     if (collection === "favorites" && existing)
@@ -518,6 +531,7 @@ export function createApp(config: AppConfig) {
         collection === "goals" ||
         collection === "sessions" ||
         collection === "reminders" ||
+        (collection === "reflections" && record.weeklyPeriod) ||
         (collection === "memories" &&
           record.sourceType === "session" &&
           record.id === `memory-${record.sourceId}` &&
@@ -1095,20 +1109,28 @@ export function createApp(config: AppConfig) {
       );
       if (!busy) chatLocks.set(owner, input.requestId);
       try {
-        const chatPersonalization = (account: UserRow) =>
-          account.personalization
-            ? {
-                memories: approvedMemories(owner, true),
-                context: list(owner, "checkins")
-                  .slice(0, 3)
-                  .map((record) => ({
-                    id: record.id,
-                    mood: record.mood,
-                    tags: record.tags,
-                    date: record.createdAt,
-                  })),
-              }
-            : null;
+        const evidenceAt = Date.now();
+        const chatPersonalization = (account: UserRow) => {
+          if (!account.personalization) return null;
+          const checkins = list(owner, "checkins").slice(0, 3);
+          return {
+            memories: approvedMemories(owner, true),
+            context: checkins.map((record) => ({
+              id: record.id,
+              mood: record.mood,
+              tags: record.tags,
+              date: record.createdAt,
+            })),
+            evidence: availableChatEvidence(
+              {
+                checkins: checkins.slice(0, 1),
+                sessions: list(owner, "sessions"),
+                memories: list(owner, "memories"),
+              },
+              evidenceAt,
+            ),
+          };
+        };
         const personalization = urgent ? null : chatPersonalization(user(req));
         const memories =
           personalization?.memories.map((memory) => memory.text) || [];
@@ -1136,6 +1158,7 @@ export function createApp(config: AppConfig) {
             history: providerHistory,
             memories,
             context,
+            evidence: personalization?.evidence,
           },
           () => {
             const account = currentAccount(req);

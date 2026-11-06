@@ -2,6 +2,7 @@ import { z } from "zod";
 import { momentSchema, environments } from "./moments.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
 import { chatPracticeIds } from "./chat-practice.js";
+import { chatEvidenceKinds } from "./chat-evidence.js";
 import { weeklyPeriodSchema } from "./weekly.js";
 import { ritualActivities, ritualDurations } from "./ritual-contract.js";
 import {
@@ -157,6 +158,19 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
             .object({
               type: z.enum(chatPracticeIds),
               label: z.string().trim().min(1).max(200),
+              explanation: z
+                .discriminatedUnion("basis", [
+                  z.object({ basis: z.enum(["general", "conversation"]) }),
+                  z.object({
+                    basis: z.literal("personalized"),
+                    evidence: z.object({
+                      kind: z.enum(chatEvidenceKinds),
+                      id: idSchema,
+                      revision: isoDate,
+                    }),
+                  }),
+                ])
+                .optional(),
             })
             .optional(),
           support: z.boolean().optional(),

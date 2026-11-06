@@ -117,16 +117,21 @@ export function selectMoment(feeling: string, memories: MomentMemory[]) {
     reason =
       "You mentioned tiredness or rest, so this moment asks very little of you.";
   }
+  const usedFeeling = !!type;
   const preference = !type
     ? memories.find((memory) => preferredType(memory.text))
     : undefined;
   if (preference) {
     type = preferredType(preference.text);
-    reason = `Suggested using your approved preference: “${preference.text.slice(0, 180)}”.`;
+    reason =
+      "An approved preference for this kind of activity matched the practice.";
   }
+  const explanationBasis: NonNullable<MomentResult["explanationBasis"]> =
+    preference ? "personalized" : usedFeeling ? "conversation" : "general";
   return {
     type: type || "breathing",
     explanation: reason,
+    explanationBasis,
     usedMemoryIds: preference ? [preference.id] : [],
     selectedMemory: preference,
   };
@@ -288,6 +293,7 @@ export async function generateMoment(
       activity: base,
       provider: "offline",
       explanation: selection.explanation,
+      explanationBasis: selection.explanationBasis,
       usedMemoryIds: selection.usedMemoryIds,
     };
   const schema = z.toJSONSchema(rawMomentSchema) as Record<string, unknown>;
@@ -321,6 +327,7 @@ export async function generateMoment(
     activity: { ...activity, id: base.id },
     provider: "live",
     explanation: selection.explanation,
+    explanationBasis: selection.explanationBasis,
     usedMemoryIds: selection.usedMemoryIds,
   };
 }

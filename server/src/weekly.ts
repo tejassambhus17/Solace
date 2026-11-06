@@ -1,15 +1,8 @@
 import { z } from "zod";
 import { provider, structuredOutput, type AIConfig } from "./generation.js";
+import { hasWeeklyActivity, summarizeWeek } from "./weekly-facts.js";
 
 type WellnessRecord = Record<string, unknown>;
-export type WeeklyFacts = {
-  checkins: number;
-  completedSessions: number;
-  minutes: number;
-  reflections: number;
-  helpfulSessions: number;
-  days: string[];
-};
 export const calendarDay = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -111,34 +104,11 @@ export function weeklyFacts(
       return [{ record, day }];
     });
   };
-  const checkins = within(data.checkins);
-  const completed = within(data.sessions).filter(
-    ({ record }) => record.completed === true,
-  );
-  const seconds = completed.reduce((sum, { record }) => {
-    const duration =
-      record.durationSec ?? record.durationSeconds ?? record.duration;
-    return (
-      sum +
-      (typeof duration === "number" &&
-      Number.isFinite(duration) &&
-      duration >= 0 &&
-      duration <= 7200
-        ? duration
-        : 0)
-    );
-  }, 0);
-  const facts: WeeklyFacts = {
-    checkins: checkins.length,
-    completedSessions: completed.length,
-    minutes: Math.floor(seconds / 60),
-    reflections: within(data.reflections).length,
-    helpfulSessions: completed.filter(
-      ({ record }) =>
-        record.feedback === "Helped" || record.feedback === "A little",
-    ).length,
-    days: [...new Set(checkins.map(({ day }) => day))].sort(),
-  };
+  const facts = summarizeWeek({
+    checkins: within(data.checkins),
+    sessions: within(data.sessions),
+    reflections: within(data.reflections),
+  });
   return { facts, period: { start, end } };
 }
 export async function weeklyReflection(
@@ -148,10 +118,9 @@ export async function weeklyReflection(
   canFallback?: () => boolean,
 ) {
   const { facts, period } = summary;
-  const hasData =
-    facts.checkins + facts.completedSessions + facts.reflections > 0;
+  const hasData = hasWeeklyActivity(facts);
   const factual = hasData
-    ? `This week you recorded ${facts.checkins} check-in${facts.checkins === 1 ? "" : "s"}, completed ${facts.completedSessions} ${facts.completedSessions === 1 ? "activity" : "activities"}, and saved ${facts.reflections} reflection${facts.reflections === 1 ? "" : "s"}. Completed activities totalled ${facts.minutes} minute${facts.minutes === 1 ? "" : "s"}. You marked ${facts.helpfulSessions} completed ${facts.helpfulSessions === 1 ? "activity" : "activities"} helpful or a little helpful.`
+    ? `This week you recorded ${facts.checkins} check-in${facts.checkins === 1 ? "" : "s"}, completed ${facts.completedSessions} Moment${facts.completedSessions === 1 ? "" : "s"}, and saved ${facts.reflections} reflection${facts.reflections === 1 ? "" : "s"}. You recorded ${facts.minutes} mindful minute${facts.minutes === 1 ? "" : "s"}. You marked ${facts.helpfulSessions} Moment${facts.helpfulSessions === 1 ? "" : "s"} helpful or a little helpful.`
     : "Your week is a fresh page. A check-in, a moment or a reflection will appear here when you choose to save one.";
   let invitation = hasData
     ? "What would you like to carry forward, and what would you like to make a little room for?"

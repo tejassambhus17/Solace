@@ -807,6 +807,7 @@ test("weekly facts use actual local-day records and exclude future or incomplete
       sessions: [
         { ...record, completed: true, durationSec: 90, feedback: "A little" },
         { ...record, completed: false, durationSec: 900 },
+        { ...record, type: "resource", completed: true, feedback: "Helped" },
       ],
       reflections: [record],
     },
@@ -931,14 +932,36 @@ test("a selected calendar week can be reviewed, saved, edited and deleted by its
     assert.equal(draft.body.hasActivity, true);
     assert.equal(draft.body.period.end, endDate);
     assert.equal(draft.body.facts.checkins, 1);
+    const writing = {
+      id: "weekly-test-first",
+      text: "I chose to pause for a minute.",
+      day: today,
+      weeklyPeriod: draft.body.period,
+      weeklyProvider: draft.body.provider,
+    };
     const saved = await request(app)
       .post("/api/records/reflections")
       .auth(a.token, { type: "bearer" })
+      .send(writing)
+      .expect(201);
+    const replay = await request(app)
+      .post("/api/records/reflections")
+      .auth(a.token, { type: "bearer" })
+      .send(writing)
+      .expect(200);
+    assert.deepEqual(replay.body.record, saved.body.record);
+    await request(app)
+      .post("/api/records/reflections")
+      .auth(a.token, { type: "bearer" })
+      .send({ ...writing, id: "weekly-test-other", text: "Different draft" })
+      .expect(409);
+    await request(app)
+      .post("/api/records/reflections")
+      .auth(b.token, { type: "bearer" })
       .send({
-        text: "I chose to pause for a minute.",
-        day: today,
-        weeklyPeriod: draft.body.period,
-        weeklyProvider: draft.body.provider,
+        ...writing,
+        id: "weekly-test-second-account",
+        text: "A separate story for the same week.",
       })
       .expect(201);
     const path = `/api/records/reflections/${saved.body.record.id}`;

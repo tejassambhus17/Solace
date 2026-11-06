@@ -6,6 +6,10 @@ import { createApp } from "../src/app.js";
 import { Store } from "../src/database.js";
 import { getReply, type AIConfig } from "../src/ai.js";
 import { chatPracticeIds } from "../src/chat-practice.js";
+import {
+  availableChatEvidence,
+  describeChatExplanation,
+} from "../src/chat-evidence.js";
 import { momentSchema } from "../src/moments.js";
 import { createChatPractice } from "../../src/chat-practices.js";
 import { journeySummary } from "../../src/progress.js";
@@ -55,6 +59,181 @@ test("model text cannot create a card by mentioning a practice or choosing an un
   } finally {
     globalThis.fetch = fetchBefore;
   }
+});
+
+test("chat explanations only cite matching authorized evidence and hide it after correction or deletion", async () => {
+  const store = await Store.open(":memory:");
+  const fetchBefore = globalThis.fetch;
+  try {
+    const app = createApp({ store, ai, rateLimits: false });
+    const registration = await request(app)
+      .post("/api/auth/register")
+      .send({
+        name: "Synthetic QA",
+        email: "explanation-qa@example.test",
+        password: "private-qa-password",
+      })
+      .expect(201);
+    const auth = { Authorization: `Bearer ${registration.body.token}` };
+    const memory = (
+      await request(app)
+        .post("/api/records/memories")
+        .set(auth)
+        .send({
+          category: "preference",
+          text: "I prefer short grounding sessions.",
+          approved: true,
+        })
+        .expect(201)
+    ).body.record;
+    let practice = "grounding";
+    let sawGroundingBasis = false;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const instructions = body.systemInstruction.parts[0].text;
+      sawGroundingBasis = instructions.includes(
+        '{"kind":"approved-preference","practice":"grounding"}',
+      );
+      assert.ok(!instructions.includes(memory.id));
+      return providerTurn(
+        JSON.stringify({
+          reply: "We could try an optional practice.",
+          practice,
+          basis: "approved-preference",
+          evidence: { id: "invented-provider-id" },
+        }),
+      );
+    };
+    const chat = async () =>
+      (
+        await request(app)
+          .post("/api/chat")
+          .set(auth)
+          .send({ text: "Can I try a short practice?" })
+          .expect(200)
+      ).body.action;
+    assert.deepEqual((await chat()).explanation, { basis: "general" });
+    assert.equal(sawGroundingBasis, false);
+
+    await request(app)
+      .patch("/api/auth/me")
+      .set(auth)
+      .send({ personalization: true })
+      .expect(200);
+    practice = "focus";
+    assert.deepEqual((await chat()).explanation, { basis: "general" });
+    assert.equal(sawGroundingBasis, true);
+
+    practice = "grounding";
+    const action = await chat();
+    assert.equal(action.explanation.basis, "personalized");
+    assert.equal(action.explanation.evidence.id, memory.id);
+    assert.equal(action.explanation.evidence.kind, "approved-preference");
+    const state = async () =>
+      (await request(app).get("/api/state").set(auth).expect(200)).body.data;
+    assert.equal(
+      describeChatExplanation(
+        action.explanation,
+        "grounding",
+        true,
+        await state(),
+      ).basis,
+      "personalized",
+    );
+    assert.equal(
+      describeChatExplanation(
+        action.explanation,
+        "grounding",
+        false,
+        await state(),
+      ).basis,
+      "general",
+    );
+
+    await request(app)
+      .patch(`/api/records/memories/${memory.id}`)
+      .set(auth)
+      .send({ text: "I prefer short breathing sessions." })
+      .expect(200);
+    assert.equal(
+      describeChatExplanation(
+        action.explanation,
+        "grounding",
+        true,
+        await state(),
+      ).basis,
+      "general",
+    );
+    await request(app)
+      .delete(`/api/records/memories/${memory.id}`)
+      .set(auth)
+      .expect(204);
+    assert.equal(
+      describeChatExplanation(
+        action.explanation,
+        "grounding",
+        true,
+        await state(),
+      ).basis,
+      "general",
+    );
+    assert.deepEqual((await chat()).explanation, { basis: "general" });
+  } finally {
+    globalThis.fetch = fetchBefore;
+    store.close();
+  }
+});
+
+test("explanation candidates come from the latest mood and completed helpful practices", () => {
+  const now = Date.parse("2026-11-06T10:00:00.000Z");
+  const createdAt = new Date(now).toISOString();
+  const sources = {
+    checkins: [{ id: "mood", createdAt, mood: "Stressed" }],
+    sessions: [
+      {
+        id: "unhelpful",
+        createdAt,
+        type: "breathing",
+        completed: true,
+        feedback: "Not for me",
+      },
+      {
+        id: "unfinished",
+        createdAt,
+        type: "breathing",
+        completed: false,
+        feedback: "Helped",
+      },
+      {
+        id: "helpful",
+        createdAt,
+        type: "grounding",
+        activity: { id: "chat-focus" },
+        completed: true,
+        feedback: "Helped",
+      },
+    ],
+    memories: [
+      {
+        id: "negative",
+        createdAt,
+        category: "preference",
+        approved: true,
+        text: "I do not like breathing sessions.",
+      },
+    ],
+  };
+  assert.deepEqual(
+    availableChatEvidence(sources, now).map(({ id, kind, practice }) => ({
+      id,
+      kind,
+      practice,
+    })),
+    [
+      { id: "mood", kind: "checkin", practice: "breathing" },
+      { id: "helpful", kind: "helpful-moment", practice: "focus" },
+    ],
+  );
 });
 
 test("chat suggestion opens an owned practice that saves once and updates Journey", async () => {

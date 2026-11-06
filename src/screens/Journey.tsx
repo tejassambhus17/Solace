@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { savedWeeklyStory } from "../../server/src/weekly-facts";
 import { useReducedMotion, Companion } from "../Companion";
 import { localDay } from "../content";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../progress";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
+import { reflectionPeriodLabel } from "../weekly-story";
 import {
   AppText,
   Button,
@@ -667,6 +669,8 @@ export function JourneyScreen() {
   const progressInk = dark ? "#D9B3F0" : colors.primary;
   const progressTrack = dark ? "#51405F" : colors.border;
   const periodName = period === "week" ? "week" : "month";
+  const selectedWeek = journeyWeek(selectedDay);
+  const savedStory = savedWeeklyStory(app.data.reflections, selectedWeek.endDay);
   const story = [
     {
       label: "Reflections",
@@ -1029,7 +1033,7 @@ export function JourneyScreen() {
               accessibilityRole="header"
               style={[styles.sectionTitle, styles.flex]}
             >
-              Your weekly reflection
+              Your weekly story
             </AppText>
           </Row>
           <AppText
@@ -1039,14 +1043,18 @@ export function JourneyScreen() {
               (large || compact) && styles.fullCopy,
             ]}
           >
-            Look back, notice patterns, and be kinder to yourself.
+            {reflectionPeriodLabel({
+              start: selectedWeek.startDay,
+              end: selectedWeek.endDay,
+            })}
+            {savedStory?.localOnly ? " · Waiting to sync" : ""}
           </AppText>
           <Pressable
             accessibilityRole="button"
             onPress={() =>
-              app.navigate("reflection", {
-                weekEnd: journeyWeek(selectedDay).endDay,
-              })
+              savedStory
+                ? app.navigate("reflection-detail", { id: savedStory.id })
+                : app.navigate("reflection", { weekEnd: selectedWeek.endDay })
             }
             style={({ pressed }) => [
               styles.reflectButton,
@@ -1061,7 +1069,7 @@ export function JourneyScreen() {
               color={dark ? "#281C27" : colors.primaryText}
               style={styles.reflectLabel}
             >
-              Reflect on my week
+              {savedStory ? "Reopen weekly story" : "Look back on my week"}
             </AppText>
             <Icon
               name="arrow-forward"

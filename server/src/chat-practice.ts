@@ -1,3 +1,5 @@
+import type { ChatExplanation } from "./chat-evidence.js";
+
 export const chatPracticeIds = [
   "breathing",
   "grounding",
@@ -8,7 +10,11 @@ export const chatPracticeIds = [
 ] as const;
 
 export type ChatPracticeId = (typeof chatPracticeIds)[number];
-export type ChatAction = { type: ChatPracticeId; label: string };
+export type ChatAction = {
+  type: ChatPracticeId;
+  label: string;
+  explanation?: ChatExplanation;
+};
 
 export const chatPractices = {
   breathing: { title: "A little breathing room", icon: "leaf-outline" },

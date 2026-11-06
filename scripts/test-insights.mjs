@@ -29,11 +29,56 @@ function sourceModule(relative, dependencies = {}) {
   return module.exports;
 }
 const content = sourceModule("../src/content.ts");
+const weeklyFacts = sourceModule("../server/src/weekly-facts.ts");
+const { weeklyStoryFacts } = sourceModule("../src/weekly-story.ts", {
+  "../server/src/weekly-facts": weeklyFacts,
+  "./content": content,
+  "./progress": sourceModule("../src/progress.ts", { "./content": content }),
+});
 const { weeklyReview } = sourceModule("../src/insights.ts", {
   "./content": content,
 });
 const now = () => new Date(2026, 10, 5, 12);
 const dayRecord = (day, extra = {}) => ({ day, ...extra });
+
+test("a weekly story shows owned saved activity for its selected calendar week", () => {
+  const period = { start: "2026-11-02", end: "2026-11-08" };
+  const record = { day: "2026-11-05" };
+  const facts = weeklyStoryFacts(
+    {
+      checkins: [
+        { ...record, id: "mood-a" },
+        { ...record, id: "mood-b" },
+      ],
+      sessions: [
+        { ...record, completed: true, durationSec: 123, feedback: "A little" },
+        { ...record, type: "resource", completed: true, feedback: "Helped" },
+        { ...record, completed: false, durationSec: 900 },
+      ],
+      reflections: [
+        { ...record, localOnly: true },
+        { day: "2026-10-26" },
+        { day: "2026-11-06" },
+        record,
+      ],
+    },
+    period,
+    now(),
+  );
+  assert.deepEqual(facts, {
+    checkins: 2,
+    completedSessions: 1,
+    minutes: 2,
+    reflections: 1,
+    helpfulSessions: 1,
+    days: ["2026-11-05"],
+  });
+  assert.equal(weeklyFacts.hasWeeklyActivity(facts), true);
+  assert.equal(
+    weeklyFacts.hasWeeklyActivity(weeklyStoryFacts({}, period, now())),
+    false,
+  );
+});
 
 test("an empty week has no inferred mood, support claim or fabricated participation", () => {
   const review = weeklyReview({}, now());

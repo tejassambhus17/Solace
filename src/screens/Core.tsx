@@ -28,6 +28,7 @@ import { spacing, useScreenGutter } from "../layout";
 import { VoiceControls } from "../VoiceControls";
 import { useTheme } from "../theme";
 import { createChatPractice } from "../chat-practices";
+import { describeChatExplanation } from "../../server/src/chat-evidence";
 import {
   chatPractices,
   isChatPracticeId,
@@ -42,6 +43,7 @@ import {
   ChatScene,
   ChatWelcome,
 } from "./ChatDetails";
+import { RecommendationExplanation } from "./RecommendationExplanation";
 import {
   AppText,
   Artwork,
@@ -434,6 +436,7 @@ export function ChatScreen({
   const gutter = useScreenGutter();
   const [headerOpacity] = useState(() => new Animated.Value(1));
   const [showComposerMenu, setShowComposerMenu] = useState(false);
+  const [showExplanation, setShowExplanation] = useState(false);
   const dark = resolved === "dark";
   const sceneHeight = Math.min(308, Math.round(width * 0.64));
   const id = typeof app.params?.id === "string" ? app.params.id : undefined;
@@ -462,6 +465,7 @@ export function ChatScreen({
   useEffect(() => {
     setFailure("");
     setShowComposerMenu(false);
+    setShowExplanation(false);
   }, [id]);
   useEffect(() => {
     if (reduceMotion) headerOpacity.setValue(1);
@@ -493,6 +497,15 @@ export function ChatScreen({
     app.params.dismissedPractice !== actionKey &&
     isChatPracticeId(action?.type)
       ? createChatPractice(action.type)
+      : undefined;
+  const explanation =
+    recommendation && action
+      ? describeChatExplanation(
+          action.explanation,
+          action.type,
+          app.user?.personalization === true,
+          app.data,
+        )
       : undefined;
   const today = localDay();
   const mood = useMemo(
@@ -761,6 +774,16 @@ export function ChatScreen({
               style={{ minHeight: 48 }}
             />
           </Row>
+          <Button
+            title="Why Solace suggested this"
+            variant="ghost"
+            icon="information-circle-outline"
+            onPress={() => {
+              Keyboard.dismiss();
+              setShowExplanation(true);
+            }}
+            style={{ alignSelf: "flex-start", minHeight: 48 }}
+          />
         </Card>
       )}
     </View>
@@ -770,6 +793,19 @@ export function ChatScreen({
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "web" ? undefined : "padding"}
     >
+      {showExplanation && recommendation && explanation && (
+        <RecommendationExplanation
+          open
+          title={recommendation.title}
+          reason={explanation.reason}
+          basis={explanation.basis}
+          onClose={() => setShowExplanation(false)}
+          onManage={() => {
+            setShowExplanation(false);
+            app.navigate("memory");
+          }}
+        />
+      )}
       <StatusBar style={dark ? "light" : "dark"} />
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         {fresh ? (

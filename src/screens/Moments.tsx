@@ -32,6 +32,7 @@ import {
   type MomentEnvironment,
 } from "../moments";
 import type { SolaceMoment } from "../../server/src/moment-contract";
+import { RecommendationExplanation } from "./RecommendationExplanation";
 
 const errorText = (error: unknown) =>
   error instanceof Error
@@ -468,19 +469,23 @@ export function MomentsScreen() {
           </AppText>
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ expanded: why }}
-            aria-expanded={why}
-            onPress={() => setWhy(!why)}
+            onPress={() => setWhy(true)}
             style={{ minHeight: 48, justifyContent: "center" }}
           >
-            <AppText variant="caption">
-              {why ? "Hide suggestion details" : "Why this Moment?"}
-            </AppText>
+            <AppText variant="caption">Why Solace suggested this</AppText>
           </Pressable>
           {why && (
-            <AppText variant="caption" color={colors.muted}>
-              {result.explanation}
-            </AppText>
+            <RecommendationExplanation
+              open
+              title={result.activity.title}
+              basis={result.explanationBasis ?? "general"}
+              reason={result.explanation}
+              onClose={() => setWhy(false)}
+              onManage={() => {
+                setWhy(false);
+                app.navigate("memory");
+              }}
+            />
           )}
         </View>
       )}

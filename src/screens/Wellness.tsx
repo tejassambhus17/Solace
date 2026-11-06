@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   AppState,
@@ -12,11 +12,18 @@ import {
   View,
 } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import {
+  hasWeeklyActivity,
+  savedWeeklyStory,
+} from "../../server/src/weekly-facts";
 import { useApp, type WeeklyReflectionResult } from "../store";
 import { useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
+import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
+import { reflectionPeriodLabel, weeklyStoryFacts } from "../weekly-story";
 import { newMomentSessionId } from "../moments";
+import { WeeklyStoryOverview } from "./WeeklyStory";
 import {
   Screen,
   Card,
@@ -1893,16 +1900,6 @@ function selectedReflectionWeek(day: unknown) {
   }
 }
 
-function reflectionPeriodLabel(period: { start: string; end: string }) {
-  const format = (day: string, year: boolean) =>
-    new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      ...(year ? { year: "numeric" } : {}),
-    });
-  return `${format(period.start, period.start.slice(0, 4) !== period.end.slice(0, 4))} to ${format(period.end, true)}`;
-}
-
 function Reflection() {
   const app = useApp();
   const { colors, resolved } = useTheme();
@@ -1911,6 +1908,36 @@ function Reflection() {
     ? app.data.reflections.find((entry) => entry.id === editId)
     : undefined;
   const week = editId ? undefined : selectedReflectionWeek(app.params?.weekEnd);
+  const weekStart = week?.start;
+  const weekEnd = week?.end;
+  const weeklyContext = useMemo(() => {
+    if (!weekStart || !weekEnd) return;
+    const now = new Date();
+    const facts = weeklyStoryFacts(
+      app.data,
+      { start: weekStart, end: weekEnd },
+      now,
+    );
+    const goal = selectJourneyGoal(app.data.goals);
+    const progress = goal
+      ? journeyGoalProgress(goal, app.data, now)
+      : undefined;
+    return {
+      facts,
+      goal:
+        goal && progress
+          ? {
+              title: goal.title,
+              paused: !goal.active,
+              period: progress.period,
+              description: progress.description,
+            }
+          : undefined,
+    };
+  }, [app.data, weekStart, weekEnd]);
+  const hasStoryActivity =
+    weeklyContext && hasWeeklyActivity(weeklyContext.facts);
+  const savedStory = week && savedWeeklyStory(app.data.reflections, week.end);
   const draftKey = editId
     ? `reflection:edit:${editId}`
     : week
@@ -1923,7 +1950,9 @@ function Reflection() {
   );
   const [need, setNeed] = useState(draft?.need ?? String(existing?.need || ""));
   const [expanded, setExpanded] = useState(!!need);
-  const [showEditor, setShowEditor] = useState(!week || !!draft?.text);
+  const [showEditor, setShowEditor] = useState(
+    !week || !hasStoryActivity || !!(draft?.text || draft?.need),
+  );
   const [weeklyProvider, setWeeklyProvider] = useState(
     draft?.weeklyProvider === "live" || draft?.weeklyProvider === "offline"
       ? draft.weeklyProvider
@@ -1951,12 +1980,12 @@ function Reflection() {
     setGenerating(false);
   }
   async function generateSuggestion() {
-    if (!week || generation.current) return;
+    if (!week || !hasStoryActivity || generation.current || saveLock.current)
+      return;
     const pending = new AbortController();
     generation.current = pending;
     setGenerating(true);
     setGenerationError("");
-    setSuggestion(null);
     try {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const result = await app.weeklyReflection(week.end, {
@@ -2070,6 +2099,9 @@ function Reflection() {
       setSaved(true);
     } catch (e) {
       setError(errText(e));
+      if (week && (e as { status?: number }).status === 409) {
+        await app.refresh().catch(() => {});
+      }
     } finally {
       saveLock.current = false;
       setSaving(false);
@@ -2137,9 +2169,11 @@ function Reflection() {
       <PageIntro
         title={
           editId
-            ? "Edit your reflection"
+            ? existing?.weeklyPeriod
+              ? "Edit your weekly story"
+              : "Edit your reflection"
             : week
-              ? "Your weekly reflection"
+              ? "Your weekly story"
               : "A moment\nto reflect"
         }
       >
@@ -2154,12 +2188,18 @@ function Reflection() {
             : "This reflection is no longer available."}
         </Hint>
       )}
-      {week && (
+      {weeklyContext && (
+        <WeeklyStoryOverview
+          facts={weeklyContext.facts}
+          goal={weeklyContext.goal}
+        />
+      )}
+      {week && hasStoryActivity && (
         <Card style={{ padding: 16, marginBottom: 18, gap: 10 }}>
-          <Heading small>Look back on your week</Heading>
+          <Heading small>Make space to reflect</Heading>
           <Copy muted>
-            Use saved activity from this week as a starting point, or write in
-            your own words.
+            Solace can suggest a question using your activity totals. Your
+            journal text stays private from the AI provider.
           </Copy>
           {generating ? (
             <>
@@ -2177,7 +2217,9 @@ function Reflection() {
               title={
                 generationError
                   ? "Retry reflection draft"
-                  : "Create an AI-assisted draft"
+                  : suggestion || weeklyProvider
+                    ? "Regenerate reflection draft"
+                    : "Create an AI-assisted draft"
               }
               onPress={generateSuggestion}
               disabled={saving}
@@ -2196,7 +2238,7 @@ function Reflection() {
             />
           )}
           <ErrorNote error={generationError} />
-          {suggestion && (
+          {suggestion && !generating && (
             <>
               <Heading small>
                 {suggestion.provider === "live"
@@ -2228,6 +2270,12 @@ function Reflection() {
             </>
           )}
         </Card>
+      )}
+      {week && !hasStoryActivity && (
+        <Hint>
+          There is no saved activity for this week yet. What would you like to
+          make a little room for?
+        </Hint>
       )}
       {showEditor && (!editId || (existing && !existing.localOnly)) && (
         <>
@@ -2283,10 +2331,25 @@ function Reflection() {
           </Copy>
           <ErrorNote error={app.offlineError || ""} />
           <ErrorNote error={error} />
+          {savedStory && (
+            <Button
+              title="Reopen saved weekly story"
+              variant="secondary"
+              onPress={() =>
+                app.navigate("reflection-detail", { id: savedStory.id })
+              }
+            />
+          )}
           <Button
-            title={saving ? "Saving…" : "Save reflection"}
+            title={
+              saving
+                ? "Saving…"
+                : week
+                  ? "Save weekly story"
+                  : "Save reflection"
+            }
             onPress={save}
-            disabled={saving}
+            disabled={saving || !!savedStory}
           />
           <Button
             title="Keep draft and leave"
@@ -2359,7 +2422,7 @@ function Reflections() {
               key={record.id}
               title={
                 record.weeklyPeriod
-                  ? "Weekly reflection"
+                  ? `Weekly story · ${reflectionPeriodLabel(record.weeklyPeriod)}`
                   : new Date(record.createdAt).toLocaleDateString(undefined, {
                       month: "long",
                       day: "numeric",
@@ -2393,11 +2456,13 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  const deleteLock = useRef(false);
   const record = (app.data.reflections || []).find(
     (v: AnyRecord) => v.id === params.id,
   );
   async function remove() {
-    if (!record?.id) return;
+    if (!record?.id || deleteLock.current) return;
+    deleteLock.current = true;
     setDeleting(true);
     setError("");
     try {
@@ -2406,6 +2471,7 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
     } catch (e) {
       setError(errText(e));
     } finally {
+      deleteLock.current = false;
       setDeleting(false);
     }
   }
@@ -2413,9 +2479,7 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
     <Screen>
       <Header />
       <PageIntro
-        title={
-          record?.weeklyPeriod ? "Your weekly reflection" : "Your reflection"
-        }
+        title={record?.weeklyPeriod ? "Your weekly story" : "Your reflection"}
       >
         {record?.weeklyPeriod
           ? reflectionPeriodLabel(record.weeklyPeriod)
