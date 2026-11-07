@@ -269,6 +269,150 @@ async function signedIn(id = "account-a") {
   return h;
 }
 
+function habitViews(readApp) {
+  const now = new Date("2026-11-09T12:00:00Z");
+  class FixedDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [now.getTime()]));
+    }
+  }
+  const react = {
+    createElement: (type, props, ...children) => ({
+      type,
+      props: { ...props, children },
+    }),
+    useMemo: (factory) => factory(),
+    useState: (initial) => [
+      typeof initial === "function" ? initial() : initial,
+      () => {},
+    ],
+    useRef: (current) => ({ current }),
+    useEffect: () => {},
+  };
+  const hosts = (...names) =>
+    Object.fromEntries(names.map((name) => [name, name]));
+  const dependencies = {
+    react,
+    "react-native": {
+      ...hosts("ActivityIndicator", "Image", "Pressable", "ScrollView", "View"),
+      Platform: { OS: "android" },
+      StyleSheet: { create: (styles) => styles, hairlineWidth: 1 },
+      useWindowDimensions: () => ({ width: 360, fontScale: 1 }),
+    },
+    "expo-haptics": {},
+    "../store": { useApp: readApp },
+    "./theme": { useTheme: () => ({ colors: {}, resolved: "light" }) },
+    "./ui": hosts("AppText", "Icon"),
+    "../ui": hosts("AppText", "Button", "Card", "Icon", "Input", "Screen"),
+    "../theme": { useTheme: () => ({ colors: {}, resolved: "light" }) },
+    "./Companion": { useReducedMotion: () => true },
+    "./HabitsEditor": {},
+    "./HabitsInsights": {},
+  };
+  function load(file) {
+    const filename = path.join(__dirname, file);
+    const result = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
+      fileName: filename,
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        esModuleInterop: true,
+        target: ts.ScriptTarget.ES2020,
+        jsx: ts.JsxEmit.React,
+      },
+    }).outputText;
+    const module = { exports: {} };
+    new Function("module", "exports", "require", "Date", result)(
+      module,
+      module.exports,
+      (name) => {
+        if (name in dependencies) return dependencies[name];
+        if (/\.(jpg|png)$/.test(name)) return name;
+        throw Error(`Unexpected Habit component dependency: ${name}`);
+      },
+      FixedDate,
+    );
+    return module.exports;
+  }
+  const contract = load("../server/src/habit-contract.ts");
+  dependencies["../server/src/habit-contract"] = contract;
+  dependencies["../../server/src/habit-contract"] = contract;
+  dependencies["../routes"] = load("../src/routes.ts");
+  dependencies["../layout"] = load("../src/layout.ts");
+  dependencies["../habits-ui"] = {
+    ...load("../src/habits-ui.tsx"),
+    GardenScene: "GardenScene",
+  };
+  const { TodayHabits, HabitJourneyEntry } = load(
+    "../src/screens/HabitEntryPoints.tsx",
+  );
+  const { HabitsScreen } = load("../src/screens/Habits.tsx");
+
+  function render(element) {
+    const controls = [];
+    const text = [];
+    function visit(node) {
+      if (Array.isArray(node)) node.forEach(visit);
+      else if (typeof node === "string" || typeof node === "number")
+        text.push(String(node));
+      else if (node && typeof node.type === "function")
+        visit(node.type(node.props));
+      else if (node?.props) {
+        if (node.props.onPress) controls.push(node.props);
+        visit(node.props.children);
+      }
+    }
+    visit(element);
+    return {
+      text: text.join(" "),
+      labels: controls.map((control) => control.accessibilityLabel),
+      press(label) {
+        const control = controls.find(
+          (item) => item.accessibilityLabel === label,
+        );
+        assert.ok(control, `Missing habit action: ${label}`);
+        assert.ok(!control.disabled, `Habit action is disabled: ${label}`);
+        return control.onPress();
+      },
+    };
+  }
+  return {
+    today: () => render(TodayHabits({})),
+    dashboard: () =>
+      render(HabitsScreen({ name: dependencies["../routes"].routes.habits })),
+    journey: (props = {}) =>
+      render(
+        HabitJourneyEntry({
+          now,
+          period: "week",
+          startDay: "2026-11-09",
+          endDay: "2026-11-09",
+          today: "2026-11-09",
+          style: {},
+          mutedColor: "#626B5D",
+          ...props,
+        }),
+      ),
+  };
+}
+
+function dailyHabit(id, name = id, schedule = { type: "daily" }) {
+  const goal = { type: "completion" };
+  const status = "active";
+  return {
+    id,
+    name,
+    timeZone: "UTC",
+    category: "movement",
+    icon: "walk",
+    color: "sage",
+    reminderTime: null,
+    goal,
+    schedule,
+    status,
+    revisions: [{ day: "2026-11-09", status, goal, schedule }],
+  };
+}
+
 test("Google completion uses the shared secure session and clears a previous account", async (t) => {
   const h = harness({ platform: "android" });
   t.after(() => h.close());
@@ -286,13 +430,11 @@ test("Google completion uses the shared secure session and clears a previous acc
     return accountTransport("google-owner", "token-google")(route);
   };
   h.onRequest = transport;
-  await h
-    .render()
-    .googleLogin({
-      id: "synthetic-flow",
-      verifier: "test-proof",
-      handoff: "test-browser-proof",
-    });
+  await h.render().googleLogin({
+    id: "synthetic-flow",
+    verifier: "test-proof",
+    handoff: "test-browser-proof",
+  });
   assert.equal(h.render().user.id, "google-owner");
   assert.equal(h.render().chatDrafts.new, undefined);
   assert.equal(h.storage.get("solace.session"), "token-google");
@@ -552,6 +694,31 @@ test("Explore is a tab with a root and preserves its branch and view across swit
   assert.equal(h.render().params.exploreView.category, "Sleep");
 });
 
+test("rapid wellness tool taps add one Explore detail and preserve its saved view on Back", async () => {
+  const h = await signedIn();
+  h.render().setTab("explore");
+  const view = { category: "all", moreOpen: true, x: 64, y: 240 };
+
+  for (const destination of ["techniques", "habits"]) {
+    const explore = h.render();
+    explore.navigate(destination);
+    explore.navigate(destination);
+    explore.setParams({ exploreView: view });
+
+    const detail = h.render();
+    assert.equal(detail.route, destination);
+    assert.equal(detail.activeTab, "explore");
+    assert.equal(detail.canGoBack, true);
+    assert.equal(detail.params.exploreView, undefined);
+
+    detail.back();
+    const returned = h.render();
+    assert.equal(returned.route, "explore");
+    assert.equal(returned.canGoBack, false);
+    assert.deepEqual(returned.params.exploreView, view);
+  }
+});
+
 test("Solace modes keep their own route and Journal handoff returns to its origin", async () => {
   const h = await signedIn();
   h.render().setTab("chat");
@@ -666,7 +833,9 @@ test("a biometric proof for one account never restores another account's saved c
   setup.close();
   h.onRequest = accountTransport("other-owner", "different-owner-token", {
     ...empty(),
-    reflections: [{ id: "other-journal", kind: "journal", text: "Other account" }],
+    reflections: [
+      { id: "other-journal", kind: "journal", text: "Other account" },
+    ],
   });
   await settle();
   await h.render().unlockDeviceLock("app");
@@ -769,20 +938,9 @@ test("immediate biometric lock still checkpoints the most recent private draft",
   };
   h.render().setEditorDraft("journal:new", draft);
   h.appState("background");
-  await until(() => {
-    const prefix = "solace.writing.v1.biometric-owner";
-    const raw = h.storage.get(`${prefix}.index`);
-    if (!raw) return false;
-    const { active, counts } = JSON.parse(raw);
-    const parts = Array.from({ length: counts[active] }, (_, index) =>
-      h.storage.get(`${prefix}.${active}.${index}`),
-    );
-    return (
-      parts.length > 0 &&
-      parts.every((part) => part !== undefined) &&
-      JSON.parse(parts.join("")).drafts["journal:new"]?.text === draft.text
-    );
-  });
+  await until(
+    () => h.render().editorDraftPersistence["journal:new"] === "committed",
+  );
   const restored = harness({ platform: "android", storage: h.storage });
   h.close();
   restored.onRequest = accountTransport("biometric-owner", "session-token");
@@ -950,33 +1108,345 @@ test("late or repeated Back from a closed detail cannot pop another route", asyn
   h.close();
 });
 
-test("a first chat turn stays pending across tab switches and cannot be sent twice", async () => {
+test("habit reflection preserves the active conversation and Back returns to Habit Insights", async () => {
+  const h = await signedIn();
+  h.render().navigate("chat", { id: "saved-conversation" });
+  h.render().setTab("journey");
+  h.render().navigate("habit-insights");
+  h.render().navigate("chat", { habitAssistant: "reflect" });
+  assert.equal(h.render().route, "chat");
+  assert.equal(h.render().params.id, "saved-conversation");
+  assert.equal(h.render().params.habitAssistant, "reflect");
+  h.render().setParams({ habitAssistant: undefined });
+  h.render().back();
+  assert.equal(h.render().route, "habit-insights");
+  h.render().setTab("chat");
+  assert.equal(h.render().params.id, "saved-conversation");
+  assert.equal(h.render().params.habitAssistant, undefined);
+  h.close();
+});
+
+test("habit progress waits for a confirmed write and rejects duplicate taps in flight", async () => {
+  const h = await signedIn();
+  const deferredResponse = deferred();
+  const original = h.onRequest;
+  const write = { day: "2026-11-07", amount: 1, expectedRevision: 0 };
+  h.onRequest = (path, options) => {
+    if (path !== "/habits/walk/progress") return original(path, options);
+    assert.deepEqual(JSON.parse(options.body), write);
+    return deferredResponse.promise;
+  };
+  const pending = h.render().setHabitProgress("walk", write);
+  await assert.rejects(
+    h.render().setHabitProgress("walk", write),
+    /already being saved/,
+  );
+  assert.equal(h.render().data.habitProgress.length, 0);
+  deferredResponse.resolve(ok({ error: "Try again." }, 503));
+  await assert.rejects(pending, /Try again/);
+  assert.equal(h.render().data.habitProgress.length, 0);
+  assert.equal(h.render().data.habitGarden.length, 0);
+  const progress = {
+    id: "walk-day",
+    habitId: "walk",
+    ...write,
+    complete: true,
+    revision: 1,
+  };
+  const garden = { id: "garden", earnedTotal: 1, stage: "sprout" };
+  h.onRequest = (path, options) =>
+    path === "/habits/walk/progress"
+      ? ok({ progress, garden })
+      : original(path, options);
+  await h.render().setHabitProgress("walk", write);
+  assert.equal(h.render().data.habitProgress[0].amount, 1);
+  assert.equal(h.render().data.habitGarden[0].stage, "sprout");
+  h.close();
+});
+
+test("Today's Habits shows at most three due rows and keeps its header routes usable when empty", () => {
+  const calls = [];
+  const app = {
+    data: { habits: [], habitProgress: [] },
+    navigate: (...args) => calls.push(args),
+  };
+  const view = habitViews(() => app);
+  assert.match(view.today().text, /Start with one small habit/);
+  view.today().press("Create a habit");
+  assert.deepEqual(calls.pop(), ["habits"]);
+
+  app.data.habits = [
+    dailyHabit("tuesday", "Tuesday only", { type: "weekdays", days: [2] }),
+  ];
+  assert.match(view.today().text, /Nothing is scheduled today/);
+  assert.ok(!view.today().labels.some((label) => label?.startsWith("Open ")));
+
+  app.data.habits.push(dailyHabit("walk", "Walk"));
+  const one = view.today();
+  assert.match(one.text, /0 of 1 scheduled completed/);
+  assert.deepEqual(
+    one.labels.filter((label) => label?.startsWith("Open ")),
+    ["Open Walk"],
+  );
+
+  app.data.habits = [
+    ...app.data.habits,
+    ...["Read", "Stretch", "Water"].map((name) =>
+      dailyHabit(name.toLowerCase(), name),
+    ),
+  ];
+  const today = view.today();
+  assert.match(today.text, /0 of 4 scheduled completed/);
+  assert.deepEqual(
+    today.labels.filter((label) => label?.startsWith("Open ")),
+    ["Open Walk", "Open Read", "Open Stretch"],
+  );
+  today.press("Open Read");
+  assert.deepEqual(calls.pop(), ["habit-details", { id: "read" }]);
+  today.press("View all habits");
+  assert.deepEqual(calls.pop(), ["habits"]);
+});
+
+test("Journey Habit Progress uses the selected range, saved garden, and one insights action", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  const view = habitViews(h.render);
+  assert.match(view.journey().text, /0 Actions completed/);
+  assert.match(view.journey().text, /No scheduled goals/);
+
+  const walk = dailyHabit("walk", "Take a walk", {
+    type: "weekdays",
+    days: [1, 3],
+  });
+  walk.revisions[0].day = "2026-10-26";
+  const account = accountTransport("account-a", "token-account-a", {
+    ...empty(),
+    habits: [walk],
+    habitProgress: [
+      ["2026-10-26", true],
+      ["2026-10-28", false],
+      ["2026-11-02", true],
+      ["2026-11-04", false],
+      ["2026-11-09", true],
+    ].map(([day, complete]) => ({
+      id: `walk-${day}`,
+      habitId: walk.id,
+      day,
+      amount: complete ? 1 : 0,
+      complete,
+      earned: true,
+      target: 1,
+      revision: complete ? 1 : 2,
+    })),
+    habitGarden: [{ id: "garden", stage: "growing", earnedTotal: 5 }],
+  });
+  const requests = [];
+  h.onRequest = (route) => {
+    requests.push(route);
+    return account(route);
+  };
+  await h.render().refresh();
+  h.render().setTab("journey");
+
+  const week = view.journey();
+  assert.match(week.text, /Your week at a glance\./);
+  assert.match(week.text, /1 Actions completed/);
+  assert.match(week.text, /100% Scheduled goals met/);
+  assert.match(week.text, /Garden.*Growing plant/);
+  assert.equal(week.labels.length, 1);
+  assert.match(week.labels[0], /^Habit Progress\./);
+  assert.match(
+    week.labels[0],
+    /1 completed habit action\. 100% of scheduled goals met\./,
+  );
+
+  const month = view.journey({ period: "month", startDay: "2026-11-01" });
+  assert.match(month.text, /Your month at a glance\./);
+  assert.match(month.text, /2 Actions completed/);
+  assert.match(month.text, /67% Scheduled goals met/);
+
+  const allTime = { period: "all", startDay: null };
+  const all = view.journey(allTime);
+  assert.match(all.text, /Your habits over time\./);
+  assert.match(all.text, /3 Actions completed/);
+  assert.match(all.text, /60% Scheduled goals met/);
+  assert.match(all.text, /Garden.*Growing plant/);
+
+  const beforeHabit = view.journey({
+    startDay: "2026-10-19",
+    endDay: "2026-10-25",
+  });
+  assert.match(beforeHabit.text, /0 Actions completed/);
+  assert.match(beforeHabit.text, /No scheduled goals/);
+  assert.doesNotMatch(beforeHabit.text, /0%/);
+
+  week.press(week.labels[0]);
+  assert.equal(h.render().route, "habit-insights");
+  h.render().back();
+  assert.equal(h.render().route, "journey");
+  assert.deepEqual(requests, ["/state"]);
+
+  const restored = harness({ storage: h.storage });
+  t.after(() => restored.close());
+  restored.onRequest = account;
+  await until(() => restored.render().user?.id === "account-a");
+  assert.equal(habitViews(restored.render).journey(allTime).text, all.text);
+});
+
+test("Today completion and Undo update the dashboard and Journey from confirmed account data", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  const day = "2026-11-09";
+  const account = accountTransport("account-a", "token-account-a", {
+    ...empty(),
+    habits: [
+      dailyHabit("stretch", "Evening stretch"),
+      dailyHabit("walk", "Lunch walk"),
+      dailyHabit("read", "Read a page"),
+      dailyHabit("water", "Drink water"),
+    ],
+  });
+  const requests = [];
+  h.onRequest = async (route, options) => {
+    if (route !== "/habits/stretch/progress") return account(route);
+    assert.equal(options.method, "PUT");
+    assert.equal(options.headers.Authorization, "Bearer token-account-a");
+    const write = JSON.parse(options.body);
+    requests.push(write);
+    return ok({
+      progress: {
+        id: "stretch-day",
+        habitId: "stretch",
+        day,
+        amount: write.amount,
+        target: 1,
+        complete: write.amount === 1,
+        revision: requests.length,
+        earned: true,
+      },
+      garden: { id: "garden", earnedTotal: 1, stage: "sprout" },
+    });
+  };
+  await h.render().refresh();
+  const view = habitViews(h.render);
+  const before = view.today();
+  const previewLabels = [
+    "Open Evening stretch",
+    "Open Lunch walk",
+    "Open Read a page",
+  ];
+  assert.deepEqual(
+    before.labels.filter((label) => label?.startsWith("Open ")),
+    previewLabels,
+  );
+  assert.match(view.dashboard().text, /0 of 4 completed/);
+  assert.match(view.journey().text, /0 Actions completed/);
+  assert.match(view.journey().text, /0% Scheduled goals met/);
+
+  before.press("Complete Evening stretch");
+  await until(() => h.render().data.habitProgress[0]?.complete === true);
+  const completed = view.today();
+  assert.match(completed.text, /1 of 4 scheduled completed/);
+  assert.deepEqual(
+    completed.labels.filter((label) => label?.startsWith("Open ")),
+    previewLabels,
+  );
+  assert.ok(completed.labels.includes("Undo Evening stretch"));
+  completed.press("View all habits");
+  assert.equal(h.render().route, "habits");
+  const dashboard = view.dashboard();
+  assert.match(dashboard.text, /1 of 4 completed/);
+  assert.ok(dashboard.labels.includes("View Drink water"));
+  assert.match(view.journey().text, /1 Actions completed/);
+  assert.match(view.journey().text, /25% Scheduled goals met/);
+  assert.match(view.journey().text, /Garden.*Sprout/);
+
+  h.render().back();
+  assert.equal(h.render().route, "today");
+  view.today().press("Undo Evening stretch");
+  await until(() => h.render().data.habitProgress[0]?.complete === false);
+  assert.match(view.today().text, /0 of 4 scheduled completed/);
+  assert.match(view.dashboard().text, /0 of 4 completed/);
+  assert.match(view.journey().text, /0 Actions completed/);
+  assert.match(view.journey().text, /0% Scheduled goals met/);
+  assert.match(view.journey().text, /Garden.*Sprout/);
+  assert.deepEqual(requests, [
+    { day, amount: 1, expectedRevision: 0 },
+    { day, amount: 0, expectedRevision: 1 },
+  ]);
+});
+
+test("switching Solace modes does not restore an exited immersive practice", async () => {
+  const h = await signedIn();
+  h.render().navigate("chat", { id: "saved-conversation" });
+  h.render().navigate("technique-detail", { id: "box-breathing" });
+  h.render().navigate("moment-player", { techniqueId: "box-breathing" });
+  h.render().switchSolaceMode("journal");
+  assert.equal(h.render().route, "journal");
+  h.render().switchSolaceMode("companion");
+  assert.equal(h.render().route, "technique-detail");
+  assert.equal(h.render().params.id, "box-breathing");
+  h.render().back();
+  assert.equal(h.render().params.id, "saved-conversation");
+  h.render().navigate("voice-talk", { id: "saved-conversation" });
+  h.render().switchSolaceMode("companion");
+  assert.equal(h.render().route, "chat");
+  assert.equal(h.render().params.id, "saved-conversation");
+  h.close();
+});
+
+test("a Solace link or tab switch leaves an Explore practice at its detail", async () => {
+  const h = await signedIn();
+  for (const leave of [
+    (app) => app.switchSolaceMode("journal"),
+    (app) => app.setTab("journey"),
+  ]) {
+    h.render().navigate("explore");
+    h.render().navigate("technique-detail", { id: "box-breathing" });
+    h.render().navigate("moment-player", { techniqueId: "box-breathing" });
+    leave(h.render());
+    h.render().setTab("explore");
+    assert.equal(h.render().route, "technique-detail");
+  }
+  h.close();
+});
+
+test("a multiline first chat turn stays pending across tab switches and cannot be sent twice", async () => {
   const h = await signedIn();
   const reply = deferred();
+  const text = "Synthetic message\nA second line";
   let requests = 0;
-  h.onRequest = async (route) => {
+  h.onRequest = async (route, { body }) => {
     assert.equal(route, "/chat");
+    assert.equal(JSON.parse(body).text, text);
     requests++;
     return reply.promise;
   };
   h.render().setTab("chat");
   const chatScreen = h.render();
-  chatScreen.setChatDraft("new", "Synthetic message");
-  const sending = chatScreen.chat("Synthetic message").then((result) => {
-    chatScreen.setChatDraft("new", "", "Synthetic message");
+  chatScreen.setChatDraft("new", text);
+  const sending = chatScreen.chat(text).then((result) => {
+    chatScreen.setChatDraft("new", "", text);
     chatScreen.setParams({ id: result.conversation.id });
   });
 
   h.render().setTab("today");
   h.render().setTab("chat");
-  assert.equal(h.render().chatPending.new, "Synthetic message");
+  assert.equal(h.render().chatPending.new, text);
   h.render().setChatDraft("new", "Edited while sending");
-  assert.equal(h.render().chatDrafts.new, "Synthetic message");
-  await assert.rejects(h.render().chat("Synthetic message"), /still replying/);
+  assert.equal(h.render().chatDrafts.new, text);
+  await assert.rejects(h.render().chat(text), /still replying/);
   assert.equal(requests, 1);
 
   h.render().setTab("today");
-  reply.resolve(ok({ conversation: { id: "saved-turn", messages: [] } }));
+  reply.resolve(
+    ok({
+      conversation: {
+        id: "saved-turn",
+        messages: [{ role: "user", content: text }],
+      },
+    }),
+  );
   await sending;
   assert.equal(h.render().params.id, undefined);
   h.render().setTab("chat");
@@ -984,6 +1454,7 @@ test("a first chat turn stays pending across tab switches and cannot be sent twi
   assert.equal(h.render().chatPending.new, undefined);
   assert.equal(h.render().chatDrafts.new, undefined);
   assert.equal(h.render().data.conversations.length, 1);
+  assert.equal(h.render().data.conversations[0].messages[0].content, text);
   h.close();
 });
 
@@ -1403,22 +1874,27 @@ test("malformed API responses preserve a usable session and hide proxy HTML", as
 
 test("chat reuses the retry identity only for the same draft and original conversation", async () => {
   const h = await signedIn();
+  const text = "Original draft\nSecond paragraph";
+  h.render().setChatDraft("new", text);
   const bodies = [];
   h.onRequest = async (_route, { body }) => {
     bodies.push(JSON.parse(body));
     if (bodies.length <= 3) throw Error("Response lost");
     return ok({ conversation: { id: "saved-conversation", messages: [] } });
   };
-  await assert.rejects(h.render().chat("Original draft"));
-  await assert.rejects(h.render().chat("Original draft"));
+  await assert.rejects(h.render().chat(text));
+  assert.equal(h.render().chatDrafts.new, text);
+  assert.equal(h.render().chatPending.new, undefined);
+  await assert.rejects(h.render().chat(text));
+  assert.equal(bodies[1].text, text);
   assert.match(bodies[0].requestId, /^[0-9a-f-]{36}$/);
   assert.equal(bodies[0].requestId, bodies[1].requestId);
-  await assert.rejects(h.render().chat("Original draft", "saved-conversation"));
+  await assert.rejects(h.render().chat(text, "saved-conversation"));
   assert.notEqual(bodies[0].requestId, bodies[2].requestId);
   h.render().setChatDraft("new", "Edited draft");
-  await h.render().chat("Original draft");
+  await h.render().chat(text);
   assert.notEqual(bodies[0].requestId, bodies[3].requestId);
-  await h.render().chat("Original draft");
+  await h.render().chat(text);
   assert.notEqual(bodies[3].requestId, bodies[4].requestId);
   h.close();
 });
@@ -1741,4 +2217,89 @@ test("a long journal draft atomically becomes one protected write and retries us
   assert.equal(app.data.reflections[0].text, record.text);
   assert.equal(app.data.reflections[0].localOnly, undefined);
   reopened.close();
+});
+
+test("native draft status acknowledges only the current committed revision and recovers from storage failure", async () => {
+  const storage = new Map();
+  const h = harness({ platform: "ios", storage });
+  await settle();
+  h.onRequest = accountTransport("account-a", "token-a");
+  await h.render().signIn("synthetic@solace.test", "test-only-password");
+  const key = "journal:new";
+  h.render().setEditorDraft(key, { text: "First version" });
+  assert.equal(h.render().editorDraftPersistence[key], "writing");
+  const held = h.holdNextCredentialWrite();
+  const first = h.render().flushEditorDrafts();
+  await until(() => held.started);
+  h.render().setEditorDraft(key, { text: "Second version" });
+  held.resolve();
+  assert.equal(await first, true);
+  assert.equal(h.render().editorDraftPersistence[key], "writing");
+
+  h.failSecureSet = (key) => key.startsWith("solace.writing.");
+  assert.equal(await h.render().flushEditorDrafts(), false);
+  assert.equal(h.render().editorDraftPersistence[key], "failed");
+  assert.equal(h.render().editorDrafts[key].text, "Second version");
+  h.failSecureSet = undefined;
+  assert.equal(await h.render().flushEditorDrafts(), true);
+  assert.equal(h.render().editorDraftPersistence[key], "committed");
+  h.close();
+
+  const reopened = harness({ platform: "ios", storage });
+  reopened.onRequest = accountTransport("account-a", "token-a");
+  await until(() => !reopened.render().initializing);
+  assert.equal(reopened.render().editorDrafts[key].text, "Second version");
+  assert.equal(reopened.render().editorDraftPersistence[key], "committed");
+  await reopened.render().signOut();
+  assert.equal(reopened.render().editorDraftPersistence[key], undefined);
+  reopened.close();
+});
+
+test("a targeted journal sync can succeed without altering a different failed queued entry", async () => {
+  const h = await signedIn();
+  h.onRequest = async () => {
+    throw Error("Offline while writing");
+  };
+  for (const id of ["journal-first", "journal-second"])
+    await h.render().save("reflections", { id, kind: "journal", text: id });
+  const target = (id) => ({ id, collection: "reflections" });
+  const pending = (id) =>
+    h.render().pendingWrites.find((entry) => entry.id === id);
+  h.onRequest = async (_route, options) => {
+    assert.equal(JSON.parse(options.body).id, "journal-first");
+    return ok({ error: "Try again later." }, 502);
+  };
+  await assert.rejects(
+    h.render().flushPendingWrites(target("journal-first")),
+    /Try again later/,
+  );
+  assert.equal(pending("journal-first").syncState, "failed");
+  assert.equal(pending("journal-first").syncError, "Try again later.");
+  assert.equal(pending("journal-second").syncState, undefined);
+
+  const response = deferred();
+  h.onRequest = async (_route, options) => {
+    const record = JSON.parse(options.body);
+    assert.equal(record.id, "journal-second");
+    await response.promise;
+    return ok({ record });
+  };
+  const syncing = h.render().flushPendingWrites(target("journal-second"));
+  assert.equal(pending("journal-second").syncState, "syncing");
+  assert.equal(pending("journal-first").syncState, "failed");
+  response.resolve();
+  await syncing;
+  assert.equal(pending("journal-second"), undefined);
+  assert.equal(pending("journal-first").syncState, "failed");
+  assert.equal(
+    h.render().data.reflections.find((entry) => entry.id === "journal-second")
+      .localOnly,
+    undefined,
+  );
+  assert.equal(
+    h.render().data.reflections.find((entry) => entry.id === "journal-first")
+      .localOnly,
+    true,
+  );
+  h.close();
 });

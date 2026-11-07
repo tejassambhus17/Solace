@@ -30,6 +30,7 @@ import { pickDailyRoutine } from "../routine";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import { DailyRitualOptions } from "./DailyRitualOptions";
+import { TodayHabits } from "./HabitEntryPoints";
 import { RecommendationExplanation } from "./RecommendationExplanation";
 import {
   AppText,
@@ -74,17 +75,20 @@ const quickActions = [
 ] as const;
 
 type MoodChoice = (typeof moodPetals)[number];
+const isAndroid = Platform.OS === "android";
 
 function TodayMoodOption({
   choice: { mood, image },
   status,
-  largeText,
+  wrap,
+  labelScaleLimit,
   reducedMotion,
   onPress,
 }: {
   choice: MoodChoice;
   status?: "saved" | "pending";
-  largeText: boolean;
+  wrap: boolean;
+  labelScaleLimit?: number;
   reducedMotion: boolean;
   onPress: () => void;
 }) {
@@ -132,7 +136,8 @@ function TodayMoodOption({
       onPress={onPress}
       style={[
         styles.mood,
-        largeText && styles.largeMood,
+        isAndroid && styles.androidMood,
+        wrap && styles.largeMood,
         {
           backgroundColor: dark ? "#302839" : "#FFFAF3",
           borderColor: selected
@@ -159,7 +164,10 @@ function TodayMoodOption({
       <AppText
         variant={selected ? "label" : "caption"}
         color={selected ? colors.lavenderText : colors.text}
-        style={styles.moodText}
+        numberOfLines={isAndroid && !wrap ? 1 : undefined}
+        adjustsFontSizeToFit={isAndroid && !wrap}
+        maxFontSizeMultiplier={labelScaleLimit}
+        style={[styles.moodText, isAndroid && styles.androidMoodText]}
       >
         {mood}
       </AppText>
@@ -171,14 +179,17 @@ const exploreArt = {
   plan: {
     image: require("../../assets/today-explore-guided.jpg"),
     color: "#D9B3FF",
+    detail: "Three-day plans",
   },
   toolkit: {
     image: require("../../assets/today-explore-toolkit.jpg"),
     color: "#B2C7FA",
+    detail: "Saved practices",
   },
   checkin: {
     image: require("../../assets/today-explore-checkins.jpg"),
     color: "#FFC782",
+    detail: "Track your mood",
   },
 } as const;
 
@@ -231,11 +242,25 @@ export function TodayScreen() {
   const dark = resolved === "dark";
   const largeText = fontScale > 1.2;
   const compact = width < 360;
-  const moodPadding = compact ? spacing.compact : spacing.row;
-  const moodGap = compact ? 6 : spacing.compact;
+  const exploreColumnWidth =
+    (Math.min(width, 480) - 2 * gutter - spacing.compact) / 2;
+  const stackExploreCards = exploreColumnWidth < 126 * fontScale;
+  const inlineExploreCards = exploreColumnWidth >= 176 * fontScale;
+  const moodPadding =
+    isAndroid && compact
+      ? 6
+      : compact || isAndroid
+        ? spacing.compact
+        : spacing.row;
+  const moodGap = isAndroid ? (compact ? 4 : 6) : compact ? 6 : spacing.compact;
   const moodWidth =
     (Math.min(width, 480) - 2 * (gutter + moodPadding + 1) - 4 * moodGap) / 5;
-  const wrapMoods = largeText || moodWidth < 50 * fontScale + 6;
+  const wrapMoods = isAndroid
+    ? moodWidth < 48
+    : largeText || moodWidth < 50 * fontScale + 6;
+  // Use the same scale for all five labels, based on the widest one (Stressed).
+  const moodLabelScale =
+    isAndroid && !wrapMoods ? Math.max(1, (moodWidth - 5) / 48) : undefined;
   const now = useToday();
   const today = localDay(now);
   const [showReason, setShowReason] = useState(false);
@@ -362,6 +387,7 @@ export function TodayScreen() {
       <View
         style={[
           styles.hero,
+          isAndroid && styles.androidHero,
           { paddingTop: top + 3, paddingHorizontal: gutter },
         ]}
       >
@@ -484,7 +510,8 @@ export function TodayScreen() {
         <View
           style={[
             styles.moods,
-            compact && styles.compactMoods,
+            isAndroid && styles.androidMoods,
+            { paddingHorizontal: moodPadding },
             panel,
             dark && styles.moodDepth,
           ]}
@@ -521,11 +548,7 @@ export function TodayScreen() {
             </Pressable>
           </Row>
           <Row
-            style={[
-              styles.moodRow,
-              compact && styles.compactMoodRow,
-              wrapMoods && styles.wrap,
-            ]}
+            style={[styles.moodRow, { gap: moodGap }, wrapMoods && styles.wrap]}
           >
             {moodPetals.map((choice) => (
               <TodayMoodOption
@@ -538,7 +561,8 @@ export function TodayScreen() {
                       : "saved"
                     : undefined
                 }
-                largeText={wrapMoods}
+                wrap={wrapMoods}
+                labelScaleLimit={moodLabelScale}
                 reducedMotion={reducedMotion}
                 onPress={() => openCheckin(choice.mood)}
               />
@@ -549,6 +573,7 @@ export function TodayScreen() {
         <View
           style={[
             styles.focus,
+            isAndroid && styles.androidFocus,
             {
               borderColor: dark ? "#A8836F" : "#D0B58C",
               backgroundColor: dark ? "#211D2E" : "#344933",
@@ -584,7 +609,11 @@ export function TodayScreen() {
             variant="title"
             accessibilityRole="header"
             color="#FFF9F4"
-            style={[styles.focusTitle, largeText && styles.fullWidth]}
+            style={[
+              styles.focusTitle,
+              isAndroid && styles.androidFocusTitle,
+              largeText && styles.fullWidth,
+            ]}
           >
             {calmReset.title}
           </AppText>
@@ -592,12 +621,15 @@ export function TodayScreen() {
             color="#FFF9F5"
             style={[
               styles.focusDetail,
+              isAndroid && styles.androidFocusDetail,
               (compact || largeText) && styles.wideCopy,
             ]}
           >
             A guided pause to slow down and settle.
           </AppText>
-          <Row style={styles.focusFooter}>
+          <Row
+            style={[styles.focusFooter, isAndroid && styles.androidFocusFooter]}
+          >
             <Pressable
               accessibilityRole="button"
               onPress={startMoment}
@@ -641,6 +673,7 @@ export function TodayScreen() {
                 onPress={() => app.navigate(action.route, action.params)}
                 style={({ pressed }) => [
                   styles.quickAction,
+                  isAndroid && styles.androidQuickAction,
                   largeText && styles.largeQuickAction,
                   {
                     backgroundColor: tone.background,
@@ -670,6 +703,7 @@ export function TodayScreen() {
           onPress={() => app.navigate("journey")}
           style={({ pressed }) => [
             styles.journey,
+            isAndroid && styles.androidJourney,
             panel,
             dark && styles.journeyDepth,
             { opacity: pressed ? 0.75 : 1 },
@@ -731,7 +765,8 @@ export function TodayScreen() {
           <Icon name="chevron-forward" size={17} />
         </Pressable>
 
-        <View style={styles.explore}>
+        <TodayHabits surfaceStyle={[panel, dark && styles.journeyDepth]} />
+        <View style={[styles.explore, isAndroid && styles.androidSection]}>
           <Row style={styles.exploreHead}>
             <Row style={styles.exploreTitle}>
               <Icon name="grid-outline" size={19} />
@@ -758,21 +793,23 @@ export function TodayScreen() {
               <Icon name="chevron-forward" size={14} />
             </Pressable>
           </Row>
-          <Row
-            style={[styles.exploreCards, (compact || largeText) && styles.wrap]}
-          >
+          <View style={styles.exploreCards}>
             {exploreShortcuts.map((shortcut) => {
               const art = exploreArt[shortcut.route];
+              const fullWidth =
+                stackExploreCards || shortcut.route === "checkin";
+              const horizontal = fullWidth || inlineExploreCards;
               return (
                 <Pressable
                   key={shortcut.route}
                   accessibilityRole="button"
                   accessibilityLabel={shortcut.title}
+                  accessibilityHint={art.detail}
                   onPress={() => app.navigate(shortcut.route)}
                   style={({ pressed }) => [
                     styles.exploreCard,
-                    (compact || largeText) && styles.largeExploreCard,
-                    fontScale > 1.5 && styles.fullExploreCard,
+                    horizontal && styles.exploreCardHorizontal,
+                    fullWidth && styles.exploreCardFullWidth,
                     {
                       borderColor: dark ? "#6D5B7A75" : colors.border,
                       opacity: pressed ? 0.8 : 1,
@@ -781,7 +818,10 @@ export function TodayScreen() {
                 >
                   <Image
                     source={art.image}
-                    style={coverImageStyle}
+                    style={[
+                      coverImageStyle,
+                      horizontal && styles.exploreArtHorizontal,
+                    ]}
                     resizeMode="cover"
                     accessible={false}
                     pointerEvents="none"
@@ -789,181 +829,75 @@ export function TodayScreen() {
                   />
                   <View
                     pointerEvents="none"
-                    style={[StyleSheet.absoluteFill, styles.exploreScrim]}
+                    style={[
+                      StyleSheet.absoluteFill,
+                      horizontal
+                        ? styles.exploreScrimHorizontal
+                        : styles.exploreScrim,
+                    ]}
                   />
-                  <Icon name={shortcut.icon} color={art.color} size={23} />
-                  <AppText
-                    variant="label"
-                    color="#FFF9F7"
-                    style={styles.exploreCardTitle}
+                  <Icon name={shortcut.icon} color={art.color} size={21} />
+                  <View style={horizontal && styles.exploreCardCopy}>
+                    <AppText
+                      variant="label"
+                      color="#FFF9F7"
+                      style={styles.exploreCardTitle}
+                    >
+                      {shortcut.title}
+                    </AppText>
+                    <AppText
+                      variant="caption"
+                      color="#E7DCEB"
+                      style={styles.exploreDetail}
+                    >
+                      {art.detail}
+                    </AppText>
+                  </View>
+                  <View
+                    pointerEvents="none"
+                    style={horizontal ? undefined : styles.exploreChevron}
                   >
-                    {shortcut.title}
-                  </AppText>
-                  <AppText
-                    variant="caption"
-                    color="#E7DCEB"
-                    style={styles.exploreDetail}
-                  >
-                    {shortcut.route === "checkin"
-                      ? "Track your mood"
-                      : shortcut.detail}
-                  </AppText>
+                    <Icon name="chevron-forward" size={15} color="#FFF9F7" />
+                  </View>
                 </Pressable>
               );
             })}
-          </Row>
+          </View>
         </View>
 
-        <View style={[styles.daily, panel, dark && styles.journeyDepth]}>
-          <Row style={styles.dailyHeading}>
-            <View
-              style={[
-                styles.dailyMark,
-                { backgroundColor: colors.lavenderSurface },
-              ]}
-            >
-              <LotusMark size={24} />
-            </View>
-            <AppText
-              variant="heading"
-              accessibilityRole="header"
-              style={styles.fill}
-            >
-              Your Daily Pause
-            </AppText>
-          </Row>
-          <AppText variant="caption" color={secondary}>
-            {!enabled
-              ? "Daily Pause is off. You can turn it on whenever you’d like."
-              : routine.practiceSkipped
-                ? "Today’s Moment is skipped. Check in or reflect whenever you like."
-                : next
-                  ? "Make a little room for yourself today."
-                  : "You made time for yourself today. Come back to any step anytime."}
-          </AppText>
-          {enabled && (
-            <>
-              <Row
-                style={[styles.dailySteps, largeText && styles.stackedSteps]}
-              >
-                {routine.steps.map((step, index) => {
-                  const current = next?.id === step.id;
-                  const skipped =
-                    step.id === "practice" && routine.practiceSkipped;
-                  const status = step.complete
-                    ? "Completed"
-                    : skipped
-                      ? "Skipped today"
-                      : current
-                        ? "Next step"
-                        : "Available";
-                  const emphasis = current || step.complete;
-                  const stepInk = current
-                    ? dailyPrimaryInk
-                    : emphasis
-                      ? colors.sageText
-                      : secondary;
-                  const indicator = (
-                    <View
-                      style={[
-                        styles.stepIndicator,
-                        {
-                          borderColor: emphasis
-                            ? "transparent"
-                            : panel.borderColor,
-                          backgroundColor: current
-                            ? dailyPrimary
-                            : step.complete
-                              ? colors.sageSurface
-                              : "transparent",
-                        },
-                      ]}
-                    >
-                      {step.complete ? (
-                        <Icon name="checkmark" size={16} color={stepInk} />
-                      ) : skipped ? (
-                        <Icon name="remove" size={16} color={stepInk} />
-                      ) : (
-                        <AppText
-                          variant="label"
-                          color={stepInk}
-                          style={styles.stepNumber}
-                        >
-                          {index + 1}
-                        </AppText>
-                      )}
-                    </View>
-                  );
-                  const stepStyle = [
-                    styles.dailyStep,
-                    largeText && styles.stackedStep,
-                  ];
-                  const label = (
-                    <AppText
-                      variant="label"
-                      style={[
-                        styles.stepLabel,
-                        largeText && styles.stackedStepLabel,
-                      ]}
-                    >
-                      {skipped ? "Moment skipped" : step.title}
-                    </AppText>
-                  );
-                  return current || skipped ? (
-                    <View
-                      key={step.id}
-                      accessible
-                      accessibilityLabel={`${step.title}. ${status}`}
-                      style={stepStyle}
-                    >
-                      {indicator}
-                      {label}
-                    </View>
-                  ) : (
-                    <Pressable
-                      key={step.id}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${step.title}. ${status}`}
-                      onPress={() => app.navigate(step.route, step.params)}
-                      style={({ pressed }) => [
-                        stepStyle,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      {indicator}
-                      {label}
-                    </Pressable>
-                  );
-                })}
-              </Row>
-              {next?.id === "practice" && (
-                <AppText variant="caption" color={secondary}>
-                  {routine.suggestion.title} · {routine.suggestion.duration}
-                </AppText>
-              )}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  next
-                    ? app.navigate(next.route, next.params)
-                    : app.navigate("journey-activity", { day: routine.day })
-                }
-                style={({ pressed }) => [
-                  styles.dailyAction,
-                  { backgroundColor: dailyPrimary },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <AppText
-                  variant="label"
-                  color={dailyPrimaryInk}
-                  style={styles.startLabel}
+        <View
+          style={[
+            styles.daily,
+            isAndroid && styles.androidDaily,
+            panel,
+            dark && styles.journeyDepth,
+          ]}
+        >
+          <DailyRitualOptions
+            key={routine.day}
+            settings={routine.settings}
+            canSkip={next?.id === "practice" || routine.practiceSkipped}
+            heading={
+              <Row style={styles.dailyHeading}>
+                <View
+                  style={[
+                    styles.dailyMark,
+                    { backgroundColor: colors.lavenderSurface },
+                  ]}
                 >
-                  {next ? dailyActions[next.id] : "View today’s pause"}
+                  <LotusMark size={24} />
+                </View>
+                <AppText
+                  variant="heading"
+                  accessibilityRole="header"
+                  style={styles.dailyTitle}
+                >
+                  Your Daily Pause
                 </AppText>
-                <Icon name="arrow-forward" size={16} color={dailyPrimaryInk} />
-              </Pressable>
-              {next?.id === "practice" && (
+              </Row>
+            }
+            reasonAction={
+              next?.id === "practice" && (
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => setShowReason(true)}
@@ -972,23 +906,188 @@ export function TodayScreen() {
                     pressed && styles.pressed,
                   ]}
                 >
-                  <AppText variant="caption" color={secondary}>
-                    Why Solace suggested this
-                  </AppText>
                   <Icon
                     name="information-circle-outline"
                     color={secondary}
-                    size={13}
+                    size={14}
+                  />
+                  <AppText
+                    variant="caption"
+                    color={secondary}
+                    style={styles.reasonLabel}
+                  >
+                    Why Solace suggested this
+                  </AppText>
+                </Pressable>
+              )
+            }
+          >
+            {enabled ? (
+              <>
+                <Row style={styles.dailySteps}>
+                  {routine.steps.map((step, index) => {
+                    const current = next?.id === step.id;
+                    const skipped =
+                      step.id === "practice" && routine.practiceSkipped;
+                    const status = step.complete
+                      ? "Completed"
+                      : skipped
+                        ? "Skipped today"
+                        : current
+                          ? "Next step"
+                          : "Available";
+                    const emphasis = current || step.complete;
+                    const stepInk = current
+                      ? dailyPrimaryInk
+                      : emphasis
+                        ? colors.sageText
+                        : secondary;
+                    const indicator = (
+                      <View
+                        style={[
+                          styles.stepIndicator,
+                          {
+                            borderColor: emphasis
+                              ? "transparent"
+                              : panel.borderColor,
+                            backgroundColor: current
+                              ? dailyPrimary
+                              : step.complete
+                                ? colors.sageSurface
+                                : "transparent",
+                          },
+                        ]}
+                      >
+                        {step.complete ? (
+                          <Icon name="checkmark" size={16} color={stepInk} />
+                        ) : skipped ? (
+                          <Icon name="remove" size={16} color={stepInk} />
+                        ) : (
+                          <AppText
+                            variant="label"
+                            color={stepInk}
+                            maxFontSizeMultiplier={1.5}
+                            style={styles.stepNumber}
+                          >
+                            {index + 1}
+                          </AppText>
+                        )}
+                      </View>
+                    );
+                    const connectors = (
+                      <>
+                        {index > 0 && (
+                          <View
+                            pointerEvents="none"
+                            style={[
+                              styles.stepConnector,
+                              styles.stepConnectorBefore,
+                              {
+                                backgroundColor: routine.steps[index - 1]
+                                  .complete
+                                  ? colors.sageText
+                                  : panel.borderColor,
+                              },
+                            ]}
+                          />
+                        )}
+                        {index < stepCount - 1 && (
+                          <View
+                            pointerEvents="none"
+                            style={[
+                              styles.stepConnector,
+                              styles.stepConnectorAfter,
+                              {
+                                backgroundColor: step.complete
+                                  ? colors.sageText
+                                  : panel.borderColor,
+                              },
+                            ]}
+                          />
+                        )}
+                      </>
+                    );
+                    const label = (
+                      <AppText variant="label" style={styles.stepLabel}>
+                        {step.id === "practice" ? "Moment" : step.title}
+                      </AppText>
+                    );
+                    return current || skipped ? (
+                      <View
+                        key={step.id}
+                        accessible
+                        accessibilityLabel={`${step.title}. ${status}`}
+                        style={styles.dailyStep}
+                      >
+                        {connectors}
+                        {indicator}
+                        {label}
+                      </View>
+                    ) : (
+                      <Pressable
+                        key={step.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${step.title}. ${status}`}
+                        onPress={() => app.navigate(step.route, step.params)}
+                        style={({ pressed }) => [
+                          styles.dailyStep,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        {connectors}
+                        {indicator}
+                        {label}
+                      </Pressable>
+                    );
+                  })}
+                </Row>
+                {next?.id === "practice" ? (
+                  <AppText variant="caption" color={secondary}>
+                    {routine.suggestion.title} · {routine.suggestion.duration}
+                  </AppText>
+                ) : routine.practiceSkipped ? (
+                  <AppText variant="caption" color={secondary}>
+                    Today’s Moment is skipped. Check in or reflect whenever you
+                    like.
+                  </AppText>
+                ) : !next ? (
+                  <AppText variant="caption" color={secondary}>
+                    You made time for yourself today.
+                  </AppText>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    next
+                      ? app.navigate(next.route, next.params)
+                      : app.navigate("journey-activity", { day: routine.day })
+                  }
+                  style={({ pressed }) => [
+                    styles.dailyAction,
+                    { backgroundColor: dailyPrimary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <AppText
+                    variant="label"
+                    color={dailyPrimaryInk}
+                    style={styles.startLabel}
+                  >
+                    {next ? dailyActions[next.id] : "View today’s pause"}
+                  </AppText>
+                  <Icon
+                    name="arrow-forward"
+                    size={16}
+                    color={dailyPrimaryInk}
                   />
                 </Pressable>
-              )}
-            </>
-          )}
-          <DailyRitualOptions
-            key={routine.day}
-            settings={routine.settings}
-            canSkip={next?.id === "practice" || routine.practiceSkipped}
-          />
+              </>
+            ) : (
+              <AppText variant="caption" color={secondary}>
+                Daily Pause is off. You can turn it on whenever you’d like.
+              </AppText>
+            )}
+          </DailyRitualOptions>
         </View>
       </View>
       <RecommendationExplanation
@@ -1013,6 +1112,7 @@ export function TodayScreen() {
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0, paddingTop: 0 },
   hero: { overflow: "hidden", paddingBottom: spacing.section },
+  androidHero: { paddingBottom: spacing.screenTop },
   heroFade: { position: "absolute", bottom: 0, left: 0, right: 0, height: 42 },
   header: { minHeight: 48, justifyContent: "space-between", gap: 6 },
   brand: { gap: 6, flexShrink: 1 },
@@ -1068,7 +1168,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.row,
     paddingBottom: spacing.row,
   },
-  compactMoods: { paddingHorizontal: spacing.compact },
+  androidMoods: {
+    paddingBottom: spacing.compact,
+  },
   moodDepth: {
     backgroundImage:
       "linear-gradient(140deg, #2D233B 0%, #211B2A 53%, #201A28 100%)",
@@ -1093,8 +1195,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  moodRow: { gap: spacing.compact, alignItems: "stretch" },
-  compactMoodRow: { gap: 6 },
+  moodRow: { alignItems: "stretch" },
   wrap: { flexWrap: "wrap" },
   mood: {
     flex: 1,
@@ -1108,10 +1209,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.compact,
     gap: 4,
   },
+  androidMood: { minHeight: 56, paddingVertical: 4, gap: 3 },
   largeMood: { flexBasis: "28%", flexGrow: 1 },
   moodTint: { ...StyleSheet.absoluteFill, borderRadius: 17 },
   moodPetal: { width: 29, height: 24 },
   moodText: { textAlign: "center", fontSize: 11, lineHeight: 15 },
+  androidMoodText: { alignSelf: "stretch" },
   focus: {
     minHeight: 176,
     marginTop: spacing.section,
@@ -1133,8 +1236,15 @@ const styles = StyleSheet.create({
   },
   focusLabel: { fontSize: 11, lineHeight: 15 },
   focusTitle: { width: "78%", fontSize: 31, lineHeight: 36, marginTop: 4 },
+  androidFocus: {
+    minHeight: 160,
+    marginTop: spacing.card,
+    paddingVertical: 9,
+  },
+  androidFocusTitle: { fontSize: 29 },
   fullWidth: { width: "100%" },
   focusDetail: { maxWidth: "66%", fontSize: 13, lineHeight: 18, marginTop: 3 },
+  androidFocusDetail: { maxWidth: "76%" },
   wideCopy: { maxWidth: "90%" },
   focusFooter: {
     marginTop: spacing.row,
@@ -1142,6 +1252,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.compact,
   },
+  androidFocusFooter: { marginTop: spacing.compact },
   focusAction: {
     flexDirection: "row",
     alignItems: "center",
@@ -1180,6 +1291,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 15,
   },
+  androidQuickAction: { minHeight: 68, paddingVertical: 6 },
   quickIcon: {
     width: 28,
     height: 28,
@@ -1204,6 +1316,10 @@ const styles = StyleSheet.create({
       "linear-gradient(140deg, #2B2536 0%, #191723 73%, #24222C 100%)",
     borderColor: "#494153",
   },
+  androidJourney: {
+    marginTop: spacing.card,
+    paddingVertical: spacing.compact,
+  },
   journeyIcon: {
     width: 37,
     height: 37,
@@ -1224,6 +1340,7 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", borderRadius: 3 },
   progressText: { flexShrink: 1, fontSize: 11, lineHeight: 15 },
   explore: { marginTop: spacing.section },
+  androidSection: { marginTop: spacing.screenTop },
   exploreHead: {
     justifyContent: "space-between",
     gap: 4,
@@ -1233,70 +1350,100 @@ const styles = StyleSheet.create({
   exploreHeading: { flex: 1, fontSize: 19, lineHeight: 24 },
   seeAll: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 3 },
   seeAllText: { fontSize: 12, lineHeight: 17, flexShrink: 1 },
-  exploreCards: { gap: spacing.row, alignItems: "stretch" },
+  exploreCards: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.compact,
+    alignItems: "stretch",
+  },
   exploreCard: {
-    flex: 1,
+    flexBasis: "44%",
+    flexGrow: 1,
     minWidth: 0,
-    minHeight: 112,
-    padding: spacing.row,
+    minHeight: 48,
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
+    gap: spacing.compact,
     overflow: "hidden",
     borderRadius: 16,
     borderWidth: 1,
     backgroundColor: "#282137",
   },
-  largeExploreCard: { flexBasis: "45%" },
-  fullExploreCard: { flexBasis: "100%" },
+  exploreCardHorizontal: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  exploreCardFullWidth: { flexBasis: "100%", gap: spacing.row },
+  exploreCardCopy: { flex: 1, minWidth: 0 },
+  exploreChevron: {
+    position: "absolute",
+    top: spacing.compact,
+    right: spacing.row,
+  },
+  exploreArtHorizontal: { left: "36%" },
   exploreScrim: {
     backgroundImage:
-      "linear-gradient(180deg, #18122020 0%, #201829B0 42%, #17121FF5 100%)",
+      "linear-gradient(180deg, #18122040 0%, #201829C7 42%, #17121FF5 100%)",
   },
-  exploreCardTitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: spacing.compact,
+  exploreScrimHorizontal: {
+    backgroundImage:
+      "linear-gradient(90deg, #17121F 0%, #17121F 36%, #201829BA 61%, #18122066 100%)",
   },
-  exploreDetail: { fontSize: 12, lineHeight: 16, marginTop: 3 },
+  exploreCardTitle: { fontSize: 13, lineHeight: 18 },
+  exploreDetail: { fontSize: 12, lineHeight: 16, marginTop: 2 },
   daily: {
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: 18,
     marginTop: spacing.section,
     padding: spacing.card,
-    gap: spacing.compact,
   },
-  dailyHeading: { gap: spacing.compact },
+  androidDaily: { marginTop: spacing.screenTop, padding: spacing.row },
+  dailyHeading: { flex: 1, minWidth: 0, gap: spacing.compact },
+  dailyTitle: { flex: 1, fontSize: 20, lineHeight: 24 },
   dailyMark: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
   },
-  dailySteps: { gap: 4, alignItems: "stretch", marginVertical: 4 },
-  stackedSteps: { flexDirection: "column" },
+  dailySteps: { gap: 0, alignItems: "stretch" },
   dailyStep: {
     flex: 1,
     minWidth: 0,
     minHeight: 48,
     gap: 4,
     alignItems: "center",
+    paddingHorizontal: 3,
+    paddingVertical: 2,
   },
-  stackedStep: { flexDirection: "row", gap: spacing.compact },
+  stepConnector: { position: "absolute", top: 15, height: 1 },
+  stepConnectorBefore: {
+    left: 0,
+    right: "50%",
+    marginRight: 18,
+  },
+  stepConnectorAfter: {
+    left: "50%",
+    right: 0,
+    marginLeft: 18,
+  },
   stepIndicator: {
-    width: 26,
-    height: 26,
+    width: 28,
+    height: 28,
     borderWidth: 1,
-    borderRadius: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   stepNumber: { fontSize: 11, lineHeight: 15 },
   stepLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
-  stackedStepLabel: { flexShrink: 1, textAlign: "left" },
   dailyAction: {
     flexDirection: "row",
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     minHeight: 48,
     alignItems: "center",
+    justifyContent: "center",
     gap: spacing.compact,
     paddingHorizontal: spacing.card,
     paddingVertical: spacing.compact,
@@ -1306,9 +1453,11 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.72 },
   reason: {
     minHeight: 48,
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
+    maxWidth: "100%",
+    paddingVertical: 4,
   },
+  reasonLabel: { flexShrink: 1, fontSize: 12, lineHeight: 17 },
 });

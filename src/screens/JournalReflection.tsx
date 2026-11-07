@@ -1,11 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   journalRevision,
   journalShareableText,
   type JournalAction,
   type JournalReflectionResult,
+  type JournalSelection,
 } from "../../server/src/journal-contract";
 import { useReducedMotion } from "../Companion";
 import { journalExcerpts } from "../journal-excerpts";
@@ -31,7 +39,13 @@ const actions: { id: JournalAction; label: string; icon: string }[] = [
   { id: "grounding", label: "Suggest grounding", icon: "leaf-outline" },
 ];
 
-type Consent = JournalAction | "discuss";
+type ShareAction = JournalAction | "discuss";
+type Consent = {
+  action: ShareAction;
+  entryId: string;
+  index: number;
+  selection: JournalSelection;
+};
 
 export function JournalReflectionScreen({
   focused = true,
@@ -53,7 +67,7 @@ export function JournalReflectionScreen({
   const sections = useMemo(() => journalExcerpts(body), [body]);
   const [section, setSection] = useState(0);
   const [consent, setConsent] = useState<Consent>();
-  const [pending, setPending] = useState<Consent>();
+  const [pending, setPending] = useState<ShareAction>();
   const [result, setResult] = useState<JournalReflectionResult>();
   const lastShownResult = useRef<JournalReflectionResult | undefined>(
     undefined,
@@ -63,7 +77,12 @@ export function JournalReflectionScreen({
   const retry = useRef<{ selection: string; id: string } | undefined>(
     undefined,
   );
-  const excerpt = sections[Math.min(section, sections.length - 1)];
+  const excerptIndex = Math.min(section, sections.length - 1);
+  const excerpt = sections[excerptIndex];
+  const activeConsent =
+    consent?.entryId === id && consent?.selection.revision === revision
+      ? consent
+      : undefined;
 
   useEffect(() => {
     setSection(0);
@@ -87,11 +106,20 @@ export function JournalReflectionScreen({
     setError("");
   };
 
+  function reviewShare(action: ShareAction) {
+    if (!id || !excerpt || !focused || request.current) return;
+    setConsent({
+      action,
+      entryId: id,
+      index: excerptIndex,
+      selection: { ...excerpt, revision },
+    });
+  }
+
   async function share() {
-    if (!id || !consent || !excerpt || !focused || request.current) return;
+    if (!activeConsent || !focused || request.current) return;
     const controller = new AbortController();
-    const action = consent;
-    const selection = { ...excerpt, revision };
+    const { action, entryId, selection } = activeConsent;
     request.current = controller;
     setConsent(undefined);
     setPending(action);
@@ -103,19 +131,19 @@ export function JournalReflectionScreen({
         if (retry.current?.selection !== key)
           retry.current = { selection: key, id: newChatRequestId() };
         const response = await app.discussJournal(
-          id,
+          entryId,
           selection,
           retry.current.id,
           controller.signal,
         );
-        if (!controller.signal.aborted && isRecordId(response.conversation?.id))
-          app.navigate(routes.companion, {
-            id: response.conversation.id,
-            fromJournal: id,
-          });
+        if (controller.signal.aborted) return;
+        app.navigate(routes.companion, {
+          id: response.conversation.id,
+          fromJournal: entryId,
+        });
       } else {
         const reflection = await app.reflectJournal(
-          id,
+          entryId,
           selection,
           action,
           controller.signal,
@@ -187,98 +215,119 @@ export function JournalReflectionScreen({
                     : "Journal excerpt"}
                 </AppText>
               </Row>
-              <AppText selectable>
-                {body.slice(excerpt.start, excerpt.end).trim()}
-              </AppText>
               {sections.length > 1 && (
                 <Row style={styles.pagination}>
                   <IconButton
                     name="chevron-back"
                     label="Previous excerpt"
-                    disabled={section === 0 || !!pending}
-                    onPress={() => selectSection(section - 1)}
+                    disabled={excerptIndex === 0 || !!pending}
+                    onPress={() => selectSection(excerptIndex - 1)}
                   />
-                  <AppText variant="caption" color={colors.lavenderText}>
-                    Excerpt {section + 1} of {sections.length}
+                  <AppText
+                    variant="caption"
+                    color={colors.lavenderText}
+                    style={styles.excerptCount}
+                    accessibilityLiveRegion="polite"
+                  >
+                    Excerpt {excerptIndex + 1} of {sections.length}
                   </AppText>
                   <IconButton
                     name="chevron-forward"
                     label="Next excerpt"
-                    disabled={section >= sections.length - 1 || !!pending}
-                    onPress={() => selectSection(section + 1)}
+                    disabled={excerptIndex >= sections.length - 1 || !!pending}
+                    onPress={() => selectSection(excerptIndex + 1)}
                   />
                 </Row>
               )}
+              <AppText selectable>
+                {body.slice(excerpt.start, excerpt.end).trim()}
+              </AppText>
             </Card>
           </View>
-          <View style={styles.section}>
-            {!discussOnly && (
-              <AppText variant="heading" accessibilityRole="header">
-                How can Solace help?
-              </AppText>
-            )}
-            {!discussOnly &&
-              actions.map(({ id: action, label, icon }) => (
-                <Pressable
-                  key={action}
-                  accessibilityRole="button"
-                  accessibilityLabel={label}
-                  accessibilityState={{
-                    disabled: !!pending,
-                    busy: pending === action,
-                  }}
-                  disabled={!!pending}
-                  onPress={() => setConsent(action)}
-                  style={({ pressed }) => [
-                    styles.action,
-                    {
-                      borderColor: colors.border,
-                      backgroundColor: pressed
-                        ? colors.surface2
-                        : "transparent",
-                    },
-                  ]}
-                >
-                  <Icon name={icon} size={20} color={colors.lavenderText} />
-                  <AppText variant="label" style={styles.flex}>
-                    {label}
-                  </AppText>
-                  <Icon
-                    name="chevron-forward-outline"
-                    size={17}
-                    color={colors.muted}
+          {(!!pending || !!error) && (
+            <View
+              key={pending ? "pending" : "error"}
+              style={styles.section}
+              onLayout={({ nativeEvent }) => {
+                if (focused)
+                  scroll.current?.scrollTo({
+                    y: Math.max(0, nativeEvent.layout.y - spacing.card),
+                    animated: !reducedMotion,
+                  });
+              }}
+            >
+              {pending ? (
+                <>
+                  <Row>
+                    <ActivityIndicator color={colors.lavenderText} />
+                    <AppText
+                      accessibilityLiveRegion="polite"
+                      color={colors.muted}
+                      style={styles.flex}
+                    >
+                      {pending === "discuss"
+                        ? "Opening a conversation…"
+                        : "Preparing your reflection…"}
+                    </AppText>
+                  </Row>
+                  <Button
+                    title="Cancel request"
+                    variant="secondary"
+                    onPress={() => {
+                      request.current?.abort();
+                      request.current = null;
+                      setPending(undefined);
+                    }}
                   />
-                </Pressable>
-              ))}
-            <Button
-              title="Discuss with Solace"
-              icon="chatbubble-outline"
-              disabled={!!pending}
-              onPress={() => setConsent("discuss")}
-            />
-          </View>
-          {!!pending && (
-            <View style={styles.section}>
-              <AppText accessibilityLiveRegion="polite" color={colors.muted}>
-                {pending === "discuss"
-                  ? "Opening a conversation…"
-                  : "Preparing your reflection…"}
-              </AppText>
-              <Button
-                title="Cancel request"
-                variant="secondary"
-                onPress={() => {
-                  request.current?.abort();
-                  request.current = null;
-                  setPending(undefined);
-                }}
-              />
+                </>
+              ) : (
+                <AppText accessibilityRole="alert" color={colors.danger}>
+                  {error}
+                </AppText>
+              )}
             </View>
           )}
-          {!!error && (
-            <AppText accessibilityRole="alert" color={colors.danger}>
-              {error}
-            </AppText>
+          {!pending && (
+            <View style={styles.section}>
+              {!discussOnly && (
+                <AppText variant="heading" accessibilityRole="header">
+                  How can Solace help?
+                </AppText>
+              )}
+              {!discussOnly &&
+                actions.map(({ id: action, label, icon }) => (
+                  <Pressable
+                    key={action}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    onPress={() => reviewShare(action)}
+                    style={({ pressed }) => [
+                      styles.action,
+                      {
+                        borderColor: colors.border,
+                        backgroundColor: pressed
+                          ? colors.surface2
+                          : "transparent",
+                      },
+                    ]}
+                  >
+                    <Icon name={icon} size={20} color={colors.lavenderText} />
+                    <AppText variant="label" style={styles.flex}>
+                      {label}
+                    </AppText>
+                    <Icon
+                      name="chevron-forward-outline"
+                      size={17}
+                      color={colors.muted}
+                    />
+                  </Pressable>
+                ))}
+              <Button
+                title="Discuss with Solace"
+                icon="chatbubble-outline"
+                onPress={() => reviewShare("discuss")}
+              />
+            </View>
           )}
           {result && (
             <View
@@ -327,7 +376,7 @@ export function JournalReflectionScreen({
       )}
       <Modal
         transparent
-        visible={focused && !!consent}
+        visible={focused && !!activeConsent}
         onRequestClose={() => setConsent(undefined)}
         animationType={reducedMotion ? "none" : "fade"}
       >
@@ -358,14 +407,39 @@ export function JournalReflectionScreen({
                 Solace sends only this excerpt to its configured AI service.
                 Your journal and AI memory stay separate.
               </AppText>
+              {activeConsent && (
+                <View
+                  style={[
+                    styles.consentExcerpt,
+                    {
+                      backgroundColor: colors.lavenderSurface,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <AppText variant="label" color={colors.lavenderText}>
+                    {sections.length > 1
+                      ? `Excerpt ${activeConsent.index + 1} of ${sections.length}`
+                      : "Selected excerpt"}
+                  </AppText>
+                  <AppText variant="caption" numberOfLines={3}>
+                    {body
+                      .slice(
+                        activeConsent.selection.start,
+                        activeConsent.selection.end,
+                      )
+                      .trim()}
+                  </AppText>
+                </View>
+              )}
               <AppText color={colors.muted}>
-                {consent === "discuss"
+                {activeConsent?.action === "discuss"
                   ? "A separate conversation and its replies are saved in chat history. Delete that conversation to remove its replies."
                   : "Read the AI reflection here alongside your original entry."}
               </AppText>
               <Button
                 title={
-                  consent === "discuss"
+                  activeConsent?.action === "discuss"
                     ? "Share and open Companion"
                     : "Share and continue"
                 }
@@ -391,6 +465,13 @@ const styles = StyleSheet.create({
   privacy: { gap: spacing.compact },
   flex: { flex: 1 },
   pagination: { justifyContent: "space-between" },
+  excerptCount: { flex: 1, textAlign: "center" },
+  consentExcerpt: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: spacing.row,
+    gap: 4,
+  },
   action: {
     flexDirection: "row",
     alignItems: "center",

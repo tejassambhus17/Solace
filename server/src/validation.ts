@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { momentSchema, environments } from "./moments.js";
+import {
+  isCanonicalTimedPractice,
+  isTimedPracticeId,
+} from "./timed-practice-contract.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
 import { chatPracticeIds } from "./chat-practice.js";
 import { chatEvidenceKinds } from "./chat-evidence.js";
@@ -223,7 +227,12 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
   }),
   sessions: base.extend({
     kind: z.enum(["generated"]).optional(),
-    activity: momentSchema.optional(),
+    activity: z
+      .union([
+        momentSchema.refine((activity) => !isTimedPracticeId(activity.id)),
+        z.custom(isCanonicalTimedPractice),
+      ])
+      .optional(),
     environment: z.enum(environments).optional(),
     provider: z.enum(["live", "offline"]).optional(),
     type: shortText.optional(),

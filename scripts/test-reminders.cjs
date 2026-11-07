@@ -11,6 +11,10 @@ function harness() {
   let responseListener;
   let clearedResponses = 0;
   let listenerRemoved = false;
+  let granted = true;
+  let permissionRequests = 0;
+  const scheduled = [];
+  const channels = [];
   const held = new Promise((resolve) => {
     release = resolve;
   });
@@ -22,13 +26,20 @@ function harness() {
     AndroidImportance: { DEFAULT: 3 },
     AndroidNotificationVisibility: { PRIVATE: 0 },
     SchedulableTriggerInputTypes: {
+      DAILY: "daily",
       WEEKLY: "weekly",
       TIME_INTERVAL: "interval",
     },
-    setNotificationChannelAsync: async () => {},
-    getPermissionsAsync: async () => ({ granted: true }),
-    requestPermissionsAsync: async () => ({ granted: true }),
-    scheduleNotificationAsync: async () => {
+    setNotificationChannelAsync: async (id, options) => {
+      channels.push({ id, options });
+    },
+    getPermissionsAsync: async () => ({ granted }),
+    requestPermissionsAsync: async () => {
+      permissionRequests++;
+      return { granted };
+    },
+    scheduleNotificationAsync: async (options) => {
+      scheduled.push(options);
       const n = ++calls;
       const id = n === 1 ? await held : `new-${n}`;
       active.add(id);
@@ -76,12 +87,21 @@ function harness() {
       target: ts.ScriptTarget.ES2020,
     },
   }).outputText;
+  const routesModule = { exports: {} };
+  new Function(
+    "exports",
+    ts.transpileModule(
+      fs.readFileSync(path.join(__dirname, "../src/routes.ts"), "utf8"),
+      { compilerOptions: { module: ts.ModuleKind.CommonJS } },
+    ).outputText,
+  )(routesModule.exports);
   const module = { exports: {} };
   const requireMock = (name) => {
     if (name === "react-native") return { Platform: { OS: "android" } };
     if (name === "expo-notifications") return notifications;
     if (name === "@react-native-async-storage/async-storage")
       return storageMock;
+    if (name === "./routes") return routesModule.exports;
     throw Error(`Unexpected dependency: ${name}`);
   };
   vm.runInNewContext(compiled, {
@@ -102,6 +122,12 @@ function harness() {
     cancelled,
     storage,
     calls: () => calls,
+    scheduled,
+    channels,
+    setPermission: (allowed) => {
+      granted = allowed;
+    },
+    permissionRequests: () => permissionRequests,
     setLastResponse: (response) => {
       lastResponse = response;
     },
@@ -256,4 +282,81 @@ test("an editor waits for restoration and parallel map changes preserve each rem
     ),
     false,
   );
+});
+
+test("habit reminders replace old IDs, target the habit, and cancel when paused", async () => {
+  const h = harness();
+  const input = {
+    ...reminder,
+    type: "habit",
+    habitId: "morning-walk",
+    days: [0],
+  };
+  const first = h.api.syncHabitDeviceReminder(
+    "account",
+    "habit:morning-walk",
+    input,
+    true,
+  );
+  await waitUntil(() => h.calls() === 1);
+  h.release("habit-first");
+  assert.equal(await first, "granted");
+  assert.equal(h.scheduled[0].content.data.screen, "habit-details");
+  assert.equal(h.scheduled[0].content.data.id, "morning-walk");
+  assert.equal(h.scheduled[0].trigger.weekday, 1);
+  assert.equal(h.channels[0].id, "wellness");
+  assert.equal(Object.hasOwn(h.channels[0].options, "sound"), false);
+  await h.api.syncHabitDeviceReminder(
+    "account",
+    "habit:morning-walk",
+    { ...input, hour: 7 },
+    false,
+  );
+  assert.deepEqual([...h.active], ["new-2"]);
+  assert.equal(h.scheduled[1].trigger.hour, 7);
+  assert.deepEqual(h.cancelled, ["habit-first"]);
+  await h.api.syncHabitDeviceReminder(
+    "account",
+    "habit:morning-walk",
+    null,
+    false,
+  );
+  assert.deepEqual([...h.active], []);
+  assert.equal(h.storage.has("solace.device-reminders.account"), false);
+});
+
+test("restore and resume respect denied permission until the user requests it", async () => {
+  const h = harness();
+  h.setPermission(false);
+  await h.api.restoreDeviceReminders("account", [reminder]);
+  const input = { ...reminder, type: "habit", habitId: "walk" };
+  await assert.rejects(
+    h.api.syncHabitDeviceReminder("account", "habit:walk", input, false),
+    /not allowed/,
+  );
+  assert.equal(h.permissionRequests(), 0);
+  await assert.rejects(
+    h.api.syncHabitDeviceReminder("account", "habit:walk", input, true),
+    /not allowed/,
+  );
+  assert.equal(h.permissionRequests(), 1);
+  assert.equal(h.calls(), 0);
+});
+
+test("a notification opens a validated habit destination once", () => {
+  const h = harness();
+  const hits = [];
+  h.api.subscribeNotificationNavigation((route, params) =>
+    hits.push([route, params?.id]),
+  );
+  const response = checkinResponse(1);
+  response.notification.request.content.data = {
+    screen: "habit-details",
+    id: "bad/path",
+  };
+  h.emitResponse(response);
+  response.notification.request.content.data.id = "safe-habit";
+  h.emitResponse(response);
+  h.emitResponse(response);
+  assert.deepEqual(hits, [["habit-details", "safe-habit"]]);
 });

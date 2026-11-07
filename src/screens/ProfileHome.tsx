@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   View,
@@ -8,6 +9,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing, useScreenGutter } from "../layout";
+import { routes } from "../routes";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
@@ -47,6 +49,8 @@ const darkTones = {
   peach: { surface: "#443039", ink: "#F5C5B0" },
   sage: { surface: "#283A39", ink: "#C2E8D4" },
 };
+const android = Platform.OS === "android";
+const linkIconSize = android ? 36 : 40;
 
 export default function ProfileHome() {
   const app = useApp();
@@ -59,7 +63,7 @@ export default function ProfileHome() {
   const stackHero = fontScale > 1.35;
   const avatar = app.user?.avatar;
   const [failedAvatar, setFailedAvatar] = useState<string>();
-  const avatarSize = compact ? 62 : 80;
+  const avatarSize = compact ? 62 : android ? 68 : 80;
   const canvas = dark ? "#0B0912" : colors.bg;
   const muted = dark ? "#DDCFDF" : colors.muted;
   const groupBorder = dark ? "#54465D" : colors.border;
@@ -80,6 +84,13 @@ export default function ProfileHome() {
             label: hasReminders ? "On" : "Off",
             tone: hasReminders ? "sage" : "lavender",
           },
+        },
+        {
+          title: "Habit reminders",
+          subtitle: "Manage the reminders for your habits.",
+          icon: "time-outline",
+          tone: "sage",
+          route: routes.habitReminders,
         },
         {
           title: "What Solace remembers",
@@ -385,8 +396,9 @@ const styles = StyleSheet.create({
   },
   brand: { fontSize: 24, lineHeight: 28 },
   hero: {
-    minHeight: 136,
-    padding: spacing.card,
+    minHeight: android ? 122 : 136,
+    paddingHorizontal: android ? spacing.row : spacing.card,
+    paddingVertical: android ? spacing.compact : spacing.card,
     gap: spacing.row,
     borderRadius: 19,
     borderWidth: 1,
@@ -414,12 +426,12 @@ const styles = StyleSheet.create({
     gap: spacing.compact,
     paddingHorizontal: spacing.row,
     paddingVertical: 4,
-    minHeight: 36,
+    minHeight: android ? 32 : 36,
     borderRadius: 18,
   },
   editLabel: { fontSize: 13, lineHeight: 18, flexShrink: 1 },
   pressed: { opacity: 0.72 },
-  section: { marginTop: spacing.section },
+  section: { marginTop: android ? 18 : spacing.section },
   groupHeading: { gap: spacing.compact, marginBottom: spacing.compact },
   groupTitle: { flex: 1, fontSize: 22, lineHeight: 26 },
   group: {
@@ -431,14 +443,14 @@ const styles = StyleSheet.create({
   link: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 64,
-    gap: spacing.row,
-    paddingVertical: spacing.compact,
+    minHeight: android ? 56 : 64,
+    gap: android ? spacing.compact : spacing.row,
+    paddingVertical: android ? 6 : spacing.compact,
   },
   linkIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: linkIconSize,
+    height: linkIconSize,
+    borderRadius: linkIconSize / 2,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
@@ -460,9 +472,8 @@ const styles = StyleSheet.create({
   badgeInline: { alignSelf: "flex-start" },
   footer: {
     overflow: "hidden",
-    minHeight: 138,
-    paddingTop: spacing.section,
-    paddingBottom: spacing.section,
+    minHeight: android ? 128 : 138,
+    paddingVertical: android ? 18 : spacing.section,
     alignItems: "center",
     gap: spacing.compact,
   },

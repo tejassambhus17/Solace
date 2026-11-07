@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isRecordId, routes } from "./routes";
 
 export type ReminderInput = {
   type: string;
@@ -9,6 +10,7 @@ export type ReminderInput = {
   minute: number;
   days: number[];
   enabled: boolean;
+  habitId?: string;
 };
 const destinations: Record<string, string> = {
   checkin: "checkin",
@@ -34,6 +36,7 @@ export async function scheduleReminder(
 
 async function scheduleDeviceReminder(
   reminder: ReminderInput,
+  requestPermission = true,
 ): Promise<{ ids: string[]; permission: string }> {
   if (Platform.OS === "web") return { ids: [], permission: "web-preview" };
   if (!reminder.enabled) return { ids: [], permission: "disabled" };
@@ -51,13 +54,12 @@ async function scheduleDeviceReminder(
     await Notifications.setNotificationChannelAsync("wellness", {
       name: "Gentle reminders",
       importance: Notifications.AndroidImportance.DEFAULT,
-      sound: "default",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
     });
   assertCurrent();
   let permission = await Notifications.getPermissionsAsync();
   assertCurrent();
-  if (!permission.granted)
+  if (!permission.granted && requestPermission)
     permission = await Notifications.requestPermissionsAsync();
   assertCurrent();
   if (!permission.granted)
@@ -66,23 +68,37 @@ async function scheduleDeviceReminder(
     );
   const ids: string[] = [];
   try {
-    for (const day of reminder.days) {
+    const time = {
+      hour: reminder.hour,
+      minute: reminder.minute,
+      channelId: "wellness",
+    };
+    const triggers =
+      reminder.habitId && reminder.days.length === 7
+        ? [
+            {
+              type: Notifications.SchedulableTriggerInputTypes.DAILY as const,
+              ...time,
+            },
+          ]
+        : reminder.days.map((day) => ({
+            type: Notifications.SchedulableTriggerInputTypes.WEEKLY as const,
+            weekday: day + 1,
+            ...time,
+          }));
+    for (const trigger of triggers) {
       assertCurrent();
       ids.push(
         await Notifications.scheduleNotificationAsync({
           content: {
             title: "A moment for yourself",
             body: "Your Solace reminder is ready whenever you are.",
-            data: { screen: reminderDestination(reminder.type) },
+            data: reminder.habitId
+              ? { screen: routes.habitDetails, id: reminder.habitId }
+              : { screen: reminderDestination(reminder.type) },
             sound: "default",
           },
-          trigger: {
-            type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-            weekday: day + 1,
-            hour: reminder.hour,
-            minute: reminder.minute,
-            channelId: "wellness",
-          },
+          trigger,
         }),
       );
       // Native calls may finish after logout's cancel-all call. Remove their
@@ -108,6 +124,7 @@ let reminderGeneration = 0;
 let cancellationTail: Promise<void> = Promise.resolve();
 let mapWriteTail: Promise<void> = Promise.resolve();
 let restorationTail: Promise<void> = Promise.resolve();
+let habitScheduleTail: Promise<unknown> = Promise.resolve();
 function writeScheduleMap(update: () => Promise<void>) {
   const write = mapWriteTail.then(update);
   mapWriteTail = write.catch(() => {});
@@ -172,6 +189,46 @@ export async function rememberDeviceSchedule(
     else await AsyncStorage.removeItem(localKey(userId));
   });
 }
+
+export function syncHabitDeviceReminder(
+  userId: string,
+  localId: string,
+  reminder: ReminderInput | null,
+  requestPermission: boolean,
+): Promise<string> {
+  const generation = reminderGeneration;
+  const work = habitScheduleTail.then(async () => {
+    if (Platform.OS === "web") return reminder ? "web-preview" : "disabled";
+    const assertCurrent = () => {
+      if (generation !== reminderGeneration)
+        throw new Error(
+          "Your session changed. Try again in your current account.",
+        );
+    };
+    const oldIds = await deviceReminderIds(userId, localId);
+    assertCurrent();
+    await cancelReminders(oldIds);
+    assertCurrent();
+    await rememberDeviceSchedule(userId, localId, []);
+    assertCurrent();
+    if (!reminder) return "disabled";
+    const { ids, permission } = await scheduleDeviceReminder(
+      reminder,
+      requestPermission,
+    );
+    try {
+      assertCurrent();
+      await rememberDeviceSchedule(userId, localId, ids);
+      assertCurrent();
+      return permission;
+    } catch (error) {
+      await cancelReminders(ids);
+      throw error;
+    }
+  });
+  habitScheduleTail = work.catch(() => {});
+  return work;
+}
 export function restoreDeviceReminders(userId: string, reminders: any[]) {
   const restore = restoreSchedules(userId, reminders);
   restorationTail = restore.catch(() => {});
@@ -205,7 +262,7 @@ async function restoreSchedules(userId: string, reminders: any[]) {
         return;
       }
       if (!reminder.enabled) continue;
-      const result = await scheduleDeviceReminder(reminder);
+      const result = await scheduleDeviceReminder(reminder, false);
       createdIds.push(...result.ids);
       if (!isCurrent()) {
         await cancelReminders(createdIds);
@@ -274,16 +331,18 @@ const responseKey = (response: Notifications.NotificationResponse) =>
   ]);
 
 export function subscribeNotificationNavigation(
-  navigate: (route: string) => void,
+  navigate: (route: string, params?: { id: string }) => void,
 ) {
   if (Platform.OS === "web") return () => {};
   let active = true;
   const handler = (response: Notifications.NotificationResponse) => {
     if (!active) return;
-    const screen = response.notification.request.content.data?.screen;
+    const data = response.notification.request.content.data;
+    const screen = data?.screen;
+    const habit = screen === routes.habitDetails && isRecordId(data?.id);
     if (
       typeof screen !== "string" ||
-      !Object.values(destinations).includes(screen)
+      (!habit && !Object.values(destinations).includes(screen))
     )
       return;
     const key = responseKey(response);
@@ -293,7 +352,8 @@ export function subscribeNotificationNavigation(
       const oldest = handledResponses.values().next().value;
       if (oldest !== undefined) handledResponses.delete(oldest);
     }
-    navigate(screen);
+    if (habit) navigate(screen, { id: data.id as string });
+    else navigate(screen);
     try {
       const last = Notifications.getLastNotificationResponse();
       if (last && responseKey(last) === key)

@@ -26,6 +26,9 @@ function loadHelper(file, dependencies = {}) {
   );
   return moduleValue.exports;
 }
+const timedPractices = loadHelper("../server/src/timed-practice-contract.ts");
+const { getTimedPractice, timedPracticeDurations, timedPracticeFocuses } =
+  timedPractices;
 const {
   emptyClock,
   resumeMoment,
@@ -37,7 +40,9 @@ const {
   momentBreathingPosition,
   isPlayableMoment,
   momentClockText,
-} = loadHelper("moments.ts");
+} = loadHelper("moments.ts", {
+  "../server/src/timed-practice-contract": timedPractices,
+});
 const { createExplorePractice, practiceDurations, practiceFocuses } =
   loadHelper("explore-practices.ts");
 const activity = () => ({
@@ -70,6 +75,84 @@ test("a paused Moment accrues no time, including long background gaps", () => {
   assert.equal(elapsedMomentMs(clock, 999999, 60), 10000);
   clock = resumeMoment(clock, 1000000);
   assert.equal(elapsedMomentMs(clock, 1010000, 60), 20000);
+});
+
+test("all timed-practice selections open validated activities and finish at the exact active duration", () => {
+  const ids = new Set();
+  for (const focus of timedPracticeFocuses) {
+    for (const minutes of timedPracticeDurations) {
+      const practice = getTimedPractice(focus, minutes);
+      assert.equal(getTimedPractice(focus, minutes), practice);
+      assert.equal(isPlayableMoment(practice), true);
+      assert.equal(practice.durationSec, minutes * 60);
+      assert.ok(
+        practice.steps.every(
+          (step) => Number.isInteger(step.durationSec) && step.durationSec > 0,
+        ),
+      );
+      assert.equal(
+        practice.steps.reduce((total, step) => total + step.durationSec, 0),
+        practice.durationSec,
+      );
+      assert.ok(!ids.has(practice.id));
+      ids.add(practice.id);
+      const started = resumeMoment(emptyClock(), 500);
+      const paused = pauseMoment(started, 10_500, practice.durationSec);
+      assert.equal(
+        elapsedMomentMs(paused, 6_000_000, practice.durationSec),
+        10_000,
+      );
+      const resumed = resumeMoment(paused, 6_000_000);
+      const end = 6_000_000 + practice.durationSec * 1000 - 10_000;
+      assert.equal(
+        momentPosition(
+          practice,
+          elapsedMomentMs(resumed, end - 1, practice.durationSec),
+        ).complete,
+        false,
+      );
+      assert.equal(
+        momentPosition(
+          practice,
+          elapsedMomentMs(resumed, end, practice.durationSec),
+        ).complete,
+        true,
+      );
+    }
+  }
+  assert.equal(ids.size, 16);
+  assert.equal(getTimedPractice("reflect", 5), undefined);
+  assert.equal(getTimedPractice("calm", 3), undefined);
+});
+
+test("the Calm reference matches the preview and long breathing practices keep natural breaks", () => {
+  const reference = getTimedPractice("calm", 5);
+  assert.deepEqual(
+    reference.steps.map(({ title, durationSec }) => [title, durationSec]),
+    [
+      ["Arrive & settle", 60],
+      ["Follow the guidance", 150],
+      ["Return slowly", 90],
+    ],
+  );
+  const long = getTimedPractice("calm", 20);
+  let elapsed = 0;
+  for (const [index, step] of long.steps.entries()) {
+    const position = momentPosition(long, elapsed);
+    assert.equal(position.index, index);
+    const breathing = momentBreathingPosition(long, position, elapsed, true);
+    assert.equal(!!breathing, [1, 3, 5].includes(index));
+    elapsed += step.durationSec * 1000;
+  }
+  assert.equal(
+    isPlayableMoment({ ...long, title: "Unregistered variation" }),
+    false,
+  );
+  assert.equal(
+    isPlayableMoment({ ...long, id: "qa-unregistered", environment: "ocean" }),
+    false,
+  );
+  assert.equal(isPlayableMoment({ ...long, environment: "ocean" }), true);
 });
 
 test("completion requires the full active duration and delayed ticks never overcount", () => {

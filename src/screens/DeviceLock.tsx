@@ -244,7 +244,7 @@ export function DevicePrivacyCover() {
 }
 
 const styles = StyleSheet.create({
-  settings: { gap: 10, marginBottom: 16 },
+  settings: { gap: 10 },
   option: { minHeight: 48, justifyContent: "space-between" },
   unlock: { flexGrow: 1, justifyContent: "center", gap: 14 },
   symbol: {

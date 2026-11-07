@@ -10,6 +10,7 @@ import {
   Image,
 } from "react-native";
 import Constants from "expo-constants";
+import { spacing } from "../layout";
 import { useTheme } from "../theme";
 import { useApp } from "../store";
 import { routes } from "../routes";
@@ -278,121 +279,102 @@ export default function ProfileScreen({ name }: { name: string }) {
           "Make it yours",
           "Choose how Solace looks and what it remembers.",
         )}
-        <SectionTitle title="Appearance" />
-        <Row style={{ marginBottom: 25 }}>
-          {(["light", "dark", "system"] as const).map((v) => (
-            <Pressable
-              key={v}
-              accessibilityRole="radio"
-              accessibilityLabel={`${v.charAt(0).toUpperCase() + v.slice(1)} appearance`}
-              accessibilityState={{ checked: mode === v }}
-              aria-checked={mode === v}
-              onPress={() => setMode(v)}
-              style={({ pressed }) => ({
-                flex: 1,
-                minHeight: 70,
-                paddingHorizontal: 8,
-                paddingVertical: 12,
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 7,
-                borderRadius: 18,
-                borderWidth: 1,
-                borderColor: mode === v ? colors.primary : colors.border,
-                backgroundColor: mode === v ? colors.primary : colors.surface,
-                opacity: pressed ? 0.75 : 1,
-              })}
-            >
-              <Icon
-                name={
-                  v === "light"
-                    ? "sunny-outline"
-                    : v === "dark"
-                      ? "moon-outline"
-                      : "phone-portrait-outline"
-                }
-                size={21}
-                color={mode === v ? colors.primaryText : colors.text}
-              />
-              <AppText
-                variant="label"
-                color={mode === v ? colors.primaryText : colors.text}
-              >
-                {v.charAt(0).toUpperCase() + v.slice(1)}
-              </AppText>
-            </Pressable>
-          ))}
-        </Row>
-        <DeviceLockSettingsCard />
-        <Card style={{ marginBottom: 16 }}>
-          <AppText variant="heading">Sound and accessibility</AppText>
-          <AppText color={colors.muted} style={{ marginTop: 7 }}>
-            Ambient sound is optional in each Solace Moment. Use your device
-            settings to adjust text size, Reduce Motion, and system haptics.
-          </AppText>
-          <Button
-            title="Open Solace Moments"
-            variant="ghost"
-            icon="sparkles-outline"
-            onPress={() => app.navigate("moments")}
-            style={{ marginTop: 7 }}
-          />
-        </Card>
-        <Card style={{ marginBottom: 16 }}>
-          <Row>
-            <View style={{ flex: 1 }}>
-              <AppText variant="label">Use approved preferences</AppText>
-              <AppText variant="caption">
-                When enabled, Solace can use recent check-ins and the
-                preferences you explicitly save.
-              </AppText>
-            </View>
-            <Switch
-              accessibilityLabel="Use approved preferences"
-              value={!!app.user?.personalization}
-              disabled={pending}
-              onValueChange={(value) =>
-                perform(async () => {
-                  await app.updateUser({ personalization: value });
-                  setMessage(
-                    value
-                      ? "Personalization enabled."
-                      : "Personalization disabled. Saved preferences remain available to manage.",
-                  );
-                })
-              }
-              trackColor={{ false: colors.border, true: colors.primary }}
-              thumbColor={
-                app.user?.personalization ? colors.primaryText : colors.muted
-              }
-              ios_backgroundColor={colors.surface2}
+        <View style={{ gap: spacing.card }}>
+          <View>
+            <SectionTitle title="Appearance" />
+            <Row style={{ gap: spacing.compact }}>
+              {(["light", "dark", "system"] as const).map((v) => (
+                <Pressable
+                  key={v}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${v.charAt(0).toUpperCase() + v.slice(1)} appearance`}
+                  accessibilityState={{ checked: mode === v }}
+                  aria-checked={mode === v}
+                  onPress={() => setMode(v)}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    minHeight: 70,
+                    paddingHorizontal: spacing.compact,
+                    paddingVertical: spacing.row,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: spacing.compact,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    borderColor: mode === v ? colors.primary : colors.border,
+                    backgroundColor:
+                      mode === v ? colors.primary : colors.surface,
+                    opacity: pressed ? 0.75 : 1,
+                  })}
+                >
+                  <Icon
+                    name={
+                      v === "light"
+                        ? "sunny-outline"
+                        : v === "dark"
+                          ? "moon-outline"
+                          : "phone-portrait-outline"
+                    }
+                    size={21}
+                    color={mode === v ? colors.primaryText : colors.text}
+                  />
+                  <AppText
+                    variant="label"
+                    color={mode === v ? colors.primaryText : colors.text}
+                  >
+                    {v.charAt(0).toUpperCase() + v.slice(1)}
+                  </AppText>
+                </Pressable>
+              ))}
+            </Row>
+          </View>
+          <Card style={{ gap: spacing.compact }}>
+            <AppText variant="heading">Sound and accessibility</AppText>
+            <AppText color={colors.muted}>
+              Ambient sound is optional in each Solace Moment. Use your device
+              settings to adjust text size, Reduce Motion, and system haptics.
+            </AppText>
+            <Button
+              title="Open Solace Moments"
+              variant="ghost"
+              icon="sparkles-outline"
+              onPress={() => app.navigate("moments")}
             />
-          </Row>
-        </Card>
-        <MenuRow
-          title="Manage memories"
-          subtitle="Review or delete each preference"
-          icon="leaf-outline"
-          onPress={() => app.navigate("memory")}
-        />
-        <MenuRow
-          title="Reminders"
-          icon="notifications-outline"
-          onPress={() => app.navigate("reminders")}
-        />
-        <MenuRow
-          title="Privacy & data"
-          subtitle="Export data or delete your account"
-          icon="shield-checkmark-outline"
-          onPress={() => app.navigate("account", { section: "privacy" })}
-        />
-        <MenuRow
-          title="About Solace"
-          subtitle="Learn more about the app, purpose, and safety"
-          icon="information-circle-outline"
-          onPress={() => app.navigate("about")}
-        />
-        {status}
+          </Card>
+          <DeviceLockSettingsCard />
+          <Card>
+            <Row style={{ gap: spacing.row }}>
+              <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                <AppText variant="label">Use approved preferences</AppText>
+                <AppText variant="caption" color={colors.muted}>
+                  When enabled, Solace can use recent check-ins and the
+                  preferences you explicitly save.
+                </AppText>
+              </View>
+              <Switch
+                accessibilityLabel="Use approved preferences"
+                value={!!app.user?.personalization}
+                disabled={pending}
+                onValueChange={(value) =>
+                  perform(async () => {
+                    await app.updateUser({ personalization: value });
+                    setMessage(
+                      value
+                        ? "Personalization enabled."
+                        : "Personalization disabled. Saved preferences remain available to manage.",
+                    );
+                  })
+                }
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor={
+                  app.user?.personalization ? colors.primaryText : colors.muted
+                }
+                ios_backgroundColor={colors.surface2}
+              />
+            </Row>
+            {status}
+          </Card>
+        </View>
       </Screen>
     );
 

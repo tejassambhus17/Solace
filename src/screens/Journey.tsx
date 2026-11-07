@@ -16,13 +16,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { savedWeeklyStory } from "../../server/src/weekly-facts";
 import { useReducedMotion } from "../Companion";
 import { MilestoneArt } from "../MilestoneCelebration";
-import { localDay } from "../content";
+import { localDay, recordDay } from "../content";
 import {
   adjacentJourneyDay,
   journeyAnalytics,
   journeyCalendar,
   journeyReport,
   journeyWeek,
+  latestJourneyActivity,
   type JourneyPeriod,
 } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
@@ -36,14 +37,18 @@ import {
   type DayEntry,
 } from "../progress";
 import { useApp } from "../store";
-import { savedReflectionRoute } from "../routes";
+import { isRecordId, routes, savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
 import { reflectionPeriodLabel } from "../weekly-story";
+import { HabitJourneyEntry } from "./HabitEntryPoints";
 import {
   AppText,
   Button,
+  Card,
   Icon,
   LotusMark,
+  MoodPetal,
+  moodPetals,
   Row,
   Screen,
   ScreenHeader,
@@ -56,6 +61,7 @@ const periods = [
   { id: "month", label: "Month" },
   { id: "all", label: "All time" },
 ] as const;
+const isAndroid = Platform.OS === "android";
 const metrics = [
   {
     key: "checkinDays",
@@ -207,6 +213,7 @@ function PeriodControl({
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       style={[
         styles.segments,
+        isAndroid && styles.androidSegments,
         {
           backgroundColor: resolved === "dark" ? "#393048E6" : "#FFF8F0E8",
           borderColor: colors.border,
@@ -323,18 +330,207 @@ function compareText(value: number, timed: boolean, period: JourneyPeriod) {
 function counted(value: number, label: string) {
   return value + " " + label + (value === 1 ? "" : "s");
 }
-function HistoryEntry({ entry, onOpen }: { entry: DayEntry; onOpen: () => void }) {
+function activityTitle({ record, collection }: DayEntry) {
+  if (collection === "checkins")
+    return typeof record.mood === "string" && record.mood.trim()
+      ? `${record.mood} check-in`
+      : "Mood check-in";
+  if (collection === "sessions")
+    return record.title || record.activity?.title || "A moment for you";
+  if (collection === "reflections")
+    return (
+      record.title ||
+      (record.kind === "journal" ? "Untitled entry" : "A saved reflection")
+    );
+  return record.title || "A reflective check-in";
+}
+
+function activityDestination({ record, collection }: DayEntry) {
+  const { id } = record;
+  if (!isRecordId(id)) return;
+  switch (collection) {
+    case "checkins":
+      return { name: routes.journeyCheckin, params: { id } };
+    case "sessions":
+      return { name: routes.sessionDetail, params: { id } };
+    case "reflections":
+      return { name: savedReflectionRoute(record), params: { id } };
+    case "assessments":
+      return {
+        name: "assessment-result",
+        params: { id, type: record.assessmentType || record.type },
+      };
+  }
+}
+
+function LatestActivity({
+  activity,
+}: {
+  activity: DayEntry & { day: string };
+}) {
+  const app = useApp();
+  const { colors } = useTheme();
+  const destination = activityDestination(activity);
+  if (!destination) return null;
+  const { record, collection, day } = activity;
+  const title = activityTitle(activity);
+  const practice = collection === "sessions";
+  const checkin = collection === "checkins";
+  const seconds = practice ? activeSeconds(record) : 0;
+  const date = formatDay(day, { month: "short", day: "numeric" }).replace(
+    /\s+/g,
+    "\u00A0",
+  );
+  const type = practice
+    ? "Moment"
+    : checkin
+      ? "Mood check-in"
+      : "Journal entry";
+  const detail = [
+    type,
+    seconds ? `${momentClockText(seconds)} active` : "",
+    date,
+    record.localOnly ? "Waiting to sync" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open latest activity, ${title}. ${detail}`}
+      onPress={() => app.navigate(destination.name, destination.params)}
+      style={({ pressed }) => [
+        styles.panel,
+        styles.latest,
+        {
+          backgroundColor: pressed ? colors.surface2 : colors.surface,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      <Row>
+        <View
+          style={[
+            styles.latestIcon,
+            {
+              backgroundColor: practice
+                ? colors.peachSurface
+                : checkin
+                  ? colors.sageSurface
+                  : colors.lavenderSurface,
+            },
+          ]}
+        >
+          <Icon
+            name={
+              practice
+                ? "flower-outline"
+                : checkin
+                  ? "leaf-outline"
+                  : "book-outline"
+            }
+            color={
+              practice
+                ? colors.peachText
+                : checkin
+                  ? colors.sageText
+                  : colors.lavenderText
+            }
+            size={21}
+          />
+        </View>
+        <View style={styles.latestCopy}>
+          <AppText variant="caption" color={colors.muted}>
+            Latest activity
+          </AppText>
+          <AppText
+            variant="heading"
+            numberOfLines={2}
+            style={styles.latestTitle}
+          >
+            {title}
+          </AppText>
+          <AppText variant="caption" color={colors.muted}>
+            {detail}
+          </AppText>
+        </View>
+        <Icon name="chevron-forward" size={18} color={colors.muted} />
+      </Row>
+    </Pressable>
+  );
+}
+
+export function JourneyCheckinScreen() {
+  const app = useApp();
+  const { colors } = useTheme();
+  const id = app.params.id;
+  const checkin = isRecordId(id)
+    ? app.data.checkins.find((record) => record.id === id)
+    : undefined;
+  const day = checkin && recordDay(checkin);
+  const petal = moodPetals.find(({ mood }) => mood === checkin?.mood);
+  const mood =
+    typeof checkin?.mood === "number"
+      ? `Mood ${checkin.mood} of 5`
+      : typeof checkin?.mood === "string" && checkin.mood.trim()
+        ? checkin.mood
+        : "Saved check-in";
+  const note = typeof checkin?.note === "string" ? checkin.note.trim() : "";
+  const tags = Array.isArray(checkin?.tags)
+    ? checkin.tags.filter(
+        (tag: unknown): tag is string =>
+          typeof tag === "string" && !!tag.trim(),
+      )
+    : [];
+  return (
+    <Screen title="Mood check-in" back={app.back}>
+      {checkin ? (
+        <Card style={{ gap: spacing.row }}>
+          <Row>
+            {petal && (
+              <MoodPetal source={petal.image} style={styles.checkinPetal} />
+            )}
+            <View style={styles.latestCopy}>
+              <AppText variant="heading">{mood}</AppText>
+              {day && (
+                <AppText variant="caption" color={colors.muted}>
+                  {formatDay(day)}
+                </AppText>
+              )}
+            </View>
+          </Row>
+          {checkin.localOnly && (
+            <AppText variant="caption" color={colors.muted}>
+              Waiting to sync
+            </AppText>
+          )}
+          {!!tags.length && (
+            <AppText variant="caption" color={colors.muted}>
+              {tags.join(" · ")}
+            </AppText>
+          )}
+          {!!note && <AppText>{note}</AppText>}
+        </Card>
+      ) : (
+        <AppText color={colors.muted}>
+          This check-in is no longer available.
+        </AppText>
+      )}
+    </Screen>
+  );
+}
+
+function HistoryEntry({
+  entry,
+  onOpen,
+}: {
+  entry: DayEntry;
+  onOpen: () => void;
+}) {
   const app = useApp();
   const { colors } = useTheme();
   const { record, collection } = entry;
-  const title =
-    collection === "checkins"
-      ? `${record.mood || "Saved"} check-in`
-      : collection === "sessions"
-        ? record.title || record.activity?.title || "A moment for you"
-        : collection === "reflections"
-          ? "A saved reflection"
-          : record.title || "A reflective check-in";
+  const title = activityTitle(entry);
   const icon =
     collection === "checkins"
       ? "sunny-outline"
@@ -361,24 +557,19 @@ function HistoryEntry({ entry, onOpen }: { entry: DayEntry; onOpen: () => void }
           : "A self-reported reflection, not a diagnosis.";
   const duration = seconds ? ` · ${momentClockText(seconds)} active` : "";
   const subtitle = `${record.localOnly ? "Waiting to sync. " : ""}${detail}${duration}`;
-  const open =
-    collection === "sessions"
-      ? () => app.navigate("session-detail", { id: record.id })
-      : collection === "reflections"
-        ? () => app.navigate(savedReflectionRoute(record), { id: record.id })
-        : collection === "assessments"
-          ? () =>
-              app.navigate("assessment-result", {
-                id: record.id,
-                type: record.assessmentType || record.type,
-              })
-          : undefined;
+  const destination = activityDestination(entry);
+  const open = destination
+    ? () => {
+        onOpen();
+        app.navigate(destination.name, destination.params);
+      }
+    : undefined;
   return (
     <Pressable
       accessibilityRole={open ? "button" : undefined}
       accessibilityLabel={`${title}. ${subtitle}`}
       disabled={!open}
-      onPress={open ? () => { onOpen(); open(); } : undefined}
+      onPress={open}
       style={({ pressed }) => ({
         paddingVertical: 14,
         borderBottomWidth: 0.75,
@@ -706,6 +897,7 @@ export function JourneyScreen() {
   const { period, selectPeriod } = useJourneyPeriod(app.user?.id);
   const [options, setOptions] = useState(false);
   const analytics = useJourneyAnalytics(app.data, now);
+  const latest = useMemo(() => latestJourneyActivity(analytics), [analytics]);
   const report = useMemo(
     () => journeyReport(analytics, period, selectedDay),
     [analytics, period, selectedDay],
@@ -762,6 +954,7 @@ export function JourneyScreen() {
       <View
         style={[
           styles.hero,
+          isAndroid && styles.androidHero,
           { paddingTop: top + 3, paddingHorizontal: gutter },
         ]}
       >
@@ -845,7 +1038,13 @@ export function JourneyScreen() {
           ink={selectedInk}
         />
       </View>
-      <View style={[styles.body, { paddingHorizontal: gutter }]}>
+      <View
+        style={[
+          styles.body,
+          isAndroid && styles.androidBody,
+          { paddingHorizontal: gutter },
+        ]}
+      >
         {options && (
           <View style={[styles.panel, panel, styles.options]}>
             <Button
@@ -860,6 +1059,7 @@ export function JourneyScreen() {
             />
           </View>
         )}
+        {latest && <LatestActivity activity={latest} />}
         <Row style={[styles.metricRow, large && styles.wrap]}>
           {metrics.map((metric, index) => {
             const tone = tones[resolved][index];
@@ -875,6 +1075,13 @@ export function JourneyScreen() {
               typeof change === "number"
                 ? compareText(change, timed, period)
                 : null;
+            const icon = (
+              <Icon
+                name={metric.icon}
+                color={tone.ink}
+                size={isAndroid ? 18 : 22}
+              />
+            );
             return (
               <Pressable
                 key={metric.key}
@@ -894,6 +1101,7 @@ export function JourneyScreen() {
                 }
                 style={({ pressed }) => [
                   styles.metric,
+                  isAndroid && styles.androidMetric,
                   large && styles.largeTile,
                   {
                     backgroundColor: tone.base,
@@ -902,8 +1110,9 @@ export function JourneyScreen() {
                   },
                 ]}
               >
-                <Icon name={metric.icon} color={tone.ink} size={22} />
+                {!isAndroid && icon}
                 <Row style={styles.metricTop}>
+                  {isAndroid && icon}
                   <AppText variant="label" style={styles.metricValue}>
                     {display}
                   </AppText>
@@ -939,6 +1148,7 @@ export function JourneyScreen() {
             styles.panel,
             panel,
             styles.calendar,
+            isAndroid && styles.androidCalendar,
             compact && styles.compactCalendar,
           ]}
         >
@@ -1067,7 +1277,14 @@ export function JourneyScreen() {
           )}
         </View>
 
-        <View style={[styles.panel, panel, styles.reflection]}>
+        <View
+          style={[
+            styles.panel,
+            panel,
+            styles.reflection,
+            isAndroid && styles.androidReflection,
+          ]}
+        >
           <Image
             source={artwork[resolved].reflection}
             style={coverImageStyle}
@@ -1223,6 +1440,15 @@ export function JourneyScreen() {
           )}
           <Icon name="chevron-forward" size={17} />
         </Pressable>
+        <HabitJourneyEntry
+          now={now}
+          period={period}
+          startDay={report.startDay}
+          endDay={report.endDay}
+          today={today}
+          style={[styles.panel, panel]}
+          mutedColor={muted}
+        />
         <View>
           <Row style={styles.sectionHead}>
             <AppText
@@ -1353,6 +1579,7 @@ export function JourneyScreen() {
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0, paddingTop: 0 },
   hero: { paddingBottom: spacing.card, overflow: "hidden" },
+  androidHero: { paddingBottom: spacing.row },
   heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 49 },
   masthead: { justifyContent: "space-between", gap: 8 },
   brand: { gap: 7 },
@@ -1383,6 +1610,11 @@ const styles = StyleSheet.create({
     minHeight: 54,
     padding: 2,
   },
+  androidSegments: {
+    minHeight: 50,
+    paddingVertical: 0,
+    marginTop: spacing.compact,
+  },
   segment: {
     flex: 1,
     minHeight: 48,
@@ -1400,7 +1632,19 @@ const styles = StyleSheet.create({
   },
   segmentLabel: { fontSize: 13, lineHeight: 18, textAlign: "center" },
   body: { gap: spacing.card },
+  androidBody: { gap: spacing.row },
   panel: { borderWidth: 1, borderRadius: 17, overflow: "hidden" },
+  latest: { padding: spacing.row, minHeight: 76, justifyContent: "center" },
+  latestIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  latestCopy: { flex: 1, minWidth: 0, gap: 2 },
+  latestTitle: { fontSize: 23, lineHeight: 27 },
+  checkinPetal: { width: 52, height: 52 },
   options: { padding: spacing.compact, gap: 4 },
   metricRow: { gap: spacing.compact, alignItems: "stretch" },
   metric: {
@@ -1413,6 +1657,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.row,
     gap: 4,
     alignItems: "center",
+  },
+  androidMetric: {
+    minHeight: 92,
+    paddingVertical: spacing.compact,
+    gap: 3,
+    justifyContent: "center",
   },
   wrap: { flexWrap: "wrap" },
   largeTile: { flexBasis: "45%", flexGrow: 1 },
@@ -1435,6 +1685,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   calendar: { paddingHorizontal: spacing.compact, paddingBottom: spacing.row },
+  androidCalendar: { paddingBottom: spacing.compact },
   compactCalendar: { paddingHorizontal: 4 },
   calendarHead: { justifyContent: "space-between", gap: 4 },
   month: { flex: 1, textAlign: "center", fontSize: 20, lineHeight: 25 },
@@ -1462,6 +1713,7 @@ const styles = StyleSheet.create({
     padding: spacing.card,
     justifyContent: "center",
   },
+  androidReflection: { minHeight: 128, padding: spacing.row },
   reflectionHeading: { gap: spacing.compact },
   sectionTitle: { fontSize: 22, lineHeight: 26 },
   reflectionCopy: { fontSize: 13, lineHeight: 19, width: "70%", marginTop: 4 },

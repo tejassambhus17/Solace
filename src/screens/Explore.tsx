@@ -6,8 +6,6 @@ import React, {
   useState,
 } from "react";
 import {
-  Animated,
-  Easing,
   Image,
   Platform,
   Pressable,
@@ -19,27 +17,18 @@ import {
   type ImageSourcePropType,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReducedMotion } from "../Companion";
 import { spacing, useScreenGutter } from "../layout";
 import { routes } from "../routes";
 import {
   createExplorePractice,
   exploreShortcuts,
   practiceDurations,
-  practiceFocuses,
   type PracticeFocus,
 } from "../explore-practices";
+import { exploreWellnessTools } from "../wellness-tools";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
-import {
-  AppText,
-  Button,
-  coverImageStyle,
-  Icon,
-  LotusMark,
-  Row,
-  Screen,
-} from "../ui";
+import { AppText, coverImageStyle, Icon, LotusMark, Row, Screen } from "../ui";
 
 const categories = [
   { id: "all", label: "All", icon: null },
@@ -52,22 +41,26 @@ const categories = [
 
 type Category = (typeof categories)[number]["id"];
 type Duration = (typeof practiceDurations)[number];
+type RouteDestination = { route: string; params?: Record<string, unknown> };
 type PracticeDestination =
-  | { route: string; params?: Record<string, string | number> }
+  | RouteDestination
   | { focus: PracticeFocus; minutes: Duration; title?: string };
 type ExploreItem = {
   title: string;
   detail: string;
   icon: string;
-  categories: Exclude<Category, "all">[];
+  categories: readonly Exclude<Category, "all">[];
   destination: PracticeDestination;
 };
-type FeaturedTile = ExploreItem & {
+type CardTone = (typeof exploreShortcuts)[number]["tone"];
+type Recommendation = ExploreItem & {
+  destination: RouteDestination;
   tile: {
     meta: string;
     image: ImageSourcePropType;
-    base: string;
+    tone: CardTone;
     actionIcon?: string;
+    topCrop?: boolean;
   };
 };
 
@@ -76,10 +69,6 @@ type ExploreView = {
   searchOpen: boolean;
   query: string;
   showAll: boolean;
-  builderOpen: boolean;
-  moreOpen: boolean;
-  focus: PracticeFocus;
-  duration: Duration;
   x: number;
   y: number;
 };
@@ -94,6 +83,7 @@ const exploreArt = {
   reflect: require("../../assets/redesign-explore-reflect.jpg"),
   sleep: require("../../assets/redesign-explore-sleep.jpg"),
   plan: require("../../assets/today-explore-guided.jpg"),
+  habits: require("../../assets/today-explore-toolkit.jpg"),
 };
 
 const featured: ExploreItem = {
@@ -104,17 +94,33 @@ const featured: ExploreItem = {
   destination: { focus: "breathe", minutes: 5 },
 };
 
-const forYou: FeaturedTile[] = [
+function momentDestination(
+  focus: PracticeFocus,
+  minutes: Duration,
+  title?: string,
+): RouteDestination {
+  const activity = createExplorePractice(focus, minutes);
+  return {
+    route: routes.momentPlayer,
+    params: {
+      activity: title ? { ...activity, title } : activity,
+      provider: "offline",
+      source: "explore",
+    },
+  };
+}
+
+const forYou: Recommendation[] = [
   {
     title: "Breath Reset",
     detail: "Take three minutes to follow a comfortable breathing rhythm.",
     icon: "cloud-outline",
     categories: ["breathe"],
-    destination: { route: "breathing", params: { durationSec: 180 } },
+    destination: { route: routes.breathing, params: { durationSec: 180 } },
     tile: {
       meta: "3 min · Breathing",
       image: exploreArt.breathe,
-      base: "#231C2A",
+      tone: "lavender",
     },
   },
   {
@@ -122,11 +128,11 @@ const forYou: FeaturedTile[] = [
     detail: "A five-minute grounding practice to notice what’s around you.",
     icon: "hand-left-outline",
     categories: ["focus"],
-    destination: { focus: "ground", minutes: 5, title: "Five Senses" },
+    destination: momentDestination("ground", 5, "Five Senses"),
     tile: {
       meta: "5 min · Grounding",
       image: exploreArt.ground,
-      base: "#202420",
+      tone: "sage",
     },
   },
   {
@@ -138,8 +144,9 @@ const forYou: FeaturedTile[] = [
     tile: {
       meta: "≈4 min · Journaling",
       image: exploreArt.reflect,
-      base: "#2C212C",
+      tone: "peach",
       actionIcon: "pencil-outline",
+      topCrop: true,
     },
   },
   {
@@ -147,14 +154,33 @@ const forYou: FeaturedTile[] = [
     detail: "A ten-minute practice to wind down toward rest.",
     icon: "moon-outline",
     categories: ["sleep"],
-    destination: { focus: "rest", minutes: 10, title: "Sleep Wind Down" },
+    destination: momentDestination("rest", 10, "Sleep Wind Down"),
     tile: {
       meta: "10 min · Relaxation",
       image: exploreArt.sleep,
-      base: "#201B32",
+      tone: "lavender",
+      topCrop: true,
     },
   },
 ];
+const recommendationRows = [forYou.slice(0, 2), forYou.slice(2)];
+const recommendationTitleLine = 24;
+
+const shortcutDescriptions = {
+  plan: "Gentle multi-day plans.",
+  toolkit: "Your saved practices.",
+  checkin: "Understand how you feel.",
+};
+
+export const exploreCardArrivalRoutes = new Set<string>([
+  routes.techniques,
+  routes.habits,
+  routes.wellnessTools,
+  routes.timedPractice,
+  routes.exploreCatalog,
+  ...forYou.map(({ destination }) => destination.route),
+  ...exploreShortcuts.map(({ route }) => route),
+]);
 
 const guidedTechniques: ExploreItem = {
   title: "Guided techniques",
@@ -164,77 +190,11 @@ const guidedTechniques: ExploreItem = {
   destination: { route: routes.techniques },
 };
 
-const extraTools: ExploreItem[] = [
-  {
-    title: "Ambient Sound Mixer",
-    detail: "Layer rain, waves, forest air, and soft wind.",
-    icon: "musical-notes-outline",
-    categories: ["sleep", "focus"],
-    destination: { route: "ambient-mixer" },
-  },
-  {
-    title: "Solace Moments",
-    detail: "Choose a guided activity for how you feel.",
-    icon: "sparkles-outline",
-    categories: ["breathe", "reflect", "focus"],
-    destination: { route: "moments" },
-  },
-  {
-    title: "Gentle Movement",
-    detail: "A three-minute movement practice at your own pace.",
-    icon: "body-outline",
-    categories: ["move"],
-    destination: { focus: "move", minutes: 3 },
-  },
-  {
-    title: "Guides & Resources",
-    detail: "Browse sleep, stress, connection, and other guides.",
-    icon: "book-outline",
-    categories: ["focus"],
-    destination: { route: "resources" },
-  },
-  {
-    title: "Sleep Wind-Down Guide",
-    detail: "Four gentle steps to try at your own pace.",
-    icon: "moon-outline",
-    categories: ["sleep"],
-    destination: { route: "sleep" },
-  },
-  {
-    title: "Five-Senses Exercise",
-    detail: "Go one sense at a time without a timer.",
-    icon: "hand-left-outline",
-    categories: ["focus"],
-    destination: { route: "grounding" },
-  },
-  {
-    title: "Reflective Check-Ins",
-    detail: "Short mood, worry, and self-compassion questionnaires.",
-    icon: "clipboard-outline",
-    categories: ["reflect"],
-    destination: { route: "assessments" },
-  },
-  {
-    title: "Daily Affirmation",
-    detail: "A kind thought to keep close.",
-    icon: "heart-outline",
-    categories: ["reflect"],
-    destination: { route: "affirmation" },
-  },
-  {
-    title: "Daily Challenge",
-    detail: "One small, gentle action for today.",
-    icon: "sunny-outline",
-    categories: ["focus"],
-    destination: { route: "challenge" },
-  },
-];
-
 const catalog: ExploreItem[] = [
   featured,
   guidedTechniques,
   ...forYou,
-  ...extraTools,
+  ...exploreWellnessTools,
   ...exploreShortcuts.map((card): ExploreItem => ({
     title: card.title,
     detail: card.detail,
@@ -244,17 +204,42 @@ const catalog: ExploreItem[] = [
   })),
 ];
 
-const browseAll = {
-  title: "Browse all practices",
-  detail: "See the complete practice library.",
-  icon: "list-outline",
-};
+const exploreEntries = [
+  {
+    title: "Wellness Tools",
+    subtitle: "Discover calming sounds, guided exercises, and everyday tools.",
+    icon: "leaf-outline",
+    tone: "sage",
+    route: routes.wellnessTools,
+    image: {
+      light: require("../../assets/redesign-guided-light.jpg"),
+      dark: require("../../assets/redesign-guided-dark.jpg"),
+    },
+  },
+  {
+    title: "Build a Timed Practice",
+    subtitle: "Choose your focus and duration for a guided session.",
+    icon: "timer-outline",
+    tone: "lavender",
+    route: routes.timedPractice,
+    image: {
+      light: exploreArt.breathe,
+      dark: require("../../assets/today-twilight-stones.jpg"),
+    },
+  },
+] as const;
 
-function DecorativeImage({ source }: { source: ImageSourcePropType }) {
+function DecorativeImage({
+  source,
+  topCrop = false,
+}: {
+  source: ImageSourcePropType;
+  topCrop?: boolean;
+}) {
   return (
     <Image
       source={source}
-      style={coverImageStyle}
+      style={topCrop ? styles.recommendationTopImage : coverImageStyle}
       resizeMode="cover"
       resizeMethod="resize"
       fadeDuration={0}
@@ -339,14 +324,254 @@ function SectionHeading({
   );
 }
 
+function WellnessFeatureCard({
+  title,
+  subtitle,
+  icon,
+  image,
+  tone,
+  compact,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: string;
+  image: ImageSourcePropType;
+  tone: "lavender" | "sage";
+  compact: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const tint =
+    tone === "lavender" ? colors.lavenderSurface : colors.sageSurface;
+  const ink = tone === "lavender" ? colors.lavenderText : colors.sageText;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityHint={subtitle}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.wellnessCard,
+        compact && styles.wellnessCardCompact,
+        {
+          backgroundColor: pressed ? tint : colors.surface,
+          borderColor: pressed ? ink : colors.border,
+        },
+      ]}
+    >
+      <View
+        style={[
+          styles.wellnessArt,
+          compact && styles.wellnessArtCompact,
+          { backgroundColor: tint },
+        ]}
+      >
+        <DecorativeImage source={image} />
+        <View style={[styles.wellnessIcon, { backgroundColor: tint }]}>
+          <Icon name={icon} size={15} color={ink} />
+        </View>
+      </View>
+      <View style={styles.wellnessCopy}>
+        <AppText
+          variant="heading"
+          style={[styles.wellnessTitle, compact && styles.wellnessTitleCompact]}
+        >
+          {title}
+        </AppText>
+        <AppText variant="caption" color={colors.muted}>
+          {subtitle}
+        </AppText>
+      </View>
+      <Icon name="chevron-forward" size={17} color={ink} />
+    </Pressable>
+  );
+}
+
+function RecommendationCard({
+  item,
+  stacked,
+  titleMinHeight,
+  onPress,
+}: {
+  item: Recommendation;
+  stacked: boolean;
+  titleMinHeight: number;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const { meta, image, tone, actionIcon = "play" } = item.tile;
+  const tint = colors[`${tone}Surface`];
+  const ink = colors[`${tone}Text`];
+  const action = (
+    <View
+      style={[
+        styles.recommendationAction,
+        !stacked && styles.recommendationPictureAction,
+        { backgroundColor: tint },
+      ]}
+    >
+      <Icon name={actionIcon} size={13} color={ink} />
+    </View>
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.title}
+      accessibilityHint={meta.replace("≈", "About ")}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.recommendationCard,
+        stacked ? styles.recommendationListCard : styles.recommendationGridCard,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        pressed && styles.pressed,
+      ]}
+    >
+      <View
+        pointerEvents="none"
+        style={[
+          styles.recommendationPicture,
+          stacked && styles.recommendationThumb,
+          { backgroundColor: tint },
+        ]}
+      >
+        <Icon name={item.icon} size={20} color={ink} />
+        <DecorativeImage
+          source={image}
+          topCrop={!stacked && item.tile.topCrop}
+        />
+        {!stacked && action}
+      </View>
+      <View
+        style={
+          stacked
+            ? styles.recommendationListCopy
+            : styles.recommendationGridCopy
+        }
+      >
+        <AppText
+          variant="heading"
+          style={[
+            styles.recommendationTitle,
+            !stacked && { minHeight: titleMinHeight },
+          ]}
+        >
+          {item.title}
+        </AppText>
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={styles.recommendationMeta}
+        >
+          {meta}
+        </AppText>
+      </View>
+      {stacked && action}
+    </Pressable>
+  );
+}
+
+function ExploreDestinationCard({
+  shortcut,
+  onPress,
+}: {
+  shortcut: (typeof exploreShortcuts)[number];
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const { icon, route, tone } = shortcut;
+  const title = route === "checkin" ? "Reflective Check-ins" : shortcut.title;
+  const detail = shortcutDescriptions[route];
+  const tint = colors[`${tone}Surface`];
+  const ink = colors[`${tone}Text`];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityHint={detail}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.destinationCard,
+        {
+          backgroundColor: pressed ? tint : colors.surface,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      <View style={[styles.destinationIcon, { backgroundColor: tint }]}>
+        <Icon name={icon} color={ink} size={20} />
+      </View>
+      <View style={styles.wellnessCopy}>
+        <AppText variant="heading" style={styles.destinationTitle}>
+          {title}
+        </AppText>
+        <AppText variant="caption" color={colors.muted}>
+          {detail}
+        </AppText>
+      </View>
+      <Icon name="chevron-forward" color={ink} size={17} />
+    </Pressable>
+  );
+}
+
+function ExploreEntryCard({
+  entry,
+  onPress,
+}: {
+  entry: (typeof exploreEntries)[number];
+  onPress: () => void;
+}) {
+  const { colors, resolved } = useTheme();
+  const tint = colors[`${entry.tone}Surface`];
+  const ink = colors[`${entry.tone}Text`];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={entry.title}
+      accessibilityHint={entry.subtitle}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.featureEntry,
+        {
+          backgroundColor: colors.surface,
+          borderColor: pressed ? ink : colors.border,
+        },
+      ]}
+    >
+      <View pointerEvents="none" style={styles.featureEntryArt}>
+        <DecorativeImage source={entry.image[resolved]} />
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundImage: `linear-gradient(90deg, ${colors.surface} 0%, ${colors.surface}EE 24%, ${colors.surface}68 72%, ${colors.surface}00 100%)`,
+            },
+          ]}
+        />
+      </View>
+      <View style={styles.featureEntryCopy}>
+        <Icon name={entry.icon} color={ink} size={22} />
+        <AppText variant="heading" style={styles.featureEntryTitle}>
+          {entry.title}
+        </AppText>
+        <AppText variant="caption" color={colors.text}>
+          {entry.subtitle}
+        </AppText>
+      </View>
+      <View style={[styles.featureEntryArrow, { backgroundColor: tint }]}>
+        <Icon name="arrow-forward" size={18} color={ink} />
+      </View>
+    </Pressable>
+  );
+}
+
 function ExploreResult({
   item,
   onPress,
-  last,
 }: {
   item: Pick<ExploreItem, "title" | "detail" | "icon">;
   onPress: () => void;
-  last?: boolean;
 }) {
   const { colors } = useTheme();
   return (
@@ -358,7 +583,6 @@ function ExploreResult({
       style={({ pressed }) => [
         styles.result,
         { borderBottomColor: colors.border },
-        last && styles.lastResult,
         pressed && styles.pressed,
       ]}
     >
@@ -374,171 +598,24 @@ function ExploreResult({
   );
 }
 
-function ExploreDisclosure({
-  title,
-  description,
-  icon,
-  expanded,
-  onChange,
-  reduceMotion,
-  children,
-}: {
-  title: string;
-  description: string;
-  icon: string;
-  expanded: boolean;
-  onChange: (value: boolean) => void;
-  reduceMotion: boolean;
-  children: React.ReactNode;
-}) {
-  const { colors } = useTheme();
-  const [opacity] = useState(() => new Animated.Value(1));
-  const animateOpen = useRef(false);
-
-  useEffect(() => {
-    const shouldAnimate = expanded && animateOpen.current && !reduceMotion;
-    animateOpen.current = false;
-    if (!shouldAnimate) {
-      opacity.setValue(1);
-      return;
-    }
-    const transition = Animated.timing(opacity, {
-      toValue: 1,
-      duration: 160,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== "web",
-      isInteraction: false,
-    });
-    transition.start();
-    return () => {
-      transition.stop();
-      opacity.setValue(1);
-    };
-  }, [expanded, opacity, reduceMotion]);
-
-  function toggle() {
-    animateOpen.current = !expanded && !reduceMotion;
-    if (animateOpen.current) opacity.setValue(0.45);
-    onChange(!expanded);
-  }
-
-  return (
-    <View
-      style={[
-        styles.disclosure,
-        {
-          backgroundColor: colors.surface,
-          borderColor: expanded ? colors.lavender : colors.border,
-        },
-      ]}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={title}
-        accessibilityHint={description}
-        accessibilityState={{ expanded }}
-        aria-expanded={expanded}
-        onPress={toggle}
-        style={({ pressed }) => [
-          styles.disclosureTrigger,
-          expanded && { backgroundColor: colors.lavenderSurface },
-          pressed && { backgroundColor: colors.surface2 },
-        ]}
-      >
-        <View
-          style={[
-            styles.disclosureIcon,
-            { backgroundColor: colors.lavenderSurface },
-          ]}
-        >
-          <Icon name={icon} color={colors.lavenderText} size={21} />
-        </View>
-        <View style={styles.disclosureCopy}>
-          <AppText variant="heading" style={styles.disclosureTitle}>
-            {title}
-          </AppText>
-          <AppText variant="caption" color={colors.muted}>
-            {description}
-          </AppText>
-        </View>
-        <Icon
-          name={expanded ? "chevron-up" : "chevron-down"}
-          color={colors.muted}
-          size={17}
-        />
-      </Pressable>
-      {expanded && (
-        <Animated.View
-          style={[
-            styles.disclosureContent,
-            { borderTopColor: colors.border, opacity },
-          ]}
-        >
-          {children}
-        </Animated.View>
-      )}
-    </View>
-  );
-}
-
-function Choice({
-  label,
-  icon,
-  selected,
-  onPress,
-}: {
-  label: string;
-  icon?: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityLabel={label}
-      accessibilityState={{ checked: selected }}
-      aria-checked={selected}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.choice,
-        {
-          borderColor: selected ? colors.primary : colors.border,
-          backgroundColor: selected ? colors.sageSurface : colors.surface,
-        },
-        pressed && styles.pressed,
-      ]}
-    >
-      {icon && (
-        <Icon
-          name={icon}
-          color={selected ? colors.sageText : colors.muted}
-          size={16}
-        />
-      )}
-      <AppText
-        variant="label"
-        color={selected ? colors.sageText : colors.text}
-        style={styles.choiceLabel}
-      >
-        {label}
-      </AppText>
-    </Pressable>
-  );
-}
-
-export function ExploreScreen() {
+export function ExploreScreen({
+  catalogOnly = false,
+}: { catalogOnly?: boolean } = {}) {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
   const { top } = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
-  const reducedMotion = useReducedMotion();
   const [bodyWidth, setBodyWidth] = useState(width);
   const availableWidth = bodyWidth - gutter * 2;
   const singleColumn = availableWidth < 320 || fontScale > 1.2;
-  const stackedShortcuts = availableWidth < 330 || fontScale > 1.15;
+  const stackRecommendations = availableWidth < 320 || fontScale > 1.15;
+  const recommendationTitleHeight = Math.ceil(
+    (availableWidth < 360 * fontScale ? 2 : 1) *
+      recommendationTitleLine *
+      fontScale,
+  );
   const restored = app.params?.exploreView as ExploreView | undefined;
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const categoryRail = useRef<React.ComponentRef<typeof ScrollView>>(null);
@@ -549,21 +626,11 @@ export function ExploreScreen() {
   const [focusSearch, setFocusSearch] = useState(false);
   const [query, setQuery] = useState(restored?.query ?? "");
   const [showAll, setShowAll] = useState(restored?.showAll ?? false);
-  const [builderOpen, setBuilderOpen] = useState(
-    restored?.builderOpen ?? false,
-  );
-  const [moreOpen, setMoreOpen] = useState(restored?.moreOpen ?? false);
-  const [focus, setFocus] = useState(restored?.focus ?? "breathe");
-  const [duration, setDuration] = useState<Duration>(restored?.duration ?? 5);
   const [initialView] = useState(() => ({
     category,
     searchOpen,
     query,
     showAll,
-    builderOpen,
-    moreOpen,
-    focus,
-    duration,
     ...offsets.current,
   }));
   const libraryState = useRef<Omit<ExploreView, "x" | "y">>(null);
@@ -574,21 +641,8 @@ export function ExploreScreen() {
       searchOpen,
       query,
       showAll,
-      builderOpen,
-      moreOpen,
-      focus,
-      duration,
     };
-  }, [
-    category,
-    searchOpen,
-    query,
-    showAll,
-    builderOpen,
-    moreOpen,
-    focus,
-    duration,
-  ]);
+  }, [category, searchOpen, query, showAll]);
   useEffect(
     () => () => {
       if (!libraryState.current) return;
@@ -604,10 +658,6 @@ export function ExploreScreen() {
     },
     [initialView, saveLibraryParams],
   );
-  const practicePlan = useMemo(
-    () => createExplorePractice(focus, duration),
-    [focus, duration],
-  );
   const results = useMemo(() => {
     const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     return catalog.filter((item) => {
@@ -619,24 +669,18 @@ export function ExploreScreen() {
     });
   }, [category, query]);
   const searching = searchOpen && !!query.trim();
-  const showCatalog = searching || showAll || category !== "all";
+  const showCatalog = catalogOnly || searching || showAll || category !== "all";
   const categoryLabel = categories.find((item) => item.id === category)?.label;
   function open(destination: PracticeDestination) {
-    if ("route" in destination) {
-      app.navigate(destination.route, destination.params);
-      return;
-    }
-    const activity = createExplorePractice(
-      destination.focus,
-      destination.minutes,
-    );
-    app.navigate(routes.momentPlayer, {
-      activity: destination.title
-        ? { ...activity, title: destination.title }
-        : activity,
-      provider: "offline",
-      source: "explore",
-    });
+    const target =
+      "route" in destination
+        ? destination
+        : momentDestination(
+            destination.focus,
+            destination.minutes,
+            destination.title,
+          );
+    app.navigate(target.route, target.params);
   }
   function toggleSearch() {
     if (searchOpen) {
@@ -647,13 +691,6 @@ export function ExploreScreen() {
     }
     setFocusSearch(!searchOpen);
     setSearchOpen(!searchOpen);
-  }
-  function browseCatalog() {
-    setCategory("all");
-    setQuery("");
-    setSearchOpen(false);
-    setShowAll(true);
-    scroll.current?.scrollTo({ y: 0, animated: !reducedMotion });
   }
   return (
     <Screen
@@ -706,6 +743,9 @@ export function ExploreScreen() {
         />
         <Row style={styles.heroHeader}>
           <View style={styles.brand}>
+            {catalogOnly && (
+              <IconAction icon="arrow-back" label="Back" onPress={app.back} />
+            )}
             <LotusMark size={26} />
             <AppText
               variant="heading"
@@ -874,7 +914,7 @@ export function ExploreScreen() {
                     : categoryLabel || "Practices"
               }
               action={
-                showAll
+                showAll && !catalogOnly
                   ? {
                       label: "Show Less",
                       expanded: true,
@@ -977,67 +1017,53 @@ export function ExploreScreen() {
             </View>
 
             <View style={styles.section}>
-              <ExploreResult
-                item={guidedTechniques}
-                onPress={() => open(guidedTechniques.destination)}
+              <SectionHeading
+                icon="flower-outline"
+                title="Your wellness tools"
               />
+              <View style={styles.wellnessCards}>
+                <WellnessFeatureCard
+                  title="Guided Techniques"
+                  subtitle="Breathe, ground, and reset."
+                  icon={guidedTechniques.icon}
+                  image={exploreArt.breathe}
+                  tone="lavender"
+                  compact={availableWidth < 320}
+                  onPress={() => open(guidedTechniques.destination)}
+                />
+                <WellnessFeatureCard
+                  title="Healthy Habit Builder"
+                  subtitle="Small habits, lasting growth."
+                  icon="leaf-outline"
+                  image={exploreArt.habits}
+                  tone="sage"
+                  compact={availableWidth < 320}
+                  onPress={() => open({ route: routes.habits })}
+                />
+              </View>
             </View>
 
             <View style={styles.section}>
               <SectionHeading icon="leaf-outline" title="Recommended for You" />
-              <View style={styles.tiles}>
-                {forYou.map((item) => (
-                  <Pressable
-                    key={item.title}
-                    accessibilityRole="button"
-                    accessibilityLabel={item.title}
-                    accessibilityHint={item.tile.meta.replace("≈", "About ")}
-                    onPress={() => open(item.destination)}
-                    style={({ pressed }) => [
-                      styles.tile,
-                      singleColumn && styles.fullTile,
-                      {
-                        backgroundColor: item.tile.base,
-                        borderColor: dark ? "#514256" : "#6B596D",
-                      },
-                      pressed && styles.pressed,
+              <View style={styles.cardStack}>
+                {recommendationRows.map((row) => (
+                  <View
+                    key={row[0].title}
+                    style={[
+                      styles.recommendationRow,
+                      stackRecommendations && styles.recommendationStack,
                     ]}
                   >
-                    <View style={styles.tilePicture} pointerEvents="none">
-                      <DecorativeImage source={item.tile.image} />
-                      <View
-                        style={[
-                          StyleSheet.absoluteFill,
-                          {
-                            backgroundImage: `linear-gradient(90deg, ${item.tile.base}00 24%, ${item.tile.base} 100%)`,
-                          },
-                        ]}
+                    {row.map((item) => (
+                      <RecommendationCard
+                        key={item.title}
+                        item={item}
+                        stacked={stackRecommendations}
+                        titleMinHeight={recommendationTitleHeight}
+                        onPress={() => open(item.destination)}
                       />
-                    </View>
-                    <View style={styles.tileCopy}>
-                      <AppText
-                        variant="heading"
-                        color={overlayInk}
-                        style={styles.tileLabel}
-                      >
-                        {item.title}
-                      </AppText>
-                      <AppText
-                        variant="caption"
-                        color="#E9DBEA"
-                        style={styles.tileMeta}
-                      >
-                        {item.tile.meta}
-                      </AppText>
-                    </View>
-                    <View style={styles.tileAction}>
-                      <Icon
-                        name={item.tile.actionIcon ?? "play"}
-                        color={overlayInk}
-                        size={11}
-                      />
-                    </View>
-                  </Pressable>
+                    ))}
+                  </View>
                 ))}
               </View>
             </View>
@@ -1077,156 +1103,23 @@ export function ExploreScreen() {
 
             <View style={styles.section}>
               <SectionHeading icon="grid-outline" title="Explore More" />
-              <View
-                style={[
-                  styles.moreCards,
-                  stackedShortcuts && styles.moreCardsStacked,
-                ]}
-              >
-                {exploreShortcuts.map((card) => {
-                  const tone = moreTones[card.tone];
-                  const detail = card.detail;
-                  return (
-                    <Pressable
-                      key={card.route}
-                      accessibilityRole="button"
-                      accessibilityLabel={card.title}
-                      accessibilityHint={detail}
-                      onPress={() => open({ route: card.route })}
-                      style={({ pressed }) => [
-                        styles.moreCard,
-                        stackedShortcuts && styles.moreCardStacked,
-                        {
-                          backgroundColor: dark
-                            ? tone.surface
-                            : colors[`${card.tone}Surface`],
-                          borderColor: dark ? tone.border : colors.border,
-                        },
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Icon
-                        name={card.icon}
-                        color={dark ? tone.ink : colors[`${card.tone}Text`]}
-                        size={25}
-                      />
-                      <View style={stackedShortcuts && styles.sectionTitle}>
-                        <AppText variant="heading" style={styles.moreTitle}>
-                          {card.title}
-                        </AppText>
-                        <AppText variant="caption" color={colors.muted}>
-                          {detail}
-                        </AppText>
-                      </View>
-                      {stackedShortcuts && (
-                        <Icon
-                          name="chevron-forward"
-                          color={colors.muted}
-                          size={15}
-                        />
-                      )}
-                    </Pressable>
-                  );
-                })}
+              <View style={styles.cardStack}>
+                {exploreShortcuts.map((shortcut) => (
+                  <ExploreDestinationCard
+                    key={shortcut.route}
+                    shortcut={shortcut}
+                    onPress={() => open({ route: shortcut.route })}
+                  />
+                ))}
               </View>
-              <View style={styles.disclosures}>
-                <ExploreDisclosure
-                  title="More wellness tools"
-                  description="Find guided activities, check-ins, and everyday tools."
-                  icon="apps-outline"
-                  expanded={moreOpen}
-                  onChange={setMoreOpen}
-                  reduceMotion={reducedMotion}
-                >
-                  <ExploreResult item={browseAll} onPress={browseCatalog} />
-                  {extraTools.map((item, index) => (
-                    <ExploreResult
-                      key={item.title}
-                      item={item}
-                      last={index === extraTools.length - 1}
-                      onPress={() => open(item.destination)}
-                    />
-                  ))}
-                </ExploreDisclosure>
-                <ExploreDisclosure
-                  title="Build a timed practice"
-                  description="Choose a focus and duration for a single session."
-                  icon="timer-outline"
-                  expanded={builderOpen}
-                  onChange={setBuilderOpen}
-                  reduceMotion={reducedMotion}
-                >
-                  <View style={styles.builderForm}>
-                    <AppText variant="label" accessibilityRole="header">
-                      Choose your focus
-                    </AppText>
-                    <View
-                      style={styles.choices}
-                      accessibilityRole="radiogroup"
-                      accessibilityLabel="Practice focus"
-                    >
-                      {(Object.keys(practiceFocuses) as PracticeFocus[]).map(
-                        (key) => (
-                          <Choice
-                            key={key}
-                            label={practiceFocuses[key].label}
-                            icon={practiceFocuses[key].icon}
-                            selected={focus === key}
-                            onPress={() => setFocus(key)}
-                          />
-                        ),
-                      )}
-                    </View>
-                    <AppText variant="label" accessibilityRole="header">
-                      Set duration
-                    </AppText>
-                    <View
-                      style={styles.choices}
-                      accessibilityRole="radiogroup"
-                      accessibilityLabel="Practice duration"
-                    >
-                      {practiceDurations.map((minutes) => (
-                        <Choice
-                          key={minutes}
-                          label={`${minutes} min`}
-                          selected={duration === minutes}
-                          onPress={() => setDuration(minutes)}
-                        />
-                      ))}
-                    </View>
-                    <AppText variant="caption" color={colors.muted}>
-                      {practicePlan.description}
-                    </AppText>
-                    <View
-                      style={[
-                        styles.planPreview,
-                        { borderColor: colors.border },
-                      ]}
-                    >
-                      <AppText variant="label" accessibilityRole="header">
-                        {practicePlan.title}
-                      </AppText>
-                      {practicePlan.steps.map((step, index) => (
-                        <Row key={step.title} style={{ gap: 8 }}>
-                          <AppText variant="caption" color={colors.sageText}>
-                            {index + 1}
-                          </AppText>
-                          <AppText variant="caption" style={{ flex: 1 }}>
-                            {step.title}
-                          </AppText>
-                          <AppText variant="caption" color={colors.muted}>
-                            {`${Math.floor(step.durationSec / 60)}:${String(step.durationSec % 60).padStart(2, "0")}`}
-                          </AppText>
-                        </Row>
-                      ))}
-                    </View>
-                    <Button
-                      title="Start practice"
-                      icon="play"
-                      onPress={() => open({ focus, minutes: duration })}
-                    />
-                  </View>
-                </ExploreDisclosure>
+              <View style={styles.featureEntries}>
+                {exploreEntries.map((entry) => (
+                  <ExploreEntryCard
+                    key={entry.route}
+                    entry={entry}
+                    onPress={() => open({ route: entry.route })}
+                  />
+                ))}
               </View>
             </View>
           </>
@@ -1237,16 +1130,13 @@ export function ExploreScreen() {
 }
 
 const overlayInk = "#FFF8F1";
-const moreTones = {
-  lavender: { surface: "#252039", border: "#554766", ink: "#DEBBFF" },
-  sage: { surface: "#1D2B2A", border: "#435453", ink: "#CBE6DD" },
-  peach: { surface: "#33242B", border: "#765259", ink: "#FFD0A6" },
-};
+const android = Platform.OS === "android";
+const sectionGap = android ? 18 : spacing.section;
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0, paddingTop: 0 },
   pressed: { opacity: 0.72 },
   hero: {
-    paddingBottom: spacing.section,
+    paddingBottom: sectionGap,
     overflow: "hidden",
   },
   heroHeader: { minHeight: 44, justifyContent: "space-between", gap: 2 },
@@ -1275,13 +1165,18 @@ const styles = StyleSheet.create({
   },
   heroCopy: { paddingTop: spacing.compact },
   heroTitle: { fontSize: 43, lineHeight: 45 },
-  heroSubtitle: { fontSize: 17, lineHeight: 22, marginTop: 4, maxWidth: "78%" },
+  heroSubtitle: {
+    fontSize: android ? 16 : 17,
+    lineHeight: 22,
+    marginTop: 4,
+    maxWidth: "78%",
+  },
   categoryViewport: {
     marginTop: -spacing.compact,
-    marginBottom: spacing.card,
+    marginBottom: android ? spacing.row : spacing.card,
     flexGrow: 0,
   },
-  categoryRail: { gap: spacing.compact },
+  categoryRail: { gap: android ? 5 : spacing.compact },
   category: {
     minHeight: 48,
     minWidth: 48,
@@ -1289,10 +1184,10 @@ const styles = StyleSheet.create({
   },
   categoryPill: {
     alignSelf: "stretch",
-    minHeight: 40,
+    minHeight: android ? 34 : 40,
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: android ? 8 : 12,
+    paddingVertical: android ? 4 : 7,
     gap: 5,
     borderWidth: 1,
     borderRadius: 20,
@@ -1316,7 +1211,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   feature: {
-    minHeight: 184,
+    minHeight: android ? 160 : 184,
     borderRadius: 15,
     overflow: "hidden",
     borderWidth: 1,
@@ -1325,7 +1220,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "center",
     flex: 1,
-    paddingVertical: spacing.card,
+    paddingVertical: android ? 10 : spacing.card,
     paddingHorizontal: spacing.card,
   },
   featureBadge: {
@@ -1338,14 +1233,14 @@ const styles = StyleSheet.create({
   featureBadgeText: { fontSize: 11, lineHeight: 16, flexShrink: 1 },
   featureTitle: {
     alignSelf: "stretch",
-    fontSize: 32,
+    fontSize: android ? 30 : 32,
     lineHeight: 36,
     marginTop: 5,
   },
   featureDescription: {
     fontSize: 14,
     lineHeight: 20,
-    maxWidth: "64%",
+    maxWidth: android ? "72%" : "64%",
     marginTop: 4,
   },
   narrowFeatureDescription: { maxWidth: "84%" },
@@ -1358,17 +1253,50 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 14,
     paddingVertical: 5,
-    marginTop: spacing.row,
+    marginTop: android ? spacing.compact : spacing.row,
   },
   featureActionLabel: { fontSize: 16, lineHeight: 21, flexShrink: 1 },
-  section: { marginTop: spacing.section },
+  section: { marginTop: sectionGap },
   sectionHeading: {
     minHeight: 32,
     gap: spacing.compact,
     marginBottom: spacing.compact,
   },
   sectionTitle: { flex: 1, minWidth: 0 },
-  sectionTitleText: { fontSize: 23, lineHeight: 28 },
+  sectionTitleText: { fontSize: android ? 21 : 23, lineHeight: 28 },
+  wellnessCards: { gap: spacing.row },
+  wellnessCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+    padding: spacing.row,
+    borderRadius: 15,
+    borderWidth: 1,
+  },
+  wellnessCardCompact: {
+    gap: spacing.compact,
+    paddingHorizontal: spacing.compact,
+  },
+  wellnessArt: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  wellnessArtCompact: { width: 48, height: 48 },
+  wellnessIcon: {
+    position: "absolute",
+    bottom: 3,
+    left: 3,
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  wellnessCopy: { flex: 1, minWidth: 0, gap: 2 },
+  wellnessTitle: { fontSize: 21, lineHeight: 26 },
+  wellnessTitleCompact: { fontSize: 20, lineHeight: 25 },
   headingAction: {
     minHeight: 44,
     flexDirection: "row",
@@ -1376,47 +1304,60 @@ const styles = StyleSheet.create({
     gap: 3,
     paddingLeft: 8,
   },
-  tiles: { flexDirection: "row", flexWrap: "wrap", gap: spacing.compact },
-  tile: {
-    flexBasis: "48%",
-    flexGrow: 1,
-    minWidth: 0,
-    minHeight: 74,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 12,
+  cardStack: { gap: spacing.row },
+  recommendationRow: { flexDirection: "row", gap: spacing.row },
+  recommendationStack: { flexDirection: "column" },
+  recommendationCard: {
+    borderRadius: 15,
     borderWidth: 1,
     overflow: "hidden",
   },
-  fullTile: { flexBasis: "100%" },
-  tilePicture: {
-    alignSelf: "stretch",
-    width: "27%",
-    maxWidth: 82,
-  },
-  tileCopy: { flex: 1, minWidth: 0, paddingVertical: spacing.compact },
-  tileAction: {
-    width: 25,
-    height: 25,
-    marginRight: 6,
-    borderRadius: 13,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5CFE94D",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#B7A4C437",
-  },
-  tileLabel: { fontSize: 17, lineHeight: 19 },
-  tileMeta: { fontSize: 11, lineHeight: 15, marginTop: 2 },
-  planBanner: {
-    marginTop: spacing.section,
-    minHeight: 76,
+  recommendationGridCard: { flex: 1, minWidth: 0 },
+  recommendationListCard: {
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.row,
+    padding: spacing.compact,
+  },
+  recommendationPicture: {
+    height: 56,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  recommendationThumb: { width: 56, borderRadius: 10 },
+  recommendationTopImage: {
+    position: "absolute",
+    top: -8,
+    left: 0,
+    width: "100%",
+    height: "auto",
+    aspectRatio: 1,
+  },
+  recommendationGridCopy: {
     paddingHorizontal: spacing.row,
-    paddingVertical: spacing.row,
+    paddingVertical: spacing.compact,
+  },
+  recommendationListCopy: { flex: 1, minWidth: 0, paddingVertical: 2 },
+  recommendationAction: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recommendationPictureAction: { position: "absolute", top: 6, right: 6 },
+  recommendationTitle: { fontSize: 20, lineHeight: recommendationTitleLine },
+  recommendationMeta: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  planBanner: {
+    marginTop: sectionGap,
+    minHeight: android ? 68 : 76,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: android ? spacing.compact : spacing.row,
+    paddingHorizontal: spacing.row,
+    paddingVertical: android ? spacing.compact : spacing.row,
     borderWidth: 1,
     borderColor: "#A48A96",
     borderRadius: 15,
@@ -1442,7 +1383,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     backgroundColor: "#F5D8F220",
   },
-  planTitle: { fontSize: 22, lineHeight: 26 },
+  planTitle: { fontSize: android ? 20 : 22, lineHeight: 26 },
   planAction: {
     width: 30,
     height: 30,
@@ -1456,75 +1397,54 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.row,
-    minHeight: 60,
-    paddingVertical: 10,
+    minHeight: android ? 56 : 60,
+    paddingVertical: android ? spacing.compact : 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  lastResult: { borderBottomWidth: 0 },
-  disclosures: { gap: spacing.row, marginTop: spacing.row },
-  disclosure: { borderRadius: 15, borderWidth: 1, overflow: "hidden" },
-  disclosureTrigger: {
+  featureEntries: { gap: spacing.card, marginTop: spacing.card },
+  featureEntry: {
+    minHeight: 140,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: spacing.row,
-    padding: spacing.row,
-    minHeight: 70,
+    borderWidth: 1,
+    borderRadius: 17,
+    overflow: "hidden",
+    padding: spacing.card,
   },
-  disclosureIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  featureEntryArt: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: "60%",
+  },
+  featureEntryCopy: { flex: 1, minWidth: 0, gap: 4 },
+  featureEntryTitle: { fontSize: 24, lineHeight: 29 },
+  featureEntryArrow: {
+    width: 37,
+    height: 37,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
   },
-  disclosureCopy: { flex: 1, minWidth: 0, gap: 2 },
-  disclosureTitle: { fontSize: 22, lineHeight: 26 },
-  disclosureContent: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: spacing.card,
-    paddingVertical: 4,
-  },
-  builderForm: {
-    paddingVertical: spacing.row,
-    gap: spacing.row,
-  },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.compact },
-  planPreview: {
-    paddingTop: spacing.row,
-    gap: spacing.compact,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  choice: {
-    minHeight: 48,
-    maxWidth: "100%",
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  choiceLabel: { flexShrink: 1 },
-  moreCards: {
-    flexDirection: "row",
-    alignItems: "stretch",
-    gap: spacing.compact,
-  },
-  moreCardsStacked: { flexDirection: "column" },
-  moreCard: {
-    flex: 1,
+  destinationCard: {
     minWidth: 0,
     borderWidth: 1,
-    borderRadius: 14,
-    padding: spacing.row,
-    minHeight: 120,
-    gap: spacing.compact,
-  },
-  moreCardStacked: {
+    borderRadius: 15,
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.row,
-    minHeight: 68,
   },
-  moreTitle: { fontSize: 19, lineHeight: 22, marginBottom: 2 },
+  destinationIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  destinationTitle: { fontSize: 20, lineHeight: 24 },
 });

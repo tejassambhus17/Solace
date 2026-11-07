@@ -1,11 +1,35 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, View } from "react-native";
+import {
+  Image,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { Companion, type CompanionState } from "../Companion";
 import { spacing } from "../layout";
 import { artGradient, useTheme } from "../theme";
 import { AppText, coverImageStyle, Icon, LotusMark, Row } from "../ui";
 
-export function ChatScene({ height }: { height: number }) {
+export function companionSendError(error: unknown) {
+  if (
+    error instanceof Error &&
+    "connection" in error &&
+    error.connection === true
+  )
+    return "Couldn’t reach Solace. Check your connection and try again.";
+  return error instanceof Error && error.message
+    ? error.message
+    : "Couldn’t send this message.";
+}
+
+export const ChatScene = React.memo(function ChatScene({
+  height,
+}: {
+  height: number;
+}) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
   return (
@@ -42,6 +66,67 @@ export function ChatScene({ height }: { height: number }) {
       </View>
     </View>
   );
+});
+
+export function CompanionAction({
+  label,
+  onPress,
+  disabled = false,
+  expanded,
+  style,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  expanded?: boolean;
+  style: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  if (Platform.OS === "web")
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={expanded}
+        disabled={disabled}
+        onClick={onPress}
+        style={{
+          appearance: "none",
+          borderStyle: "solid",
+          borderWidth: 0,
+          background: "transparent",
+          margin: 0,
+          padding: 0,
+          color: "inherit",
+          font: "inherit",
+          textAlign: "start",
+          boxSizing: "border-box",
+          display: "flex",
+          cursor: disabled ? "default" : "pointer",
+          ...(StyleSheet.flatten(style) as React.CSSProperties),
+          opacity: disabled ? 0.48 : 1,
+        }}
+      >
+        {children}
+      </button>
+    );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, expanded }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        style,
+        { opacity: disabled ? 0.48 : pressed ? 0.72 : 1 },
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
 }
 
 export function ChatHeaderButton({
@@ -61,19 +146,12 @@ export function ChatHeaderButton({
 }) {
   const { colors } = useTheme();
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled, expanded }}
-      disabled={disabled}
+    <CompanionAction
+      label={label}
       onPress={onPress}
-      style={({ pressed }) => ({
-        width: 44,
-        height: 44,
-        alignItems: "center",
-        justifyContent: "center",
-        opacity: disabled ? 0.45 : pressed ? 0.72 : 1,
-      })}
+      disabled={disabled}
+      expanded={expanded}
+      style={styles.headerButton}
     >
       <View
         style={[
@@ -86,11 +164,11 @@ export function ChatHeaderButton({
       >
         <Icon name={icon} color={colors.text} size={21} />
       </View>
-    </Pressable>
+    </CompanionAction>
   );
 }
 
-export function ChatAvatar({
+export const ChatAvatar = React.memo(function ChatAvatar({
   size = 34,
   state = "idle",
 }: {
@@ -124,7 +202,7 @@ export function ChatAvatar({
       )}
     </View>
   );
-}
+});
 
 export const ChatBubble = React.memo(function ChatBubble({
   children,
@@ -392,6 +470,12 @@ export function ChatResetCard({
 const styles = StyleSheet.create({
   scene: {
     overflow: "hidden",
+  },
+  headerButton: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerIcon: {
     width: 34,

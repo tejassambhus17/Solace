@@ -36,10 +36,14 @@ import {
   ChatScreen,
   HistoryScreen,
   TodayScreen,
-  ExploreScreen,
 } from "./src/screens/Core";
+import { ExploreScreen, exploreCardArrivalRoutes } from "./src/screens/Explore";
+import { TimedPracticeScreen } from "./src/screens/TimedPractice";
+import { WellnessToolsScreen } from "./src/screens/WellnessTools";
+import { wellnessToolArrivalRoutes } from "./src/wellness-tools";
 import {
   JourneyActivityScreen,
+  JourneyCheckinScreen,
   JourneyMilestonesScreen,
   JourneyScreen,
 } from "./src/screens/Journey";
@@ -52,7 +56,9 @@ import {
   TechniqueDetailScreen,
   TechniquesScreen,
 } from "./src/screens/Techniques";
-import { routes } from "./src/routes";
+import { habitRoutes, routes } from "./src/routes";
+import { habitReminderInput } from "./src/habit-reminders";
+import { HabitsScreen } from "./src/screens/Habits";
 import { experienceDestination } from "./src/experience-links";
 import { VoiceTalkScreen } from "./src/screens/VoiceTalk";
 import { AmbientMixerScreen } from "./src/screens/AmbientMixer";
@@ -61,6 +67,7 @@ import {
   DeviceUnlockScreen,
 } from "./src/screens/DeviceLock";
 import { MilestoneCelebration } from "./src/MilestoneCelebration";
+import { widgetDestination } from "./src/widget-links";
 import WellnessScreen from "./src/screens/Wellness";
 import ProfileScreen from "./src/screens/Profile";
 import { TabBar } from "./src/Navigation";
@@ -92,7 +99,7 @@ const wellnessScreens = new Set([
   "breathing",
   "moment",
   "feedback",
-  "session-detail",
+  routes.sessionDetail,
   "reflection",
   "reflections",
   "reflection-detail",
@@ -113,6 +120,13 @@ const retainedRoots = {
       <SolaceHome />
     </ExperienceTheme>
   ),
+  [routes.companion]: ({
+    scrollMemory,
+  }: React.ComponentProps<typeof ChatScreen>) => (
+    <ExperienceTheme>
+      <ChatScreen scrollMemory={scrollMemory} />
+    </ExperienceTheme>
+  ),
   [routes.journal]: () => (
     <ExperienceTheme>
       <JournalScreen name={routes.journal} />
@@ -124,7 +138,6 @@ const retainedRoots = {
 };
 type RetainedRoot = keyof typeof retainedRoots;
 const cinematicRoutes = new Set<string>([
-  routes.companion,
   routes.voice,
   routes.history,
   routes.journalEditor,
@@ -132,14 +145,18 @@ const cinematicRoutes = new Set<string>([
   routes.journalReflect,
   routes.techniques,
   routes.technique,
+  routes.wellnessTools,
+  routes.timedPractice,
 ]);
 
 const RetainedScreen = React.memo(function RetainedScreen({
   route,
   app,
+  scrollMemory,
 }: {
   route: RetainedRoot;
   app: ReturnType<typeof useApp> | null;
+  scrollMemory: React.ComponentProps<typeof ChatScreen>["scrollMemory"];
 }) {
   // A hidden screen keeps its own route snapshot. Activity suspends its
   // effects while preserving native views, local controls and scroll state.
@@ -151,10 +168,10 @@ const RetainedScreen = React.memo(function RetainedScreen({
     () =>
       state && (
         <AppRouteScope value={state}>
-          <Root />
+          <Root scrollMemory={scrollMemory} />
         </AppRouteScope>
       ),
-    [Root, state],
+    [Root, scrollMemory, state],
   );
   return <Activity mode={app ? "visible" : "hidden"}>{content}</Activity>;
 });
@@ -162,15 +179,17 @@ const RetainedScreen = React.memo(function RetainedScreen({
 function Shell() {
   const app = useApp();
   const onboarding = useOnboarding(app);
-  const [pendingLink, setPendingLink] =
-    useState<ReturnType<typeof experienceDestination>>(null);
+  const [pendingLink, setPendingLink] = useState<
+    | ReturnType<typeof widgetDestination>
+    | ReturnType<typeof experienceDestination>
+  >(null);
   const currentApp = useRef(app);
   currentApp.current = app;
   useEffect(() => {
     let live = true;
     let receivedEvent = false;
     const accept = (url: string | null | undefined) => {
-      const destination = experienceDestination(url);
+      const destination = widgetDestination(url) ?? experienceDestination(url);
       if (live && destination) {
         receivedEvent = true;
         setPendingLink(destination);
@@ -200,6 +219,15 @@ function Shell() {
     if (!canOpenLink || !pendingLink) return;
     setPendingLink(null);
     const { navigate, switchSolaceMode } = currentApp.current;
+    if ("tab" in pendingLink) {
+      navigate(pendingLink.tab);
+      if (pendingLink.route !== pendingLink.tab)
+        navigate(
+          pendingLink.route,
+          "params" in pendingLink ? pendingLink.params : undefined,
+        );
+      return;
+    }
     if ("mode" in pendingLink) {
       switchSolaceMode(pendingLink.mode);
       return;
@@ -249,6 +277,8 @@ function AccountShell({
   }, [app.activeTab]);
   const navigate = useRef(app.navigate);
   navigate.current = app.navigate;
+  const habits = useRef(app.data.habits);
+  habits.current = app.data.habits;
   const back = useRef(app.back);
   back.current = app.back;
   const tabAction = useRef(app.setTab);
@@ -301,14 +331,27 @@ function AccountShell({
   );
   useEffect(() => {
     if (!authenticated || !app.user) return;
-    restoreDeviceReminders(String(app.user.id), app.data.reminders).catch(
-      (error) =>
-        console.warn(
-          "Reminder schedules could not be restored:",
-          error.message,
-        ),
+    restoreDeviceReminders(String(app.user.id), [
+      ...app.data.reminders,
+      ...app.data.habits.flatMap((habit) => {
+        const reminder = habitReminderInput(habit);
+        return reminder ? [reminder] : [];
+      }),
+    ]).catch((error) =>
+      console.warn("Reminder schedules could not be restored:", error.message),
     );
-    return subscribeNotificationNavigation((route: string) => {
+    return subscribeNotificationNavigation((route, params) => {
+      if (route === routes.habitDetails) {
+        navigate.current(routes.explore);
+        navigate.current(routes.habits);
+        if (
+          habits.current.some(
+            (habit) => habit.id === params?.id && habit.status === "active",
+          )
+        )
+          navigate.current(route, params);
+        return;
+      }
       navigate.current(routes.today);
       if (route !== routes.today) navigate.current(route);
     });
@@ -373,8 +416,6 @@ function AccountShell({
     content = <OnboardingScreen onFinish={app.back} onBack={app.back} />;
   else if (journalLocked) content = <DeviceUnlockScreen scope="journal" />;
   else if (activeRoot) content = null;
-  else if (app.route === routes.companion)
-    content = <ChatScreen scrollMemory={chatPositions} />;
   else if (
     app.route === routes.journalEditor ||
     app.route === routes.journalEntry
@@ -389,11 +430,21 @@ function AccountShell({
     content = <JournalReflectionScreen key={app.params.id} />;
   else if (app.route === routes.techniques) content = <TechniquesScreen />;
   else if (app.route === routes.technique) content = <TechniqueDetailScreen />;
+  else if (app.route === routes.wellnessTools)
+    content = <WellnessToolsScreen />;
+  else if (app.route === routes.timedPractice)
+    content = <TimedPracticeScreen />;
+  else if (app.route === routes.exploreCatalog)
+    content = <ExploreScreen catalogOnly />;
+  else if (habitRoutes.has(app.route))
+    content = <HabitsScreen name={app.route} />;
   else if (app.route === routes.voice) content = <VoiceTalkScreen />;
   else if (app.route === "ambient-mixer") content = <AmbientMixerScreen />;
   else if (app.route === routes.history) content = <HistoryScreen />;
   else if (app.route === "journey-activity")
     content = <JourneyActivityScreen />;
+  else if (app.route === routes.journeyCheckin)
+    content = <JourneyCheckinScreen />;
   else if (app.route === "journey-milestones")
     content = <JourneyMilestonesScreen />;
   else if (app.route === "journey-goal") content = <JourneyGoalScreen />;
@@ -470,6 +521,7 @@ function AccountShell({
                     key={route}
                     route={route}
                     app={activeRoot === route ? app : null}
+                    scrollMemory={chatPositions}
                   />
                 ))}
               <ExperienceTheme
@@ -487,9 +539,16 @@ function AccountShell({
                   <NavigationDetail
                     key={`${app.route}:${app.params.id ?? ""}`}
                     reducedMotion={reducedMotion}
+                    guardArrivalTouches={
+                      app.activeTab === routes.explore &&
+                      (exploreCardArrivalRoutes.has(app.route) ||
+                        wellnessToolArrivalRoutes.has(app.route))
+                    }
                     stationary={
                       switchingTabs ||
                       app.route === routes.journalEditor ||
+                      app.route === routes.habitCreate ||
+                      app.route === routes.habitEdit ||
                       immersiveRoutes.has(app.route)
                     }
                   >

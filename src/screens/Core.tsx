@@ -1,5 +1,6 @@
 import React, {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -14,6 +15,8 @@ import {
   Modal,
   Platform,
   Pressable,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   View,
   ScrollView,
   StyleSheet,
@@ -25,7 +28,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useApp } from "../store";
+import { useApp, type Item } from "../store";
 import { routes } from "../routes";
 import { useGoogleAuth } from "../google-auth";
 import { useReducedMotion } from "../Companion";
@@ -33,6 +36,11 @@ import type { AuthPage } from "../onboarding-state";
 import { localDay, recordDay } from "../content";
 import { spacing, useScreenGutter } from "../layout";
 import { VoiceControls } from "../VoiceControls";
+import {
+  ChatComposerControl,
+  ChatComposerInput,
+  chatControlSize,
+} from "../ChatComposer";
 import { useTheme } from "../theme";
 import { createChatPractice } from "../chat-practices";
 import { describeChatExplanation } from "../../server/src/chat-evidence";
@@ -49,8 +57,12 @@ import {
   ChatResetCard,
   ChatScene,
   ChatWelcome,
+  CompanionAction,
+  companionSendError,
 } from "./ChatDetails";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { HabitAssistant, habitIntention } from "./HabitAssistant";
+import type { HabitAiIntent } from "../../server/src/habit-ai-contract";
 import { GoogleAuthAction } from "./GoogleAuthAction";
 import { PasswordRecoveryScreen } from "./PasswordRecovery";
 import {
@@ -74,13 +86,18 @@ const dateLabel = (value: any) => {
     ? ""
     : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
-function confirmAction(title: string, message: string, action: () => void) {
+function confirmAction(
+  title: string,
+  message: string,
+  action: () => void,
+  confirmLabel = "Delete",
+) {
   if (Platform.OS === "web") {
     if (globalThis.confirm(`${title}\n\n${message}`)) action();
   } else
     Alert.alert(title, message, [
       { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: action },
+      { text: confirmLabel, style: "destructive", onPress: action },
     ]);
 }
 export function AuthScreen({
@@ -384,20 +401,41 @@ export function ChatScreen({
   const navigationInset = useNavigationInset();
   const { colors, resolved } = useTheme();
   const reduceMotion = useReducedMotion();
-  const { width } = useWindowDimensions();
-  const { top } = useSafeAreaInsets();
+  const { width, height, fontScale } = useWindowDimensions();
+  const { top, bottom } = useSafeAreaInsets();
   const gutter = Math.max(12, useScreenGutter() - 6);
-  const [headerOpacity] = useState(() => new Animated.Value(1));
+  const [contentOpacity] = useState(() => new Animated.Value(1));
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showComposerMenu, setShowComposerMenu] = useState(false);
   const [showExplanation, setShowExplanation] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(chatControlSize);
+  const [transcriptHeight, setTranscriptHeight] = useState(0);
+  // The rail measurement includes its bottom safe area. When the keyboard
+  // hides the rail, KeyboardAvoidingView handles the remaining overlap.
+  const composerBottom =
+    spacing.compact + (navigationInset ? Math.max(navigationInset, bottom) : 0);
+  const transcriptClearance = composerBottom + composerHeight + spacing.row;
+  const accessoryHeight = Math.max(
+    chatControlSize,
+    Math.min(248, Math.round((transcriptHeight || height) * 0.55)),
+  );
+  const [habitAssistant, setHabitAssistant] = useState<{
+    initialPrompt: string;
+    initialIntent: HabitAiIntent;
+    initialHabitId?: string;
+  }>();
   const dark = resolved === "dark";
   const sceneHeight = Math.min(225, Math.round(width * 0.5));
   const id = typeof app.params?.id === "string" ? app.params.id : undefined;
   const draftKey = id || "new";
+  const [newThreadVersion, setNewThreadVersion] = useState(0);
+  const firstReplyId = useRef<string | undefined>(undefined);
+  const voiceKey =
+    id && id !== firstReplyId.current ? id : `new-${newThreadVersion}`;
+  const latestApp = useRef(app);
+  latestApp.current = app;
   const context = String(app.params?.context || "");
   const input = app.chatDrafts[draftKey] ?? context;
-  const [inputFocused, setInputFocused] = useState(false);
   const composerInput = useRef<React.ElementRef<typeof TextInput>>(null);
   const welcomeScroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const [localPending, setPending] = useState("");
@@ -407,26 +445,60 @@ export function ChatScreen({
   >("idle");
   const inputRef = useRef(input);
   inputRef.current = input;
-  const [failure, setFailure] = useState("");
+  const [failure, setFailure] = useState<{
+    message: string;
+    retryText?: string;
+  }>();
   const sending = useRef(false);
   const openingReset = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    setFailure("");
+    // Retained Chat reconnects these effects without recreating the thread.
+    openingReset.current = false;
+    setPending("");
+    setVoiceState("idle");
     setShowHeaderMenu(false);
     setShowComposerMenu(false);
     setShowExplanation(false);
-  }, [id]);
+    setHabitAssistant(undefined);
+    return () => {
+      mounted.current = false;
+      composerInput.current?.blur();
+    };
+  }, []);
   useEffect(() => {
-    if (reduceMotion) headerOpacity.setValue(1);
-    return () => headerOpacity.stopAnimation();
-  }, [headerOpacity, reduceMotion]);
+    setFailure(undefined);
+    setShowHeaderMenu(false);
+    setShowComposerMenu(false);
+    setShowExplanation(false);
+    setHabitAssistant(undefined);
+  }, [id]);
+  const requestedHabitIntent = app.params.habitAssistant;
+  const requestedHabitId = app.params.habitAssistantId;
+  useEffect(() => {
+    if (
+      requestedHabitIntent !== "reflect" &&
+      requestedHabitIntent !== "simplify"
+    )
+      return;
+    const active = latestApp.current;
+    const habit = active.data.habits.find(
+      (item) => item.id === requestedHabitId && item.status !== "archived",
+    );
+    setHabitAssistant({
+      initialIntent: requestedHabitIntent,
+      initialHabitId: habit?.id,
+      initialPrompt:
+        requestedHabitIntent === "reflect"
+          ? "Help me reflect on my recent habit progress."
+          : "Help me make this habit easier to fit into a busy week.",
+    });
+    active.setParams({
+      habitAssistant: undefined,
+      habitAssistantId: undefined,
+    });
+  }, [requestedHabitIntent, requestedHabitId]);
   const conversation = app.data.conversations.find((x) => x.id === id);
   const messages: ChatMessage[] = Array.isArray(conversation?.messages)
     ? conversation.messages
@@ -435,6 +507,16 @@ export function ChatScreen({
     (message) => message.role === "assistant",
   );
   const lastUser = messages.findLast((message) => message.role === "user");
+  const habitPrompt = String(lastUser?.content ?? "").slice(0, 1200);
+  const habitIntent = habitIntention(habitPrompt);
+  const openHabitAssistant = useCallback((initialPrompt: string) => {
+    Keyboard.dismiss();
+    setShowComposerMenu(false);
+    setHabitAssistant({
+      initialPrompt,
+      initialIntent: habitIntention(initialPrompt) ?? "suggest",
+    });
+  }, []);
   const momentContext = {
     feeling: String(lastUser?.content || "").slice(0, 1200),
     conversationId: id,
@@ -446,23 +528,47 @@ export function ChatScreen({
   const voiceBusy = voiceState === "listening" || voiceState === "thinking";
   const activityDisabled = !!pending || voiceBusy;
   const sendDisabled = !input.trim() || activityDisabled;
+  const canRetry = !!failure?.retryText && failure.retryText === input.trim();
   const fresh = messages.length === 0 && !pending;
-  const recommendation =
-    !pending &&
-    !showSupport &&
-    app.params.dismissedPractice !== actionKey &&
-    isChatPracticeId(action?.type)
-      ? createChatPractice(action.type)
-      : undefined;
-  const explanation =
-    recommendation && action
-      ? describeChatExplanation(
-          action.explanation,
-          action.type,
-          app.user?.personalization === true,
-          app.data,
-        )
-      : undefined;
+  const previousFresh = useRef(fresh);
+  useEffect(() => {
+    const switched = previousFresh.current !== fresh;
+    previousFresh.current = fresh;
+    contentOpacity.setValue(switched && !reduceMotion ? 0.86 : 1);
+    if (!switched || reduceMotion) return;
+    const transition = Animated.timing(contentOpacity, {
+      toValue: 1,
+      duration: 145,
+      useNativeDriver: Platform.OS !== "web",
+      isInteraction: false,
+    });
+    transition.start();
+    return () => transition.stop();
+  }, [contentOpacity, fresh, reduceMotion]);
+  const dismissedPractice = app.params.dismissedPractice;
+  const practice = action?.type;
+  const recommendation = useMemo(
+    () =>
+      !pending &&
+      !showSupport &&
+      dismissedPractice !== actionKey &&
+      isChatPracticeId(practice)
+        ? createChatPractice(practice)
+        : undefined,
+    [pending, showSupport, dismissedPractice, actionKey, practice],
+  );
+  const explanation = useMemo(
+    () =>
+      recommendation && action
+        ? describeChatExplanation(
+            action.explanation,
+            action.type,
+            app.user?.personalization === true,
+            app.data,
+          )
+        : undefined,
+    [recommendation, action, app.user?.personalization, app.data],
+  );
   const today = localDay();
   const mood = useMemo(
     () =>
@@ -501,6 +607,7 @@ export function ChatScreen({
   }
   function writeDraft(text: string) {
     inputRef.current = text;
+    if (failure && failure.retryText !== text.trim()) setFailure(undefined);
     if (context) app.setParams({ context: "" });
     app.setChatDraft(draftKey, text);
   }
@@ -512,10 +619,27 @@ export function ChatScreen({
   }
   function startConversation() {
     Keyboard.dismiss();
-    welcomeScroll.current?.scrollTo({ y: 0, animated: false });
-    app.setParams({ id: undefined, context: "" });
-    setFailure("");
-    setShowComposerMenu(false);
+    const start = () => {
+      welcomeScroll.current?.scrollTo({ y: 0, animated: false });
+      firstReplyId.current = undefined;
+      setNewThreadVersion((previous) => previous + 1);
+      app.setParams({ id: undefined, context: "" });
+      setFailure(undefined);
+      setShowComposerMenu(false);
+    };
+    if (!id && inputRef.current.trim()) {
+      confirmAction(
+        "Start a new conversation?",
+        "Your unsent draft will be cleared.",
+        () => {
+          app.setChatDraft(draftKey, "");
+          start();
+        },
+        "Discard draft",
+      );
+      return;
+    }
+    start();
   }
   async function send() {
     const submitted = inputRef.current;
@@ -524,28 +648,21 @@ export function ChatScreen({
     sending.current = true;
     setShowComposerMenu(false);
     writeDraft(submitted);
-    if (fresh && !reduceMotion) {
-      headerOpacity.setValue(0.7);
-      Animated.timing(headerOpacity, {
-        toValue: 1,
-        duration: 160,
-        useNativeDriver: Platform.OS !== "web",
-        isInteraction: false,
-      }).start();
-    }
     setPending(text);
-    setFailure("");
+    setFailure(undefined);
     try {
       const result = await app.chat(text, id);
+      // The first reply assigns a server ID. Keep the same native composer
+      // and recorder for this thread so assigning that ID cannot blur typing.
+      if (!id) firstReplyId.current = result.conversation.id;
       app.setChatDraft(draftKey, "", submitted);
       app.setParams({ id: result.conversation.id, context: "" });
     } catch (e) {
       if (mounted.current)
-        setFailure(
-          e instanceof Error
-            ? e.message
-            : "Could not send. Your message is kept below; try again.",
-        );
+        setFailure({
+          message: companionSendError(e),
+          retryText: text,
+        });
     } finally {
       sending.current = false;
       if (mounted.current) setPending("");
@@ -579,6 +696,12 @@ export function ChatScreen({
               label: "Write a reflection",
               icon: "book-outline",
               action: startReflection,
+            },
+            {
+              label: "Plan a habit",
+              icon: "leaf-outline",
+              action: () =>
+                openHabitAssistant(inputRef.current.trim() || habitPrompt),
             },
             {
               label: "Find support",
@@ -616,15 +739,21 @@ export function ChatScreen({
       </View>
     );
   }
+  const avatarState = pending ? "thinking" : voiceState;
   const header = (
     <View style={[chatStyles.header, { paddingHorizontal: gutter - 5 }]}>
-      <ChatHeaderButton
-        icon="chevron-back"
-        label={app.params.fromJournal ? "Back to Journal" : "Back to Solace"}
-        disabled={false}
-        onPress={app.canGoBack ? app.back : () => app.navigate(routes.solace)}
-      />
-      <ChatAvatar size={34} state={pending ? "thinking" : voiceState} />
+      <View style={chatStyles.headerEdge}>
+        {app.canGoBack ? (
+          <ChatHeaderButton
+            icon="chevron-back"
+            label={app.params.fromJournal ? "Back to Journal" : "Go back"}
+            disabled={false}
+            onPress={app.back}
+          />
+        ) : (
+          <ChatAvatar size={34} state={avatarState} />
+        )}
+      </View>
       <View style={chatStyles.headerBrand}>
         <AppText
           variant="heading"
@@ -634,9 +763,16 @@ export function ChatScreen({
           Solace Companion
         </AppText>
         <Row style={chatStyles.brandBadge}>
-          <View
-            style={[chatStyles.brandDot, { backgroundColor: colors.lavender }]}
-          />
+          {app.canGoBack ? (
+            <ChatAvatar size={17} state={avatarState} />
+          ) : (
+            <View
+              style={[
+                chatStyles.brandDot,
+                { backgroundColor: colors.lavender },
+              ]}
+            />
+          )}
           <AppText
             variant="caption"
             color={colors.muted}
@@ -646,26 +782,23 @@ export function ChatScreen({
           </AppText>
         </Row>
       </View>
-      <ChatHeaderButton
-        icon="ellipsis-horizontal"
-        label="Companion options"
-        disabled={false}
-        variant="filled"
-        expanded={showHeaderMenu}
-        onPress={() => {
-          Keyboard.dismiss();
-          setShowComposerMenu(false);
-          setShowHeaderMenu(true);
-        }}
-      />
+      <View style={chatStyles.headerEdge}>
+        <ChatHeaderButton
+          icon="ellipsis-horizontal"
+          label="Companion options"
+          disabled={false}
+          variant="filled"
+          expanded={showHeaderMenu}
+          onPress={() => {
+            Keyboard.dismiss();
+            setShowComposerMenu(false);
+            setShowHeaderMenu(true);
+          }}
+        />
+      </View>
     </View>
   );
   const headerActions = [
-    {
-      label: "New conversation",
-      icon: "create-outline",
-      action: startConversation,
-    },
     {
       label: "Conversation history",
       icon: "time-outline",
@@ -677,95 +810,165 @@ export function ChatScreen({
       action: () => app.navigate(routes.voice, { id }),
     },
     {
-      label: "My Journal",
-      icon: "book-outline",
-      action: () => app.switchSolaceMode("journal"),
-      availableWhileBusy: true,
-    },
-    {
       label: "Create a Solace Moment",
       icon: "sparkles-outline",
       action: openMoments,
     },
   ];
-  const transcriptFooter = (
-    <View style={chatStyles.transcriptFooter}>
-      {!!pending && (
-        <>
-          <ChatBubble user>{pending}</ChatBubble>
-          <Row
-            style={[chatStyles.thinking, { backgroundColor: colors.surface }]}
-          >
-            <AppText
-              accessibilityLiveRegion="polite"
-              variant="caption"
-              color={colors.muted}
+  const transcriptFooter = useMemo(
+    () => (
+      <View style={chatStyles.transcriptFooter}>
+        {!!pending && (
+          <>
+            <ChatBubble user>{pending}</ChatBubble>
+            <Row
+              style={[chatStyles.thinking, { backgroundColor: colors.surface }]}
             >
-              Solace is thinking…
+              <AppText
+                accessibilityLiveRegion="polite"
+                variant="caption"
+                color={colors.muted}
+              >
+                Solace is thinking…
+              </AppText>
+            </Row>
+          </>
+        )}
+        {showSupport && !pending && (
+          <Button
+            title="Find human support"
+            variant="secondary"
+            icon="heart-outline"
+            onPress={() => latestApp.current.navigate("support")}
+            style={{ alignSelf: "flex-start" }}
+          />
+        )}
+        {habitIntent && lastAssistant && !showSupport && !pending && (
+          <Button
+            title="Explore a suggested habit"
+            variant="secondary"
+            icon="leaf-outline"
+            disabled={activityDisabled}
+            onPress={() => openHabitAssistant(habitPrompt)}
+            style={{ alignSelf: "flex-start" }}
+          />
+        )}
+        {recommendation && action && (
+          <Card style={{ backgroundColor: colors.surface2 }}>
+            <Row
+              style={{ gap: spacing.compact, marginBottom: spacing.compact }}
+            >
+              <Icon name={chatPractices[action.type].icon} size={18} />
+              <AppText variant="caption" color={colors.muted}>
+                Suggested technique · {recommendation.durationSec / 60} min
+              </AppText>
+            </Row>
+            <AppText variant="heading">{recommendation.title}</AppText>
+            <AppText
+              color={colors.muted}
+              style={{ marginTop: spacing.compact }}
+            >
+              {recommendation.description}
             </AppText>
-          </Row>
-        </>
-      )}
-      {showSupport && !pending && (
-        <Button
-          title="Find human support"
-          variant="secondary"
-          icon="heart-outline"
-          onPress={() => app.navigate("support")}
-          style={{ alignSelf: "flex-start" }}
-        />
-      )}
-      {recommendation && action && (
-        <Card style={{ backgroundColor: colors.surface2 }}>
-          <Row style={{ gap: spacing.compact, marginBottom: spacing.compact }}>
-            <Icon name={chatPractices[action.type].icon} size={18} />
-            <AppText variant="caption" color={colors.muted}>
-              Suggested technique · {recommendation.durationSec / 60} min
-            </AppText>
-          </Row>
-          <AppText variant="heading">{recommendation.title}</AppText>
-          <AppText color={colors.muted} style={{ marginTop: spacing.compact }}>
-            {recommendation.description}
-          </AppText>
-          <Row
-            style={{
-              flexWrap: "wrap",
-              gap: spacing.compact,
-              marginTop: spacing.card,
-            }}
-          >
+            <Row
+              style={{
+                flexWrap: "wrap",
+                gap: spacing.compact,
+                marginTop: spacing.card,
+              }}
+            >
+              <Button
+                title="View technique"
+                icon="arrow-forward"
+                onPress={() => {
+                  Keyboard.dismiss();
+                  latestApp.current.navigate(routes.technique, {
+                    id: action.type,
+                    source: "chat",
+                    conversationId: id,
+                  });
+                }}
+                disabled={activityDisabled}
+                style={{ minHeight: 48 }}
+              />
+              <Button
+                title="Not now"
+                variant="ghost"
+                onPress={() =>
+                  latestApp.current.setParams({ dismissedPractice: actionKey })
+                }
+                style={{ minHeight: 48 }}
+              />
+            </Row>
             <Button
-              title="View technique"
-              icon="arrow-forward"
+              title="Why Solace suggested this"
+              variant="ghost"
+              icon="information-circle-outline"
               onPress={() => {
                 Keyboard.dismiss();
-                app.navigate(routes.technique, {
-                  id: action.type,
-                  source: "chat",
-                  conversationId: id,
-                });
+                setShowExplanation(true);
               }}
-              disabled={activityDisabled}
-              style={{ minHeight: 48 }}
+              style={{ alignSelf: "flex-start", minHeight: 48 }}
             />
-            <Button
-              title="Not now"
-              variant="ghost"
-              onPress={() => app.setParams({ dismissedPractice: actionKey })}
-              style={{ minHeight: 48 }}
-            />
-          </Row>
-          <Button
-            title="Why Solace suggested this"
-            variant="ghost"
-            icon="information-circle-outline"
+          </Card>
+        )}
+      </View>
+    ),
+    [
+      pending,
+      showSupport,
+      recommendation,
+      action,
+      colors,
+      id,
+      activityDisabled,
+      actionKey,
+      habitIntent,
+      habitPrompt,
+      lastAssistant,
+      openHabitAssistant,
+    ],
+  );
+  const failurePanel = failure && (
+    <View
+      style={[
+        chatStyles.sendFailure,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <AppText
+        variant="caption"
+        accessibilityRole="alert"
+        color={colors.danger}
+      >
+        {failure.message}
+      </AppText>
+      {canRetry && (
+        <>
+          <AppText variant="caption" color={colors.muted}>
+            Your draft is still in the composer.
+          </AppText>
+          <CompanionAction
+            label="Retry message"
             onPress={() => {
-              Keyboard.dismiss();
-              setShowExplanation(true);
+              if (inputRef.current.trim() === failure.retryText) void send();
             }}
-            style={{ alignSelf: "flex-start", minHeight: 48 }}
-          />
-        </Card>
+            disabled={sendDisabled}
+            style={[
+              chatStyles.retryAction,
+              { backgroundColor: colors.lavenderSurface },
+            ]}
+          >
+            <Icon
+              name="refresh-outline"
+              size={17}
+              color={colors.lavenderText}
+            />
+            <AppText variant="label" color={colors.lavenderText}>
+              Retry message
+            </AppText>
+          </CompanionAction>
+        </>
       )}
     </View>
   );
@@ -774,6 +977,12 @@ export function ChatScreen({
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === "web" ? undefined : "padding"}
     >
+      {habitAssistant && (
+        <HabitAssistant
+          {...habitAssistant}
+          onClose={() => setHabitAssistant(undefined)}
+        />
+      )}
       {showExplanation && recommendation && explanation && (
         <RecommendationExplanation
           open
@@ -795,10 +1004,12 @@ export function ChatScreen({
         onRequestClose={() => setShowHeaderMenu(false)}
       >
         <View style={chatStyles.modal}>
-          <Pressable
+          <View
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            onPress={() => setShowHeaderMenu(false)}
+            aria-hidden
+            onStartShouldSetResponder={() => true}
+            onResponderRelease={() => setShowHeaderMenu(false)}
             style={[
               StyleSheet.absoluteFill,
               { backgroundColor: colors.overlay },
@@ -829,53 +1040,80 @@ export function ChatScreen({
               />
             </Row>
             <ScrollView keyboardShouldPersistTaps="handled" bounces={false}>
-              {headerActions.map(
-                ({ label, icon, action, availableWhileBusy }) => {
-                  const disabled = activityDisabled && !availableWhileBusy;
-                  return (
-                    <Pressable
-                      key={label}
-                      accessibilityRole="button"
-                      accessibilityLabel={label}
-                      accessibilityState={{ disabled }}
-                      disabled={disabled}
-                      onPress={() => {
-                        setShowHeaderMenu(false);
-                        action();
-                      }}
-                      style={({ pressed }) => [
-                        chatStyles.headerMenuAction,
-                        {
-                          backgroundColor: pressed
-                            ? colors.surface2
-                            : "transparent",
-                          opacity: disabled ? 0.48 : 1,
-                        },
-                      ]}
-                    >
-                      <Icon name={icon} size={18} color={colors.lavenderText} />
-                      <AppText
-                        variant="label"
-                        style={chatStyles.headerMenuLabel}
-                      >
-                        {label}
-                      </AppText>
-                    </Pressable>
-                  );
-                },
-              )}
+              {headerActions.map(({ label, icon, action }) => {
+                return (
+                  <CompanionAction
+                    key={label}
+                    label={label}
+                    disabled={activityDisabled}
+                    onPress={() => {
+                      setShowHeaderMenu(false);
+                      action();
+                    }}
+                    style={chatStyles.headerMenuAction}
+                  >
+                    <Icon name={icon} size={18} color={colors.lavenderText} />
+                    <AppText variant="label" style={chatStyles.headerMenuLabel}>
+                      {label}
+                    </AppText>
+                  </CompanionAction>
+                );
+              })}
             </ScrollView>
           </View>
         </View>
       </Modal>
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
-        <Animated.View
+        <View
           style={[
             !fresh && chatStyles.compactHeader,
-            { borderBottomColor: colors.border, opacity: headerOpacity },
+            { borderBottomColor: colors.border },
           ]}
         >
           {header}
+          <Row
+            style={[chatStyles.headerShortcuts, { paddingHorizontal: gutter }]}
+          >
+            <CompanionAction
+              label="New conversation"
+              disabled={activityDisabled}
+              onPress={startConversation}
+              style={[
+                chatStyles.headerShortcut,
+                {
+                  backgroundColor: colors.lavenderSurface,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Icon name="add-outline" size={18} color={colors.lavenderText} />
+              <AppText
+                variant="label"
+                color={colors.lavenderText}
+                style={chatStyles.shortcutLabel}
+              >
+                {width < 360 || fontScale > 1.25
+                  ? "New chat"
+                  : "New conversation"}
+              </AppText>
+            </CompanionAction>
+            <CompanionAction
+              label="My Journal"
+              onPress={() => {
+                Keyboard.dismiss();
+                app.switchSolaceMode("journal");
+              }}
+              style={[
+                chatStyles.headerShortcut,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Icon name="book-outline" size={17} color={colors.text} />
+              <AppText variant="label" style={chatStyles.shortcutLabel}>
+                My Journal
+              </AppText>
+            </CompanionAction>
+          </Row>
           {!!conversation?.journalSource && (
             <AppText
               variant="caption"
@@ -888,60 +1126,70 @@ export function ChatScreen({
               Started with a shared journal excerpt
             </AppText>
           )}
+        </View>
+        <Animated.View
+          style={[chatStyles.transcript, { opacity: contentOpacity }]}
+          onLayout={({ nativeEvent }) =>
+            setTranscriptHeight(Math.ceil(nativeEvent.layout.height))
+          }
+        >
+          {fresh ? (
+            <ScrollView
+              ref={welcomeScroll}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={[
+                chatStyles.welcomeScroll,
+                { paddingBottom: transcriptClearance - spacing.row },
+              ]}
+            >
+              <ChatScene height={sceneHeight} />
+              <View style={[chatStyles.welcome, { paddingHorizontal: gutter }]}>
+                <ChatWelcome
+                  name={app.user?.name}
+                  mood={mood}
+                  state={voiceState}
+                />
+                <ChatQuickReplies
+                  disabled={activityDisabled}
+                  onPrompt={preparePrompt}
+                />
+                <ChatResetCard
+                  onPress={playReset}
+                  disabled={activityDisabled}
+                />
+              </View>
+            </ScrollView>
+          ) : (
+            <ChatTranscript
+              key={draftKey}
+              conversationKey={draftKey}
+              clearance={transcriptClearance}
+              footer={transcriptFooter}
+              gutter={gutter}
+              messages={messages}
+              reduceMotion={reduceMotion}
+              scrollMemory={scrollMemory}
+            />
+          )}
         </Animated.View>
-        {fresh ? (
-          <ScrollView
-            ref={welcomeScroll}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={chatStyles.welcomeScroll}
-          >
-            <ChatScene height={sceneHeight} />
-            <View style={[chatStyles.welcome, { paddingHorizontal: gutter }]}>
-              <ChatWelcome
-                name={app.user?.name}
-                mood={mood}
-                state={voiceState}
-              />
-              <ChatQuickReplies
-                disabled={activityDisabled}
-                onPrompt={preparePrompt}
-              />
-              <ChatResetCard onPress={playReset} disabled={activityDisabled} />
-            </View>
-          </ScrollView>
-        ) : (
-          <ChatTranscript
-            key={draftKey}
-            conversationKey={draftKey}
-            footer={transcriptFooter}
-            gutter={gutter}
-            messages={messages}
-            reduceMotion={reduceMotion}
-            scrollMemory={scrollMemory}
-          />
-        )}
         <View
+          pointerEvents="box-none"
+          testID="floating-chat-composer"
+          onLayout={({ nativeEvent }) =>
+            setComposerHeight(Math.ceil(nativeEvent.layout.height))
+          }
           style={[
             chatStyles.composer,
             {
-              paddingBottom: 10 + navigationInset,
-              paddingHorizontal: gutter,
-              backgroundColor: colors.bg,
+              bottom: composerBottom,
+              left: gutter,
+              right: gutter,
             },
           ]}
         >
-          {!!failure && (
-            <AppText
-              accessibilityRole="alert"
-              color={colors.danger}
-              style={{ marginBottom: 10, fontSize: 13 }}
-            >
-              {failure}
-            </AppText>
-          )}
           <VoiceControls
-            key={`${app.user?.id}-${draftKey}`}
+            key={`${app.user?.id}-${voiceKey}`}
             disabled={!!pending}
             reply={String(lastAssistant?.content || "")}
             onState={setVoiceState}
@@ -949,108 +1197,77 @@ export function ChatScreen({
               const before = inputRef.current;
               const combined = `${before}${before.trim() ? "\n" : ""}${text}`;
               if (combined.length > 4000) {
-                setFailure(
-                  "Your draft and transcript exceed 4,000 characters. Shorten your draft first; your full transcript is kept above.",
-                );
+                setFailure({
+                  message:
+                    "Shorten your draft to make room for this transcript. Your transcript is kept above.",
+                });
                 return false;
               }
               writeDraft(combined);
-              setFailure("");
+              setFailure(undefined);
               return true;
             }}
-            renderComposer={(microphone, playback) => (
+            renderComposer={(microphone, playback, voiceDetails) => (
               <>
-                {chatActions(playback)}
-                <Row style={chatStyles.composerRow}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={
+                {(failurePanel || voiceDetails || showComposerMenu) && (
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                    style={[
+                      chatStyles.composerAccessories,
+                      { maxHeight: accessoryHeight },
+                    ]}
+                  >
+                    {failurePanel}
+                    {voiceDetails && (
+                      <View
+                        style={[
+                          chatStyles.voiceDetails,
+                          {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                      >
+                        {voiceDetails}
+                      </View>
+                    )}
+                    {chatActions(playback)}
+                  </ScrollView>
+                )}
+                <View pointerEvents="box-none" style={chatStyles.composerRow}>
+                  <ChatComposerControl
+                    icon={showComposerMenu ? "close" : "add"}
+                    label={
                       showComposerMenu
                         ? "Close chat actions"
                         : "More chat actions"
                     }
-                    accessibilityState={{
-                      expanded: showComposerMenu,
-                      disabled: activityDisabled,
-                    }}
+                    tone={showComposerMenu ? "selected" : "quiet"}
+                    expanded={showComposerMenu}
                     disabled={activityDisabled}
                     onPress={() => {
                       if (!showComposerMenu) Keyboard.dismiss();
                       setShowComposerMenu((open) => !open);
                     }}
-                    style={({ pressed }) => [
-                      chatStyles.sendButton,
-                      {
-                        backgroundColor: colors.surface2,
-                        borderColor: colors.border,
-                        opacity: activityDisabled ? 0.5 : pressed ? 0.72 : 1,
-                      },
-                    ]}
-                  >
-                    <Icon
-                      name={showComposerMenu ? "close" : "add"}
-                      color={colors.text}
-                      size={24}
-                    />
-                  </Pressable>
-                  <TextInput
-                    ref={composerInput}
-                    accessibilityLabel="Message Solace"
-                    placeholder={width < 360 ? "Message…" : "Message Solace…"}
-                    placeholderTextColor={colors.muted}
-                    selectionColor={colors.accent}
+                  />
+                  <ChatComposerInput
+                    inputRef={composerInput}
                     value={input}
                     onChangeText={writeDraft}
-                    onFocus={() => {
-                      setShowComposerMenu(false);
-                      setInputFocused(true);
-                    }}
-                    onBlur={() => setInputFocused(false)}
-                    multiline
-                    numberOfLines={Platform.OS === "web" ? 1 : undefined}
+                    onFocus={() => setShowComposerMenu(false)}
                     editable={!pending}
-                    maxLength={4000}
-                    style={[
-                      chatStyles.messageInput,
-                      {
-                        color: colors.text,
-                        backgroundColor: colors.surface,
-                        borderColor: inputFocused
-                          ? colors.primary
-                          : colors.border,
-                      },
-                    ]}
                   />
                   {microphone}
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      failure ? "Retry message" : "Send message"
-                    }
-                    accessibilityState={{
-                      disabled: sendDisabled,
-                      busy: !!pending,
-                    }}
-                    aria-disabled={sendDisabled}
-                    aria-busy={!!pending}
+                  <ChatComposerControl
+                    icon="send-outline"
+                    label="Send message"
+                    tone="primary"
                     onPress={send}
                     disabled={sendDisabled}
-                    style={({ pressed }) => [
-                      chatStyles.sendButton,
-                      {
-                        backgroundColor: colors.primary,
-                        borderColor: colors.primary,
-                        opacity: sendDisabled ? 0.55 : pressed ? 0.75 : 1,
-                      },
-                    ]}
-                  >
-                    <Icon
-                      name={failure ? "refresh-outline" : "arrow-forward"}
-                      color={colors.primaryText}
-                      size={22}
-                    />
-                  </Pressable>
-                </Row>
+                    busy={!!pending}
+                  />
+                </View>
               </>
             )}
           />
@@ -1085,8 +1302,15 @@ function MessageSpacing() {
   return <View style={chatStyles.messageSpacing} />;
 }
 
-function ChatTranscript({
+const latestMessageThreshold = 90;
+const transcriptPosition = {
+  minIndexForVisible: 0,
+  autoscrollToTopThreshold: latestMessageThreshold,
+};
+
+const ChatTranscript = React.memo(function ChatTranscript({
   conversationKey,
+  clearance,
   footer,
   gutter,
   messages,
@@ -1094,6 +1318,7 @@ function ChatTranscript({
   scrollMemory,
 }: {
   conversationKey: string;
+  clearance: number;
   footer: React.ReactElement;
   gutter: number;
   messages: ChatMessage[];
@@ -1102,6 +1327,7 @@ function ChatTranscript({
 }) {
   const list = useRef<FlatList<ChatMessage>>(null);
   const restoreOffset = useRef(scrollMemory.get(conversationKey));
+  const currentOffset = useRef(0);
   const newestFirst = useMemo(() => [...messages].reverse(), [messages]);
   const messageKey = useCallback(
     (message: ChatMessage, index: number) =>
@@ -1109,17 +1335,47 @@ function ChatTranscript({
     [messages.length],
   );
   const following = useRef(restoreOffset.current === undefined);
+  const jumpingToLatest = useRef(false);
   const [showLatest, setShowLatest] = useState(!following.current);
 
-  function adjustPosition() {
+  const adjustPosition = useCallback(() => {
     if (restoreOffset.current !== undefined)
       list.current?.scrollToOffset({
         offset: restoreOffset.current,
         animated: false,
       });
-    else if (following.current)
+    else if (
+      following.current &&
+      !jumpingToLatest.current &&
+      currentOffset.current > 1
+    )
       list.current?.scrollToOffset({ offset: 0, animated: false });
-  }
+  }, []);
+  const trackScroll = useCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offset = Math.max(0, nativeEvent.contentOffset.y);
+      if (restoreOffset.current !== undefined) {
+        if (Math.abs(restoreOffset.current - offset) > 2) return;
+        restoreOffset.current = undefined;
+      }
+      if (currentOffset.current === offset) return;
+      currentOffset.current = offset;
+      const nearLatest = offset < latestMessageThreshold;
+      if (jumpingToLatest.current) {
+        if (nearLatest) jumpingToLatest.current = false;
+        else return;
+      }
+      if (nearLatest !== following.current) {
+        following.current = nearLatest;
+        setShowLatest(!nearLatest);
+      }
+      if (conversationKey !== "new") {
+        if (nearLatest) scrollMemory.delete(conversationKey);
+        else scrollMemory.set(conversationKey, offset);
+      }
+    },
+    [conversationKey, scrollMemory],
+  );
 
   return (
     <View style={chatStyles.transcript}>
@@ -1136,10 +1392,8 @@ function ChatTranscript({
         }
         initialNumToRender={12}
         windowSize={7}
-        maintainVisibleContentPosition={{
-          minIndexForVisible: 0,
-          autoscrollToTopThreshold: 90,
-        }}
+        maintainVisibleContentPosition={transcriptPosition}
+        removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={32}
@@ -1147,32 +1401,23 @@ function ChatTranscript({
         onContentSizeChange={adjustPosition}
         onScrollBeginDrag={() => {
           restoreOffset.current = undefined;
+          jumpingToLatest.current = false;
         }}
-        onScroll={({ nativeEvent }) => {
-          const offset = Math.max(0, nativeEvent.contentOffset.y);
-          if (restoreOffset.current !== undefined) {
-            if (Math.abs(restoreOffset.current - offset) > 2) return;
-            restoreOffset.current = undefined;
-          }
-          following.current = offset < 90;
-          if (conversationKey !== "new") {
-            if (following.current) scrollMemory.delete(conversationKey);
-            else scrollMemory.set(conversationKey, offset);
-          }
-          setShowLatest(!following.current);
-        }}
+        onScroll={trackScroll}
         contentContainerStyle={[
           chatStyles.conversation,
-          { paddingHorizontal: gutter },
+          { paddingHorizontal: gutter, paddingTop: clearance },
         ]}
       />
       {showLatest && (
-        <View style={[chatStyles.latest, { right: gutter }]}>
+        <View style={[chatStyles.latest, { right: gutter, bottom: clearance }]}>
           <Button
             title="Latest messages"
             icon="arrow-down"
             onPress={() => {
               restoreOffset.current = undefined;
+              jumpingToLatest.current =
+                currentOffset.current >= latestMessageThreshold;
               following.current = true;
               scrollMemory.delete(conversationKey);
               setShowLatest(false);
@@ -1186,7 +1431,7 @@ function ChatTranscript({
       )}
     </View>
   );
-}
+});
 
 const chatStyles = StyleSheet.create({
   header: {
@@ -1195,17 +1440,44 @@ const chatStyles = StyleSheet.create({
     paddingVertical: 4,
     gap: 6,
   },
-  headerBrand: { flex: 1, minWidth: 0, paddingLeft: 2 },
-  brandBadge: { gap: 4 },
+  headerEdge: { width: 48, flexShrink: 0, alignItems: "center" },
+  headerBrand: { flex: 1, minWidth: 0, alignItems: "center" },
+  brandBadge: { justifyContent: "center", gap: 4, maxWidth: "100%" },
   brandDot: { width: 8, height: 8, borderRadius: 4 },
-  headerCaption: { fontSize: 11, lineHeight: 15 },
-  title: {
+  headerCaption: {
     flexShrink: 1,
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: "center",
+  },
+  title: {
+    alignSelf: "stretch",
     fontSize: 25,
-    lineHeight: 29,
+    lineHeight: 31,
+    textAlign: "center",
   },
   narrowTitle: { fontSize: 21, lineHeight: 26 },
   compactHeader: { borderBottomWidth: StyleSheet.hairlineWidth },
+  headerShortcuts: { gap: 8, paddingBottom: spacing.compact },
+  headerShortcut: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+  },
+  shortcutLabel: {
+    flexShrink: 1,
+    textAlign: "center",
+    fontSize: 13,
+    lineHeight: 18,
+  },
   modal: { flex: 1 },
   headerMenu: {
     position: "absolute",
@@ -1237,22 +1509,44 @@ const chatStyles = StyleSheet.create({
   conversation: {
     flexGrow: 1,
     justifyContent: "flex-end",
-    paddingVertical: spacing.row,
+    paddingBottom: spacing.row,
   },
   transcriptFooter: { gap: spacing.row },
   footerSpacing: { marginBottom: spacing.row },
   messageSpacing: { height: spacing.row },
-  latest: { position: "absolute", bottom: spacing.row },
+  latest: { position: "absolute" },
   thinking: {
     alignSelf: "flex-start",
     borderRadius: 16,
     paddingHorizontal: spacing.row,
     paddingVertical: spacing.compact,
   },
-  composer: { paddingTop: 6 },
+  composer: { position: "absolute" },
+  composerAccessories: { flexGrow: 0, marginBottom: spacing.compact },
+  sendFailure: {
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
+    marginBottom: spacing.compact,
+    gap: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+  },
+  retryAction: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: spacing.row,
+    borderRadius: 22,
+  },
+  voiceDetails: {
+    padding: spacing.row,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+  },
   composerMenu: {
     padding: 12,
-    marginBottom: 9,
     borderRadius: 20,
     borderWidth: 1,
     boxShadow: "0 8px 22px #271C131A",
@@ -1276,34 +1570,15 @@ const chatStyles = StyleSheet.create({
     paddingLeft: 9,
     marginTop: 4,
   },
-  composerRow: { alignItems: "flex-end", gap: 6 },
-  messageInput: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    maxHeight: 116,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderRadius: 22,
-    fontFamily: "Inter_400Regular",
-    fontSize: 15,
-    lineHeight: 22,
-    textAlignVertical: "top",
-  },
-  sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  composerRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
 });
 
 export function HistoryScreen() {
   const app = useApp();
   const { colors } = useTheme();
+  const gutter = useScreenGutter();
+  const { bottom } = useSafeAreaInsets();
+  const navigationInset = useNavigationInset();
   const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(30);
   const [failure, setFailure] = useState("");
@@ -1312,38 +1587,48 @@ export function HistoryScreen() {
   const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const renamePending = useRef(false);
-  const searchIndex = useMemo(
+  const conversations = useMemo(
     () =>
-      [...app.data.conversations]
-        .sort((a, b) =>
-          String(b.updatedAt || b.createdAt).localeCompare(
-            String(a.updatedAt || a.createdAt),
-          ),
-        )
-        .map((conversation) => ({
-          conversation,
-          text: [
-            conversation.title,
-            ...(conversation.messages || []).map(
-              (message: any) => message.content,
-            ),
-          ]
-            .join(" ")
-            .toLocaleLowerCase(),
-        })),
+      [...app.data.conversations].sort((a, b) =>
+        String(b.updatedAt || b.createdAt).localeCompare(
+          String(a.updatedAt || a.createdAt),
+        ),
+      ),
     [app.data.conversations],
   );
-  const conversations = useMemo(
-    () => searchIndex.map((item) => item.conversation),
-    [searchIndex],
+  const search = useDeferredValue(query.trim().toLocaleLowerCase());
+  const searching = !!search;
+  // Opening a history list needs just its card previews. Build the full-text
+  // index on the first search, away from the immediate input update.
+  const searchIndex = useMemo(
+    () =>
+      searching
+        ? conversations.map((conversation) => ({
+            conversation,
+            text: [
+              conversation.title,
+              ...(conversation.messages || []).map(
+                (message: any) => message.content,
+              ),
+            ]
+              .join(" ")
+              .toLocaleLowerCase(),
+          }))
+        : undefined,
+    [conversations, searching],
   );
-  const search = query.trim().toLocaleLowerCase();
   const filtered = useMemo(
     () =>
       searchIndex
-        .filter((item) => !search || item.text.includes(search))
-        .map((item) => item.conversation),
-    [searchIndex, search],
+        ? searchIndex
+            .filter((item) => item.text.includes(search))
+            .map((item) => item.conversation)
+        : conversations,
+    [conversations, searchIndex, search],
+  );
+  const visible = useMemo(
+    () => filtered.slice(0, visibleCount),
+    [filtered, visibleCount],
   );
   useEffect(() => {
     setVisibleCount(30);
@@ -1372,8 +1657,8 @@ export function HistoryScreen() {
       setSaving(false);
     }
   }
-  return (
-    <Screen>
+  const historyHeader = (
+    <>
       <Row
         style={{
           justifyContent: "space-between",
@@ -1441,179 +1726,210 @@ export function HistoryScreen() {
             : `${conversations.length} ${conversations.length === 1 ? "conversation" : "conversations"}`}
         </AppText>
       )}
-      {filtered.length === 0 ? (
-        <View style={{ alignItems: "center", paddingVertical: 32 }}>
-          <Icon
-            name={search ? "search-outline" : "chatbubbles-outline"}
-            size={32}
-            color={colors.muted}
-          />
-          <AppText variant="heading" style={{ marginTop: 14 }}>
-            {search ? "No conversations found" : "A fresh beginning"}
-          </AppText>
-          <AppText
-            color={colors.muted}
-            style={{ marginTop: 8, textAlign: "center", maxWidth: 280 }}
-          >
-            {search
-              ? "Try a different word from a title or message."
-              : "Your conversations will be here whenever you want to return."}
-          </AppText>
-          {!!search && (
-            <Button
-              title="Clear search"
-              variant="ghost"
-              onPress={() => setQuery("")}
-              style={{ marginTop: 12 }}
-            />
-          )}
-        </View>
-      ) : (
-        filtered.slice(0, visibleCount).map((c) => (
-          <View
-            key={c.id}
-            style={{
-              paddingVertical: 18,
-              borderBottomWidth: 0.75,
-              borderBottomColor: colors.border,
-            }}
-          >
-            {editing === c.id ? (
-              <View style={{ gap: 12 }}>
-                <AppText variant="label">Conversation name</AppText>
-                <Input
-                  accessibilityLabel="Conversation name"
-                  value={title}
-                  onChangeText={setTitle}
-                  maxLength={160}
-                  editable={!saving}
-                  autoFocus
-                  onSubmitEditing={() => rename(String(c.id))}
-                />
-                <Row>
-                  <Button
-                    title="Save name"
-                    loading={saving}
-                    onPress={() => rename(String(c.id))}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    title="Cancel"
-                    variant="secondary"
-                    disabled={saving}
-                    onPress={() => {
-                      setEditing(null);
-                      setFailure("");
-                    }}
-                    style={{ flex: 1 }}
-                  />
-                </Row>
-              </View>
-            ) : (
-              <>
-                <Row style={{ alignItems: "flex-start", gap: 6 }}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Open ${c.title || "conversation"}`}
-                    onPress={() => app.navigate(routes.companion, { id: c.id })}
-                    style={({ pressed }) => ({
-                      flex: 1,
-                      minHeight: 66,
-                      opacity: pressed ? 0.7 : 1,
-                    })}
-                  >
-                    <AppText
-                      variant="heading"
-                      numberOfLines={2}
-                      style={{ fontSize: 25, lineHeight: 28 }}
-                    >
-                      {c.title || "A conversation"}
-                    </AppText>
-                    <AppText
-                      variant="caption"
-                      color={colors.muted}
-                      style={{ marginTop: 5 }}
-                    >
-                      {dateLabel(c.updatedAt || c.createdAt)} ·{" "}
-                      {(c.messages || []).length} messages
-                    </AppText>
-                    <AppText
-                      numberOfLines={2}
-                      color={colors.muted}
-                      style={{ marginTop: 8, fontSize: 14, lineHeight: 21 }}
-                    >
-                      {c.messages?.at(-1)?.content ||
-                        "Continue your conversation"}
-                    </AppText>
-                  </Pressable>
-                  <View>
-                    <IconButton
-                      name="pencil-outline"
-                      label={`Rename ${c.title || "conversation"}`}
-                      disabled={!!deleting}
-                      onPress={() => {
-                        setEditing(String(c.id));
-                        setTitle(c.title || "");
-                        setFailure("");
-                      }}
-                    />
-                    <IconButton
-                      name="trash-outline"
-                      label={`Delete ${c.title || "conversation"}`}
-                      disabled={!!deleting}
-                      onPress={() =>
-                        confirmAction(
-                          "Delete conversation?",
-                          "This removes the conversation and its linked memories.",
-                          () => {
-                            setFailure("");
-                            setDeleting(String(c.id));
-                            app
-                              .remove("conversations", String(c.id))
-                              .catch((e) =>
-                                setFailure(
-                                  e.message ||
-                                    "Could not delete. Please try again.",
-                                ),
-                              )
-                              .finally(() => setDeleting(null));
-                          },
-                        )
-                      }
-                    />
-                  </View>
-                </Row>
-                {deleting === c.id && (
-                  <AppText
-                    variant="caption"
-                    color={colors.muted}
-                    accessibilityLiveRegion="polite"
-                    style={{ marginTop: 8 }}
-                  >
-                    Deleting conversation…
-                  </AppText>
-                )}
-              </>
-            )}
-          </View>
-        ))
-      )}
-      {filtered.length > visibleCount && (
-        <View style={{ marginTop: 18 }}>
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ textAlign: "center", marginBottom: 10 }}
-          >
-            Showing {visibleCount} of {filtered.length}
-          </AppText>
-          <Button
-            title={`Show ${Math.min(30, filtered.length - visibleCount)} more conversations`}
-            variant="secondary"
-            onPress={() => setVisibleCount((count) => count + 30)}
-          />
-        </View>
-      )}
-    </Screen>
+    </>
   );
+  const emptyHistory = (
+    <View style={{ alignItems: "center", paddingVertical: 32 }}>
+      <Icon
+        name={search ? "search-outline" : "chatbubbles-outline"}
+        size={32}
+        color={colors.muted}
+      />
+      <AppText variant="heading" style={{ marginTop: 14 }}>
+        {search ? "No conversations found" : "A fresh beginning"}
+      </AppText>
+      <AppText
+        color={colors.muted}
+        style={{ marginTop: 8, textAlign: "center", maxWidth: 280 }}
+      >
+        {search
+          ? "Try a different word from a title or message."
+          : "Your conversations will be here whenever you want to return."}
+      </AppText>
+      {!!search && (
+        <Button
+          title="Clear search"
+          variant="ghost"
+          onPress={() => setQuery("")}
+          style={{ marginTop: 12 }}
+        />
+      )}
+    </View>
+  );
+  function renderConversation({ item: c }: { item: Item }) {
+    return (
+      <View
+        style={{
+          paddingVertical: 18,
+          borderBottomWidth: 0.75,
+          borderBottomColor: colors.border,
+        }}
+      >
+        {editing === c.id ? (
+          <View style={{ gap: 12 }}>
+            <AppText variant="label">Conversation name</AppText>
+            <Input
+              accessibilityLabel="Conversation name"
+              value={title}
+              onChangeText={setTitle}
+              maxLength={160}
+              editable={!saving}
+              autoFocus
+              onSubmitEditing={() => rename(String(c.id))}
+            />
+            <Row>
+              <Button
+                title="Save name"
+                loading={saving}
+                onPress={() => rename(String(c.id))}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="Cancel"
+                variant="secondary"
+                disabled={saving}
+                onPress={() => {
+                  setEditing(null);
+                  setFailure("");
+                }}
+                style={{ flex: 1 }}
+              />
+            </Row>
+          </View>
+        ) : (
+          <>
+            <Row style={{ alignItems: "flex-start", gap: 6 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${c.title || "conversation"}`}
+                onPress={() => app.navigate(routes.companion, { id: c.id })}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  minHeight: 66,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <AppText
+                  variant="heading"
+                  numberOfLines={2}
+                  style={{ fontSize: 25, lineHeight: 28 }}
+                >
+                  {c.title || "A conversation"}
+                </AppText>
+                <AppText
+                  variant="caption"
+                  color={colors.muted}
+                  style={{ marginTop: 5 }}
+                >
+                  {dateLabel(c.updatedAt || c.createdAt)} ·{" "}
+                  {(c.messages || []).length} messages
+                </AppText>
+                <AppText
+                  numberOfLines={2}
+                  color={colors.muted}
+                  style={{ marginTop: 8, fontSize: 14, lineHeight: 21 }}
+                >
+                  {c.messages?.at(-1)?.content || "Continue your conversation"}
+                </AppText>
+              </Pressable>
+              <View>
+                <IconButton
+                  name="pencil-outline"
+                  label={`Rename ${c.title || "conversation"}`}
+                  disabled={!!deleting}
+                  onPress={() => {
+                    setEditing(String(c.id));
+                    setTitle(c.title || "");
+                    setFailure("");
+                  }}
+                />
+                <IconButton
+                  name="trash-outline"
+                  label={`Delete ${c.title || "conversation"}`}
+                  disabled={!!deleting}
+                  onPress={() =>
+                    confirmAction(
+                      "Delete conversation?",
+                      "This removes the conversation and its linked memories.",
+                      () => {
+                        setFailure("");
+                        setDeleting(String(c.id));
+                        app
+                          .remove("conversations", String(c.id))
+                          .catch((e) =>
+                            setFailure(
+                              e.message ||
+                                "Could not delete. Please try again.",
+                            ),
+                          )
+                          .finally(() => setDeleting(null));
+                      },
+                    )
+                  }
+                />
+              </View>
+            </Row>
+            {deleting === c.id && (
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                accessibilityLiveRegion="polite"
+                style={{ marginTop: 8 }}
+              >
+                Deleting conversation…
+              </AppText>
+            )}
+          </>
+        )}
+      </View>
+    );
+  }
+  const loadMore =
+    filtered.length > visibleCount ? (
+      <View style={{ marginTop: 18 }}>
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={{ textAlign: "center", marginBottom: 10 }}
+        >
+          Showing {visibleCount} of {filtered.length}
+        </AppText>
+        <Button
+          title={`Show ${Math.min(30, filtered.length - visibleCount)} more conversations`}
+          variant="secondary"
+          onPress={() => setVisibleCount((count) => count + 30)}
+        />
+      </View>
+    ) : null;
+  return (
+    <SafeAreaView
+      edges={["top"]}
+      style={{ flex: 1, backgroundColor: colors.bg }}
+    >
+      <FlatList
+        data={visible}
+        renderItem={renderConversation}
+        keyExtractor={conversationKey}
+        ListHeaderComponent={historyHeader}
+        ListEmptyComponent={emptyHistory}
+        ListFooterComponent={loadMore ?? undefined}
+        initialNumToRender={8}
+        windowSize={7}
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingHorizontal: gutter,
+          paddingTop: spacing.screenTop,
+          paddingBottom: spacing.bottom + Math.max(bottom, navigationInset),
+        }}
+      />
+    </SafeAreaView>
+  );
+}
+
+function conversationKey(conversation: Item) {
+  return String(conversation.id);
 }

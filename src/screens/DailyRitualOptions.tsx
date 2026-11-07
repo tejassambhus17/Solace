@@ -54,9 +54,15 @@ function RitualOption({
 }
 
 export function DailyRitualOptions({
+  heading,
+  children,
+  reasonAction,
   settings,
   canSkip,
 }: {
+  heading: React.ReactNode;
+  children: React.ReactNode;
+  reasonAction?: React.ReactNode;
   settings: DailyRitualSettings;
   canSkip: boolean;
 }) {
@@ -95,11 +101,13 @@ export function DailyRitualOptions({
   }
 
   return (
-    <View style={{ gap: spacing.compact }}>
-      {settings.enabled ? (
-        <Row style={styles.wrap}>
+    <View style={styles.layout}>
+      <Row style={styles.header}>
+        {heading}
+        {settings.enabled && (
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Customize daily pause"
             accessibilityState={{ expanded: open, disabled: saving }}
             disabled={saving}
             onPress={() => {
@@ -109,10 +117,18 @@ export function DailyRitualOptions({
               }
               setOpen(!open);
             }}
-            style={styles.textAction}
+            style={({ pressed }) => [
+              styles.textAction,
+              styles.customize,
+              pressed && styles.pressed,
+            ]}
           >
-            <AppText variant="label" color={colors.lavenderText}>
-              Customize daily pause
+            <AppText
+              variant="label"
+              color={colors.lavenderText}
+              style={styles.actionLabel}
+            >
+              Customize
             </AppText>
             <Icon
               name={open ? "chevron-up" : "chevron-down"}
@@ -120,24 +136,39 @@ export function DailyRitualOptions({
               color={colors.lavenderText}
             />
           </Pressable>
-          {canSkip && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: saving }}
-              disabled={saving}
-              onPress={() =>
-                void save({ skipPractice: !settings.skipPractice })
-              }
-              style={styles.textAction}
-            >
-              <AppText variant="label" color={colors.muted}>
-                {settings.skipPractice
-                  ? "Include a Moment today"
-                  : "Skip today’s Moment"}
-              </AppText>
-            </Pressable>
-          )}
-        </Row>
+        )}
+      </Row>
+      {children}
+      {settings.enabled ? (
+        (reasonAction || canSkip) && (
+          <Row style={styles.supportActions}>
+            {reasonAction}
+            {canSkip && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: saving }}
+                disabled={saving}
+                onPress={() =>
+                  void save({ skipPractice: !settings.skipPractice })
+                }
+                style={({ pressed }) => [
+                  styles.textAction,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <AppText
+                  variant="caption"
+                  color={colors.muted}
+                  style={styles.actionLabel}
+                >
+                  {settings.skipPractice
+                    ? "Include a Moment today"
+                    : "Skip today’s Moment"}
+                </AppText>
+              </Pressable>
+            )}
+          </Row>
+        )
       ) : (
         <Button
           title="Turn on daily pause"
@@ -148,6 +179,11 @@ export function DailyRitualOptions({
       )}
       {open && settings.enabled && (
         <View style={[styles.choices, { borderColor: colors.heroBorder }]}>
+          <AppText variant="caption" color={colors.muted}>
+            Daily Pause builds its suggestion on this device. With
+            personalization on, it can use your active Journey goal and activity
+            preferences you choose to remember.
+          </AppText>
           <AppText variant="label">Today’s activity</AppText>
           <Row style={styles.wrap}>
             <RitualOption
@@ -218,6 +254,14 @@ export function DailyRitualOptions({
 }
 
 const styles = StyleSheet.create({
+  layout: { gap: spacing.compact },
+  header: { gap: spacing.compact },
+  supportActions: {
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    columnGap: spacing.row,
+    rowGap: 0,
+  },
   wrap: { flexWrap: "wrap", gap: spacing.compact },
   option: {
     borderRadius: 14,
@@ -229,12 +273,15 @@ const styles = StyleSheet.create({
   },
   textAction: {
     flexDirection: "row",
-    gap: spacing.compact,
+    gap: 4,
     minHeight: 48,
     alignItems: "center",
     maxWidth: "100%",
-    paddingVertical: spacing.compact,
+    paddingVertical: 4,
   },
+  customize: { maxWidth: "43%", minWidth: 48, justifyContent: "flex-end" },
+  actionLabel: { flexShrink: 1, fontSize: 12, lineHeight: 17 },
+  pressed: { opacity: 0.7 },
   choices: {
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: spacing.row,

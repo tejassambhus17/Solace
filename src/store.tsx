@@ -39,6 +39,17 @@ import {
 
 import type { MomentResult } from "../server/src/moment-contract";
 import type {
+  Habit,
+  HabitDraft,
+  HabitGarden,
+  HabitProgress,
+  HabitStatus,
+} from "../server/src/habit-contract";
+import type {
+  HabitAiInput,
+  HabitAiResult,
+} from "../server/src/habit-ai-contract";
+import type {
   JournalAction,
   JournalReflectionResult,
   JournalSelection,
@@ -80,8 +91,26 @@ export type Collection =
   | "favorites"
   | "preferences"
   | "goals";
-export type Data = Record<Collection, Item[]>;
+export type Data = Record<Collection, Item[]> & {
+  habits: Habit[];
+  habitProgress: HabitProgress[];
+  habitGarden: HabitGarden[];
+};
+type HabitEdit = { draft?: HabitDraft; status?: HabitStatus };
+type HabitSaveResult = { habit: Habit; reminderNotice?: string };
+type HabitProgressWrite = {
+  day: string;
+  amount: number;
+  expectedRevision: number;
+  sessionId?: string;
+};
 export type EditorDraft = Record<string, string>;
+type DraftPersistence = "writing" | "committed" | "failed";
+type PendingWriteTarget = Pick<PendingWrite, "collection" | "id">;
+type PendingWriteStatus = Omit<PendingWrite, "record"> & {
+  syncState?: "syncing" | "failed";
+  syncError?: string;
+};
 const mainTabs = [
   routes.today,
   routes.companion,
@@ -130,17 +159,24 @@ function rememberSolaceView(navigation: NavigationState) {
         ? "journal"
         : null;
   if (!mode) return navigation.solaceViews;
-  const handoffIndex = stack.findIndex(
-    (entry) => entry.name === routes.companion && entry.params.fromJournal,
+  const firstTemporary = stack.findIndex(
+    (entry) =>
+      immersiveRoutes.has(entry.name) ||
+      entry.returnTab ||
+      entry.returnMode ||
+      (entry.name === routes.companion && entry.params.fromJournal),
   );
-  const crossTabIndex = stack.findIndex(
-    (entry) => entry.returnTab || entry.returnMode,
-  );
-  const firstTemporary = Math.min(
-    handoffIndex < 0 ? stack.length : handoffIndex,
-    crossTabIndex < 0 ? stack.length : crossTabIndex,
-  );
-  return { ...navigation.solaceViews, [mode]: stack.slice(0, firstTemporary) };
+  return {
+    ...navigation.solaceViews,
+    [mode]: firstTemporary < 0 ? stack : stack.slice(0, firstTemporary),
+  };
+}
+
+function stacksAfterLeavingImmersive({ activeTab, stacks }: NavigationState) {
+  const active = stacks[activeTab]!;
+  if (active.length < 2 || !immersiveRoutes.has(active.at(-1)!.name))
+    return stacks;
+  return { ...stacks, [activeTab]: active.slice(0, -1) };
 }
 
 const routeEntry = (
@@ -185,6 +221,9 @@ const emptyData = (): Data => ({
   favorites: [],
   preferences: [],
   goals: [],
+  habits: [],
+  habitProgress: [],
+  habitGarden: [],
 });
 const apiConfiguration = resolveApiConfiguration({
   configuredUrl: process.env.EXPO_PUBLIC_API_URL,
@@ -259,17 +298,18 @@ export type AppState = {
   chatPending: Record<string, string>;
   setChatDraft: (key: string, text: string, expected?: string) => void;
   editorDrafts: Record<string, EditorDraft>;
+  editorDraftPersistence: Partial<Record<string, DraftPersistence>>;
   setEditorDraft: (
     key: string,
     draft: EditorDraft | null,
     expected?: EditorDraft,
   ) => void;
   flushEditorDrafts: () => Promise<boolean>;
-  pendingWrites: Omit<PendingWrite, "record">[];
+  pendingWrites: PendingWriteStatus[];
   syncingWrites: boolean;
   offlineError: string | null;
   draftProtection: "device" | "memory";
-  flushPendingWrites: () => Promise<void>;
+  flushPendingWrites: (target?: PendingWriteTarget) => Promise<void>;
   discardPendingWrite: (id: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
@@ -303,6 +343,22 @@ export type AppState = {
     journalDraft?: { key: string; value: EditorDraft },
   ) => Promise<Item>;
   remove: (collection: Collection, id: string) => Promise<void>;
+  createHabit: (draft: HabitDraft, id: string) => Promise<HabitSaveResult>;
+  editHabit: (
+    id: string,
+    expectedRevision: number,
+    change: HabitEdit,
+  ) => Promise<HabitSaveResult>;
+  deleteHabit: (id: string) => Promise<{ reminderNotice?: string }>;
+  setHabitProgress: (
+    id: string,
+    write: HabitProgressWrite,
+  ) => Promise<HabitProgress>;
+  retryHabitReminder: (habit: Habit) => Promise<string | undefined>;
+  suggestHabit: (
+    input: HabitAiInput,
+    signal?: AbortSignal,
+  ) => Promise<HabitAiResult>;
   navigate: (name: string, params?: Record<string, any>) => void;
   setParams: (params: Record<string, any>) => void;
   back: () => void;
@@ -367,6 +423,7 @@ async function request(
       "/chat",
       "/moments/generate",
       "/insights/weekly",
+      "/habits/suggest",
       "/voice/transcribe",
     ].includes(path)
       ? 45000
@@ -449,6 +506,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLocalLock(next);
   };
   const inFlightChats = useRef(new Set<string>());
+  const inFlightHabits = useRef(new Set<string>());
   const [chatPending, setChatPending] = useState<Record<string, string>>({});
   const sessionRequests = useRef<AbortController | null>(null);
   sessionRequests.current ??= new AbortController();
@@ -583,14 +641,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [editorDrafts, setEditorDrafts] = useState<Record<string, EditorDraft>>(
     {},
   );
-  const [pendingWrites, setPendingWrites] = useState<
-    Omit<PendingWrite, "record">[]
-  >([]);
+  const [editorDraftPersistence, setEditorDraftPersistence] = useState<
+    Partial<Record<string, DraftPersistence>>
+  >({});
+  const [pendingWrites, setPendingWrites] = useState<PendingWriteStatus[]>([]);
   const [syncingWrites, setSyncingWrites] = useState(false);
   const [offlineError, setOfflineError] = useState<string | null>(null);
+  const isSameWrite = (entry: PendingWriteTarget, target: PendingWriteTarget) =>
+    entry.id === target.id && entry.collection === target.collection;
   const publishPending = (entries: PendingWrite[]) => {
     pending.current = entries;
-    setPendingWrites(entries.map(({ record: _record, ...entry }) => entry));
+    setPendingWrites((previous) =>
+      entries.map(
+        ({ record: _record, ...entry }) =>
+          previous.find((old) => isSameWrite(old, entry)) ?? entry,
+      ),
+    );
   };
   const mergePending = (snapshot: Data) => {
     const next = { ...emptyData(), ...snapshot };
@@ -611,6 +677,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       writingOwner.current = account;
       editors.current = { ...snapshot.drafts, ...editors.current };
       setEditorDrafts(editors.current);
+      markDraftPersistence(snapshot.drafts, "committed", version);
       setOfflineError(null);
     } catch (error) {
       if (version === generation.current)
@@ -648,27 +715,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     !!current &&
     Object.keys(current).length === Object.keys(expected).length &&
     Object.keys(expected).every((field) => current[field] === expected[field]);
+  const markDraftPersistence = (
+    drafts: Record<string, EditorDraft>,
+    status: DraftPersistence,
+    version: number,
+  ) => {
+    setEditorDraftPersistence((previous) => {
+      if (version !== generation.current) return previous;
+      let next = previous;
+      for (const [key, draft] of Object.entries(drafts)) {
+        if (
+          previous[key] !== status &&
+          sameDraft(editors.current[key], draft) &&
+          (status !== "failed" || previous[key] !== "committed")
+        ) {
+          if (next === previous) next = { ...previous };
+          next[key] = status;
+        }
+      }
+      return next;
+    });
+  };
   const flushEditorDrafts = async (checkpoint?: () => boolean) => {
     const account = owner.current;
     const canWrite = checkpoint ?? (() => canUseAccount(draftGeneration));
     if (!account || !canWrite()) return false;
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = null;
+    const protectedDrafts = () =>
+      Object.fromEntries(
+        Object.entries(editors.current).filter(([key]) =>
+          isProtectedDraft(key),
+        ),
+      );
+    let attempted = protectedDrafts();
     try {
-      await vault.update(account, (snapshot) => {
+      const committed = await vault.update(account, (snapshot) => {
         if (!canWrite()) return snapshot;
-        const drafts = Object.fromEntries(
-          Object.entries(editors.current).filter(([key]) =>
-            isProtectedDraft(key),
-          ),
-        );
-        return { ...snapshot, drafts };
+        attempted = protectedDrafts();
+        return { ...snapshot, drafts: attempted };
       });
       if (!canWrite()) return false;
+      markDraftPersistence(committed.drafts, "committed", generation.current);
       setOfflineError(null);
       return true;
     } catch (error) {
       if (canWrite()) {
+        markDraftPersistence(attempted, "failed", generation.current);
         setOfflineError(
           error instanceof Error
             ? error.message
@@ -693,6 +786,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     editors.current = next;
     setEditorDrafts(next);
     if (!owner.current || !isProtectedDraft(key)) return;
+    setEditorDraftPersistence((previous) => {
+      const next = { ...previous };
+      if (draft) next[key] = "writing";
+      else delete next[key];
+      return next;
+    });
     if (draftTimer.current) clearTimeout(draftTimer.current);
     // Short debounce limits keychain work while typing. Clear/save operations
     // commit immediately so a removed draft does not reappear after restart.
@@ -721,6 +820,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSessionExpired(true);
     setBusy(false);
     setSyncingWrites(false);
+    setPendingWrites((entries) =>
+      entries.map((entry) =>
+        entry.syncState === "syncing"
+          ? { ...entry, syncState: undefined }
+          : entry,
+      ),
+    );
     // Drafts and the intended route stay in memory for this account only.
     // Authenticated content is hidden by Shell until reauthentication.
     void writeCredential(null, expiredVersion).catch(() => {});
@@ -979,6 +1085,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         chatAttempts.current.clear();
         setChatDrafts({});
         setEditorDrafts({});
+        setEditorDraftPersistence({});
         setData(emptyData());
         setNavigation(initialNavigation());
       }
@@ -1125,6 +1232,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chatAttempts.current.clear();
       setChatDrafts({});
       setEditorDrafts({});
+      setEditorDraftPersistence({});
       setNavigation(initialNavigation());
     } finally {
       finishAccountTransition(version);
@@ -1180,7 +1288,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return existing;
     }
   };
-  const flushPendingWrites = async () => {
+  const flushPendingWrites = async (target?: PendingWriteTarget) => {
     const version = draftGeneration;
     assertActiveSession(version);
     if (!token || !owner.current)
@@ -1190,15 +1298,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const job = (async () => {
       setSyncingWrites(true);
       setOfflineError(null);
+      let active: PendingWriteTarget | undefined;
       try {
         for (const entry of [...pending.current]) {
           assertSession(version);
-          if (discarding.current.has(entry.id)) continue;
+          if (
+            discarding.current.has(entry.id) ||
+            (target && !isSameWrite(entry, target))
+          )
+            continue;
+          active = entry;
+          setPendingWrites((entries) =>
+            entries.map((item) =>
+              isSameWrite(item, entry)
+                ? { ...item, syncState: "syncing", syncError: undefined }
+                : item,
+            ),
+          );
           const saved = await postWriting(entry, version);
           assertSession(version);
           const snapshot = await vault.update(account, (current) => ({
             ...current,
-            pending: current.pending.filter((item) => item.id !== entry.id),
+            pending: current.pending.filter(
+              (item) => !isSameWrite(item, entry),
+            ),
           }));
           assertSession(version);
           publishPending(snapshot.pending);
@@ -1212,14 +1335,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               ),
             ],
           }));
+          active = undefined;
         }
       } catch (error) {
-        if (version === generation.current)
-          setOfflineError(
+        if (version === generation.current) {
+          const failed = active;
+          const message =
             error instanceof Error
               ? error.message
-              : "Your writing is still on this device. Try syncing again.",
-          );
+              : "Couldn’t sync this entry. Try again.";
+          if (failed)
+            setPendingWrites((entries) =>
+              entries.map((entry) =>
+                isSameWrite(entry, failed)
+                  ? { ...entry, syncState: "failed", syncError: message }
+                  : entry,
+              ),
+            );
+          setOfflineError(message);
+        }
         throw error;
       } finally {
         if (version === generation.current) setSyncingWrites(false);
@@ -1530,6 +1664,160 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertSession(version);
     return result;
   };
+  const habitWrite = async <T,>(
+    id: string,
+    write: (version: number) => Promise<T>,
+  ) => {
+    const version = draftGeneration;
+    assertActiveSession(version);
+    const key = `${version}:${id}`;
+    if (inFlightHabits.current.has(key))
+      throw new Error("This habit is already being saved.");
+    inFlightHabits.current.add(key);
+    try {
+      return await write(version);
+    } catch (error) {
+      if (
+        (error as { status?: number }).status === 409 &&
+        version === generation.current
+      )
+        await refresh().catch(() => {});
+      throw error;
+    } finally {
+      inFlightHabits.current.delete(key);
+    }
+  };
+  const applyHabit = (habit: Habit) => {
+    revision.current += 1;
+    setData((previous) => ({
+      ...previous,
+      habits: [
+        habit,
+        ...previous.habits.filter((item) => item.id !== habit.id),
+      ],
+    }));
+  };
+  const applyHabitReminder = async (
+    version: number,
+    id: string,
+    habit: Habit | null,
+    ask: boolean,
+  ) => {
+    const { reconcileHabitReminder } = await import("./habit-reminders");
+    assertActiveSession(version);
+    const account = owner.current;
+    if (!account) return;
+    const notice = await reconcileHabitReminder(account, id, habit, ask);
+    assertSession(version);
+    return notice;
+  };
+  const createHabit: AppState["createHabit"] = (draft, id) =>
+    habitWrite(id, async (version) => {
+      const result = await featureRequest("/habits", {
+        method: "POST",
+        body: JSON.stringify({
+          ...draft,
+          id,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        }),
+      });
+      if (result?.habit?.id !== id)
+        throw new Error("Solace couldn’t confirm this habit. Please retry.");
+      const habit: Habit = result.habit;
+      applyHabit(habit);
+      const reminderNotice = habit.reminderTime
+        ? await applyHabitReminder(version, id, habit, true)
+        : undefined;
+      return { habit, reminderNotice };
+    });
+  const editHabit: AppState["editHabit"] = (id, expectedRevision, change) =>
+    habitWrite(id, async (version) => {
+      const before = data.habits.find((item) => item.id === id);
+      const result = await featureRequest(`/habits/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...change, expectedRevision }),
+      });
+      if (result?.habit?.id !== id)
+        throw new Error(
+          "Solace couldn’t confirm the habit update. Please retry.",
+        );
+      const habit: Habit = result.habit;
+      applyHabit(habit);
+      const timeChanged = before?.reminderTime !== habit.reminderTime;
+      const scheduleChanged =
+        JSON.stringify(before?.schedule) !== JSON.stringify(habit.schedule);
+      const reminderNotice =
+        (before?.reminderTime || habit.reminderTime) &&
+        (timeChanged || scheduleChanged || before?.status !== habit.status)
+          ? await applyHabitReminder(
+              version,
+              id,
+              habit,
+              !!change.draft && !!habit.reminderTime && !before?.reminderTime,
+            )
+          : undefined;
+      return { habit, reminderNotice };
+    });
+  const deleteHabit: AppState["deleteHabit"] = (id) =>
+    habitWrite(id, async (version) => {
+      await featureRequest(`/habits/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      revision.current += 1;
+      setData((previous) => ({
+        ...previous,
+        habits: previous.habits.filter((item) => item.id !== id),
+        habitProgress: previous.habitProgress.filter(
+          (item) => item.habitId !== id,
+        ),
+      }));
+      const reminderNotice = await applyHabitReminder(version, id, null, false);
+      return { reminderNotice };
+    });
+  const setHabitProgress: AppState["setHabitProgress"] = (id, write) =>
+    habitWrite(id, async () => {
+      const result = await featureRequest(
+        `/habits/${encodeURIComponent(id)}/progress`,
+        {
+          method: "PUT",
+          body: JSON.stringify(write),
+        },
+      );
+      if (
+        !result?.progress?.id ||
+        result.progress.habitId !== id ||
+        result.progress.day !== write.day
+      )
+        throw new Error("Solace couldn’t confirm your progress. Please retry.");
+      const progress: HabitProgress = result.progress;
+      const garden: HabitGarden | undefined = result.garden;
+      revision.current += 1;
+      setData((previous) => ({
+        ...previous,
+        habitProgress: [
+          progress,
+          ...previous.habitProgress.filter((item) => item.id !== progress.id),
+        ],
+        habitGarden:
+          garden &&
+          garden.earnedTotal > (previous.habitGarden[0]?.earnedTotal ?? 0)
+            ? [garden]
+            : previous.habitGarden,
+      }));
+      return progress;
+    });
+  const retryHabitReminder: AppState["retryHabitReminder"] = (habit) =>
+    habitWrite(habit.id, async (version) => {
+      const current = data.habits.find((item) => item.id === habit.id);
+      if (!current) throw new Error("This habit is no longer available.");
+      return applyHabitReminder(version, current.id, current, true);
+    });
+  const suggestHabit: AppState["suggestHabit"] = (input, signal) =>
+    featureRequest("/habits/suggest", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal,
+    });
   const reflectJournal: AppState["reflectJournal"] = async (
     id,
     selection,
@@ -1638,6 +1926,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       publishPending([]);
       editors.current = {};
       setEditorDrafts({});
+      setEditorDraftPersistence({});
       retryWriting.current = {};
       setData((previous) => ({
         ...previous,
@@ -1667,6 +1956,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chatAttempts.current.clear();
       setChatDrafts({});
       setEditorDrafts({});
+      setEditorDraftPersistence({});
       setSessionExpired(false);
       setSessionError(null);
       setNavigation(initialNavigation());
@@ -1748,6 +2038,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (
         old.activeTab === routes.companion &&
         existing?.[0].name === root &&
+        !immersiveRoutes.has(existing.at(-1)!.name) &&
         !existing.some((entry) => entry.params.fromJournal)
       )
         return old;
@@ -1759,7 +2050,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         solaceMode: mode,
         solaceViews: views,
         stacks: {
-          ...old.stacks,
+          ...stacksAfterLeavingImmersive(old),
           chat: saved?.length ? saved : [routeEntry(root)],
         },
       };
@@ -1790,6 +2081,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const previousRoute = previousStack[previousStack.length - 1];
       if (tab === routes.companion && entry.name === routes.companion) {
         const views = rememberSolaceView(old);
+        if (
+          params.habitAssistant === "reflect" ||
+          params.habitAssistant === "simplify"
+        ) {
+          const assistant = {
+            habitAssistant: params.habitAssistant,
+            habitAssistantId: isRecordId(params.habitAssistantId)
+              ? params.habitAssistantId
+              : undefined,
+          };
+          if (
+            old.activeTab === routes.companion &&
+            previousRoute.name === routes.companion
+          ) {
+            return {
+              ...old,
+              stacks: {
+                ...old.stacks,
+                chat: [
+                  ...previousStack.slice(0, -1),
+                  {
+                    ...previousRoute,
+                    params: { ...previousRoute.params, ...assistant },
+                  },
+                ],
+              },
+            };
+          }
+          const root = views?.companion?.[0] ?? routeEntry(routes.companion);
+          const sameMode =
+            old.activeTab === routes.companion &&
+            previousStack[0].name === routes.companion;
+          const handoff: RouteEntry = {
+            ...entry,
+            params: { ...root.params, ...assistant },
+            returnTab:
+              old.activeTab !== routes.companion ? old.activeTab : undefined,
+            returnMode:
+              old.activeTab === routes.companion &&
+              !sameMode &&
+              previousStack[0].name === routes.journal
+                ? "journal"
+                : undefined,
+          };
+          return {
+            ...old,
+            activeTab: routes.companion,
+            solaceMode: "companion",
+            solaceViews: views,
+            stacks: {
+              ...stacksAfterLeavingImmersive(old),
+              chat: [...(sameMode ? previousStack : [root]), handoff],
+            },
+          };
+        }
         const inJournal =
           old.activeTab === routes.companion &&
           previousStack[0].name === routes.journal;
@@ -1839,11 +2185,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           solaceMode: "companion",
           solaceViews: views,
           stacks: {
-            ...old.stacks,
-            ...(old.activeTab !== tab &&
-              immersiveRoutes.has(previousRoute.name) && {
-                [old.activeTab]: previousStack.slice(0, -1),
-              }),
+            ...stacksAfterLeavingImmersive(old),
             chat: [{ ...entry, params: safeParams }],
           },
         };
@@ -1867,7 +2209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           solaceMode: "journal",
           solaceViews: views,
           stacks: {
-            ...old.stacks,
+            ...stacksAfterLeavingImmersive(old),
             chat: [root, { ...entry, returnTab, returnMode }],
           },
         };
@@ -1877,8 +2219,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const reopenExplore = tab === "explore" && !Object.keys(params).length;
         if (reopenExplore && old.activeTab === tab && saved?.length === 1)
           return old;
-        const leavingPlayer =
-          old.activeTab !== tab && immersiveRoutes.has(previousRoute.name);
         return {
           ...old,
           activeTab: tab,
@@ -1886,10 +2226,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             solaceViews: rememberSolaceView(old),
           }),
           stacks: {
-            ...old.stacks,
-            ...(leavingPlayer && {
-              [old.activeTab]: previousStack.slice(0, -1),
-            }),
+            ...stacksAfterLeavingImmersive(old),
             [tab]: reopenExplore && saved ? saved.slice(0, 1) : [entry],
           },
         };
@@ -1982,6 +2319,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!tab) return;
     setNavigation((old) => {
       if (old.activeTab === tab) return old;
+      const stacks = stacksAfterLeavingImmersive(old);
       const root =
         tab === routes.companion
           ? old.solaceMode
@@ -1991,9 +2329,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return {
         ...old,
         activeTab: tab,
-        stacks: old.stacks[tab]
-          ? old.stacks
-          : { ...old.stacks, [tab]: [routeEntry(root)] },
+        stacks: stacks[tab] ? stacks : { ...stacks, [tab]: [routeEntry(root)] },
       };
     });
   };
@@ -2056,6 +2392,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       checkpointVersion = advanceSession();
       flushLock.current = null;
       setSyncingWrites(false);
+      setPendingWrites((entries) =>
+        entries.map((entry) =>
+          entry.syncState === "syncing"
+            ? { ...entry, syncState: undefined }
+            : entry,
+        ),
+      );
     };
     const relockApp = () => {
       if (lockState.current.locked || accountTransition.current !== null)
@@ -2070,8 +2413,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           state === "background" && lastNativeState.current !== "background";
         lastNativeState.current = state;
         if (enteredBackground) backgroundGeneration.current += 1;
-      const since = backgroundSince.current;
-      if (state === "active") backgroundSince.current = null;
+        const since = backgroundSince.current;
+        if (state === "active") backgroundSince.current = null;
         const policy = lockState.current.policy;
         if (
           !policy ||
@@ -2172,6 +2515,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         chatPending,
         setChatDraft,
         editorDrafts,
+        editorDraftPersistence,
         setEditorDraft,
         flushEditorDrafts,
         pendingWrites,
@@ -2194,6 +2538,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refresh,
         save,
         remove,
+        createHabit,
+        editHabit,
+        deleteHabit,
+        setHabitProgress,
+        retryHabitReminder,
+        suggestHabit,
         navigate,
         setParams,
         back,

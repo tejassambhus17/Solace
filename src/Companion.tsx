@@ -66,13 +66,14 @@ const gestures = {
 
 /** Solace's small petal companion. Its state belongs to the actual interaction,
  * never an inferred emotion or assessment of the person using the app. */
-export function Companion({
+export const Companion = React.memo(function Companion({
   state = "idle",
   size = 120,
   phase,
   breathing,
   breathingProgress,
-  soundLevel,
+  breathingMotion,
+  soundMotion,
   animate = true,
 }: {
   state?: CompanionState;
@@ -80,7 +81,8 @@ export function Companion({
   phase?: string;
   breathing?: { inhale: number; hold: number; exhale: number } | null;
   breathingProgress?: number;
-  soundLevel?: number;
+  breathingMotion?: Animated.Value;
+  soundMotion?: Animated.Value;
   animate?: boolean;
 }) {
   const { resolved, colors } = useTheme();
@@ -90,8 +92,15 @@ export function Companion({
   );
   const [motion] = useState(() => new Animated.Value(0));
   const gesture = gestures[state];
-  const progress = state === "breathing" ? breathingProgress
-    : state === "listening" ? soundLevel : undefined;
+  const controlled =
+    state === "breathing"
+      ? breathingMotion
+      : state === "listening"
+        ? soundMotion
+        : undefined;
+  const progress = state === "breathing" ? breathingProgress : undefined;
+  const driver =
+    !reduced && active && animate && controlled ? controlled : motion;
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) =>
       setActive(next === "active"),
@@ -100,14 +109,14 @@ export function Companion({
   }, []);
   useEffect(() => {
     motion.stopAnimation();
-    if (reduced || !active || !animate) {
+    if (reduced || !active || !animate || controlled) {
       motion.setValue(0);
       return;
     }
     if (progress !== undefined && Number.isFinite(progress)) {
       const animation = Animated.timing(motion, {
         toValue: Math.max(0, Math.min(1, progress)),
-        duration: state === "listening" ? 125 : 240,
+        duration: 240,
         easing: Easing.linear,
         useNativeDriver: Platform.OS !== "web",
         isInteraction: false,
@@ -116,28 +125,37 @@ export function Companion({
       return () => animation.stop();
     }
     motion.setValue(0);
-    const cycle = Animated.sequence([
-      Animated.timing(motion, {
-        toValue: 1,
-        duration: state === "breathing" && breathing?.inhale ? 1000 * breathing.inhale : gesture.rise,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: Platform.OS !== "web",
-        isInteraction: false,
-      }),
-      ...(state === "breathing" && breathing?.hold
-        ? [Animated.delay(breathing.hold * 1000)]
-        : []),
-      Animated.timing(motion, {
-        toValue: 0,
-        duration: state === "breathing" && breathing?.exhale ? 1000 * breathing.exhale : gesture.fall,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: Platform.OS !== "web",
-        isInteraction: false,
-      }),
-    ]);
-    const animation = state === "happy" ? cycle : Animated.loop(cycle, {
-      iterations: state === "idle" ? 2 : -1,
+    const rise =
+      state === "breathing" && breathing?.inhale
+        ? breathing.inhale * 1000
+        : gesture.rise;
+    const hold = state === "breathing" ? (breathing?.hold ?? 0) * 1000 : 0;
+    const fall =
+      state === "breathing" && breathing?.exhale
+        ? breathing.exhale * 1000
+        : gesture.fall;
+    const duration = rise + hold + fall;
+    const ease = Easing.inOut(Easing.sin);
+    // One timing curve lets the native driver repeat the whole gesture without
+    // asking JavaScript to start the next phase or the next cycle.
+    const cycle = Animated.timing(motion, {
+      toValue: 1,
+      duration,
+      easing: (progress) => {
+        const elapsed = progress * duration;
+        if (elapsed < rise) return ease(elapsed / rise);
+        if (elapsed < rise + hold) return 1;
+        return ease((duration - elapsed) / fall);
+      },
+      useNativeDriver: Platform.OS !== "web",
+      isInteraction: false,
     });
+    const animation =
+      state === "happy"
+        ? cycle
+        : Animated.loop(cycle, {
+            iterations: state === "idle" ? 2 : -1,
+          });
     animation.start();
     return () => animation.stop();
   }, [
@@ -147,17 +165,33 @@ export function Companion({
     animate,
     gesture,
     motion,
+    controlled,
     breathing?.inhale,
     breathing?.hold,
     breathing?.exhale,
     progress,
   ]);
-  const { scale, rotate, lift, signal } = useMemo(() => ({
-    scale: motion.interpolate({ inputRange: [0, 1], outputRange: [1, gesture.scale] }),
-    rotate: motion.interpolate({ inputRange: [0, 1], outputRange: ["0deg", `${gesture.turn}deg`] }),
-    lift: motion.interpolate({ inputRange: [0, 1], outputRange: [0, -size * gesture.lift] }),
-    signal: motion.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }),
-  }), [gesture, motion, size]);
+  const { scale, rotate, lift, signal } = useMemo(
+    () => ({
+      scale: driver.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, gesture.scale],
+      }),
+      rotate: driver.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", `${gesture.turn}deg`],
+      }),
+      lift: driver.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, -size * gesture.lift],
+      }),
+      signal: driver.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.55, 1],
+      }),
+    }),
+    [gesture, driver, size],
+  );
   return (
     <View
       accessible
@@ -181,10 +215,13 @@ export function Companion({
           source={
             resolved === "dark"
               ? require("../assets/dark-petal.png")
-              : require("../assets/petal.png")
+              : size <= 128
+                ? require("../assets/petal-compact.png")
+                : require("../assets/petal.png")
           }
           accessible={false}
           style={{ width: size, height: size }}
+          fadeDuration={0}
           resizeMode="contain"
         />
         <View
@@ -247,4 +284,4 @@ export function Companion({
       )}
     </View>
   );
-}
+});

@@ -1,4 +1,9 @@
 import type { MomentResult, SolaceMoment } from "../server/src/moment-contract";
+import {
+  isCanonicalTimedPractice,
+  isTimedPracticeId,
+  timedPracticeBreathingStage,
+} from "../server/src/timed-practice-contract";
 
 export type { MomentEnvironment } from "../server/src/moment-contract";
 export type GeneratedMoment = MomentResult;
@@ -125,10 +130,12 @@ export function momentBreathingPosition(
   builtIn: boolean,
 ) {
   if (!activity.breathing || position.complete) return null;
+  const timedStage = timedPracticeBreathingStage(activity.id, position.index);
   // The three-step built-in breathing practices use the first and last steps
   // to arrive and return at a natural pace. The petal guides the middle step.
-  const staged = builtIn && activity.steps.length === 3;
-  if (staged && position.index !== 1) return null;
+  const staged =
+    timedStage !== undefined || (builtIn && activity.steps.length === 3);
+  if (staged && !(timedStage ?? position.index === 1)) return null;
   const cue = breathingPosition(
     staged ? position.stepElapsed : elapsedMs / 1000,
     activity.breathing,
@@ -151,6 +158,7 @@ const integer = (value: unknown, minimum: number, maximum: number) =>
 export function isPlayableMoment(value: unknown): value is SolaceMoment {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, any>;
+  if (isTimedPracticeId(v.id)) return isCanonicalTimedPractice(v);
   if (
     v.version !== 1 ||
     !boundedText(v.id, 100) ||

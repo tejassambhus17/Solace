@@ -120,13 +120,43 @@ function loadSource(
   return module.exports;
 }
 const featureGuard = loadSource("native-features.ts");
+test("widget routes accept only the four local destinations and ship without group entitlements", () => {
+  const { widgetDestination } = loadSource("widget-links.ts");
+  assert.equal(widgetDestination("solace://widget/today").route, "today");
+  assert.deepEqual(widgetDestination("solace://widget/breathe").params, {
+    durationSec: 180,
+    source: "widget",
+  });
+  assert.equal(
+    widgetDestination("solace://widget/affirmation").route,
+    "affirmation",
+  );
+  assert.equal(widgetDestination("solace://widget/reminders").tab, "profile");
+  for (const invalid of [
+    null,
+    "solace://widget/voice-talk",
+    "solace://widget/breathe?account=other",
+    "https://widget/breathe",
+    "solace://widget/%62reathe",
+  ])
+    assert.equal(widgetDestination(invalid), null);
+  assert.equal(config.scheme, "solace");
+  assert.equal(
+    mods.ios.entitlements?.["com.apple.security.application-groups"],
+    undefined,
+  );
+});
 test("an older native binary renders text fallbacks without evaluating missing audio libraries", () => {
   for (const platform of ["ios", "android"]) {
+    let showVoiceNotice;
     const requireMock = (name) => {
       if (name === "react")
         return {
           __esModule: true,
-          useState: (initial) => [initial, () => {}],
+          useState: (initial) => [
+            showVoiceNotice ?? initial,
+            (shown) => (showVoiceNotice = shown),
+          ],
           default: {
             Fragment: "Fragment",
             createElement: (type, props, ...children) => ({
@@ -136,13 +166,20 @@ test("an older native binary renders text fallbacks without evaluating missing a
             }),
           },
         };
-      if (name === "react-native") return { Platform: { OS: platform } };
+      if (name === "react-native")
+        return {
+          Platform: { OS: platform },
+          Pressable: "Pressable",
+          StyleSheet: { create: (styles) => styles },
+        };
       if (name === "expo") return { requireOptionalNativeModule: () => null };
       if (name === "./ui")
-        return { AppText: "AppText", IconButton: "IconButton" };
+        return { AppText: "AppText", Icon: "Icon", IconButton: "IconButton" };
       if (name === "./theme")
         return { useTheme: () => ({ colors: { muted: "#aaa" } }) };
       if (name === "./native-features") return featureGuard;
+      if (name === "./ChatComposer")
+        return loadSource("ChatComposer.tsx", requireMock);
       throw Error(`A missing native implementation was evaluated: ${name}`);
     };
     const { VoiceControls } = loadSource("VoiceControls.tsx", requireMock);
@@ -157,6 +194,24 @@ test("an older native binary renders text fallbacks without evaluating missing a
     assert.equal(
       rendered.children[1].microphone.props.label,
       "Voice availability",
+    );
+    const chat = VoiceControls({
+      renderComposer: (microphone, playback, details) => ({
+        microphone,
+        playback,
+        details,
+      }),
+    });
+    const composer = chat.type(chat.props);
+    assert.equal(composer.playback, null);
+    assert.equal(composer.details, undefined);
+    const microphone = composer.microphone.type(composer.microphone.props);
+    assert.equal(microphone.type, "Pressable");
+    assert.equal(microphone.props.accessibilityLabel, "Voice availability");
+    microphone.props.onPress();
+    assert.match(
+      chat.type(chat.props).details.children[0],
+      /still type your message/,
     );
     assert.equal(
       loadSource("AmbientSound.tsx", requireMock).AmbientSound({}).type,

@@ -17,6 +17,7 @@ import {
 import * as Speech from "expo-speech";
 import { File } from "expo-file-system";
 import { interruptAmbientPlayback } from "./audio-focus";
+import { ChatComposerControl } from "./ChatComposer";
 import { useApp } from "./store";
 import { useTheme } from "./theme";
 import { AppText, Icon, IconButton, Row, Button } from "./ui";
@@ -26,6 +27,9 @@ import {
   voiceMeterLevel,
   type VoiceState,
 } from "./voice-session";
+
+export type VoiceControlStage =
+  VoiceState | "review" | "starting-playback" | "speaking";
 
 async function recordingPermission() {
   const { granted } = await AudioModule.requestRecordingPermissionsAsync();
@@ -50,6 +54,7 @@ export function VoiceControlsImpl({
   reply,
   onTranscript,
   onState,
+  onStage,
   renderComposer,
   variant,
   autoReadKey,
@@ -59,10 +64,12 @@ export function VoiceControlsImpl({
   disabled: boolean;
   reply: string;
   onTranscript: (text: string) => boolean;
-  onState: (state: "idle" | "listening" | "thinking" | "speaking") => void;
+  onState?: (state: "idle" | "listening" | "thinking" | "speaking") => void;
+  onStage?: (stage: VoiceControlStage) => void;
   renderComposer?: (
     microphone: React.ReactNode,
     playback: React.ReactNode,
+    details?: React.ReactNode,
   ) => React.ReactNode;
   variant?: "talk";
   autoReadKey?: string;
@@ -70,13 +77,15 @@ export function VoiceControlsImpl({
   onMeter?: (level: number | null) => void;
 }) {
   const app = useApp();
-  const { colors, resolved } = useTheme();
+  const { colors } = useTheme();
   const { height } = useWindowDimensions();
   const talk = variant === "talk";
   const [state, setState] = useState<VoiceState>("idle");
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const displayedSeconds = useRef(0);
   const [speaking, setSpeaking] = useState(false);
   const [startingSpeech, setStartingSpeech] = useState(false);
+  const ownsSpeech = useRef(false);
   const speechTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoRead = useRef<string | undefined>(undefined);
   function clearSpeechWait() {
@@ -85,14 +94,32 @@ export function VoiceControlsImpl({
   }
   const [error, setError] = useState("");
   const [availability, setAvailability] = useState<
-    "checking" | "available" | "unconfigured" | "unreachable"
-  >("checking");
+    "unknown" | "checking" | "available" | "unconfigured" | "unreachable"
+  >(talk ? "checking" : "unknown");
+  const capabilityVersion = useRef(0);
+  const checking = useRef(false);
   const [showUnavailable, setShowUnavailable] = useState(false);
   const [review, setReview] = useState("");
   const mounted = useRef(true);
   const speechVersion = useRef(0);
-  const latest = useRef({ app, onTranscript, onState, onMeter, talk });
-  latest.current = { app, onTranscript, onState, onMeter, talk };
+  const latest = useRef({
+    app,
+    onTranscript,
+    onState,
+    onStage,
+    onMeter,
+    talk,
+    disabled,
+  });
+  latest.current = {
+    app,
+    onTranscript,
+    onState,
+    onStage,
+    onMeter,
+    talk,
+    disabled,
+  };
   const uri = useRef<string | null>(null);
   const mime = useRef(voiceContentType(Platform.OS));
   const turnRef = useRef<VoiceTurn | null>(null);
@@ -141,7 +168,7 @@ export function VoiceControlsImpl({
       start: async () => {
         ++speechVersion.current;
         clearSpeechWait();
-        await Speech.stop().catch(() => {});
+        await stopOwnedSpeech();
         if (mounted.current) {
           setSpeaking(false);
           setStartingSpeech(false);
@@ -220,7 +247,10 @@ export function VoiceControlsImpl({
       },
       changed: (next, failure) => {
         if (mounted.current) {
-          if (next === "listening") setRecordingSeconds(0);
+          if (next === "listening") {
+            displayedSeconds.current = 0;
+            setRecordingSeconds(0);
+          }
           setState(next);
           setError(failure);
         }
@@ -228,50 +258,89 @@ export function VoiceControlsImpl({
     });
   const turn = turnRef.current;
   async function check() {
+    if (checking.current) return;
+    checking.current = true;
+    const version = ++capabilityVersion.current;
     setAvailability("checking");
     try {
       const result = await latest.current.app.capabilities();
-      if (mounted.current)
-        setAvailability(
-          result.voiceTranscription === true ? "available" : "unconfigured",
-        );
+      if (!mounted.current || capabilityVersion.current !== version) return;
+      const available = result.voiceTranscription === true;
+      setAvailability(available ? "available" : "unconfigured");
+      return available;
     } catch {
-      if (mounted.current) setAvailability("unreachable");
+      if (!mounted.current || capabilityVersion.current !== version) return;
+      setAvailability("unreachable");
+      return false;
+    } finally {
+      if (capabilityVersion.current === version) checking.current = false;
     }
+  }
+  function stopOwnedSpeech() {
+    if (!ownsSpeech.current) return;
+    ownsSpeech.current = false;
+    return Speech.stop().catch(() => {});
   }
   useEffect(() => {
     mounted.current = true;
-    void check();
+    setState(turn.state);
+    setStartingSpeech(false);
+    setSpeaking(false);
+    setShowUnavailable(false);
+    setReview("");
+    setError("");
+    if (talk) void check();
+    else
+      setAvailability((previous) =>
+        previous === "checking" ? "unknown" : previous,
+      );
     const listener = AppState.addEventListener("change", (next) => {
       if (next === "active") return;
       ++speechVersion.current;
       clearSpeechWait();
       setStartingSpeech(false);
-      void Speech.stop().catch(() => {});
+      void stopOwnedSpeech();
       setSpeaking(false);
       void turn.leaveForeground();
     });
     return () => {
       mounted.current = false;
+      ++capabilityVersion.current;
+      checking.current = false;
       ++speechVersion.current;
       clearSpeechWait();
-      turn.dispose();
-      void Speech.stop().catch(() => {});
+      // Activity disconnects effects when Chat is hidden and reconnects them
+      // with the same recorder on return. Cancel the turn without disposing it.
+      if (turn.state !== "idle" || turn.canRetry) void turn.cancel();
+      void stopOwnedSpeech();
       listener.remove();
-      latest.current.onState("idle");
+      latest.current.onMeter?.(null);
+      latest.current.onState?.("idle");
+      latest.current.onStage?.("idle");
     };
   }, []);
   useEffect(() => {
-    latest.current.onState(
+    latest.current.onState?.(
       state === "listening"
         ? "listening"
-        : ["preparing", "transcribing", "cancelling"].includes(state)
+        : state !== "idle"
           ? "thinking"
           : speaking
             ? "speaking"
             : "idle",
     );
-  }, [state, speaking]);
+    latest.current.onStage?.(
+      state !== "idle"
+        ? state
+        : review
+          ? "review"
+          : speaking
+            ? "speaking"
+            : startingSpeech
+              ? "starting-playback"
+              : "idle",
+    );
+  }, [state, review, speaking, startingSpeech]);
   useEffect(() => {
     if (state !== "listening") {
       latest.current.onMeter?.(null);
@@ -293,7 +362,13 @@ export function VoiceControlsImpl({
         if (!inactive && talk)
           latest.current.onMeter?.(voiceMeterLevel(status.metering));
         if (!inactive && status.durationMillis >= 59_000) void turn.stop();
-        else setRecordingSeconds(Math.floor(status.durationMillis / 1000));
+        else {
+          const seconds = Math.floor(status.durationMillis / 1000);
+          if (seconds !== displayedSeconds.current) {
+            displayedSeconds.current = seconds;
+            setRecordingSeconds(seconds);
+          }
+        }
       },
       talk ? 120 : 250,
     );
@@ -316,7 +391,7 @@ export function VoiceControlsImpl({
       lastAutoRead.current = autoReadKey;
       if (!muted) void startSpeech();
     } else {
-      void Speech.stop().catch(() => {});
+      void stopOwnedSpeech();
     }
   }, [reply, disabled, autoReadKey, muted]);
   async function speak() {
@@ -324,7 +399,7 @@ export function VoiceControlsImpl({
       ++speechVersion.current;
       clearSpeechWait();
       setStartingSpeech(false);
-      await Speech.stop().catch(() => {});
+      await stopOwnedSpeech();
       setSpeaking(false);
       return;
     }
@@ -336,7 +411,7 @@ export function VoiceControlsImpl({
     setError("");
     setStartingSpeech(true);
     try {
-      await Speech.stop();
+      await stopOwnedSpeech();
       if (!mounted.current || speechVersion.current !== version) return;
       interruptAmbientPlayback();
       await setAudioModeAsync({
@@ -350,11 +425,11 @@ export function VoiceControlsImpl({
       speechTimer.current = setTimeout(() => {
         if (!mounted.current || speechVersion.current !== version) return;
         ++speechVersion.current;
-        void Speech.stop().catch(() => {});
+        void stopOwnedSpeech();
         setStartingSpeech(false);
         setSpeaking(false);
         setError(
-          "Audio couldn't start on this device. You can read the reply above or try again.",
+          "Audio couldn't start on this device. You can read the reply or try again.",
         );
       }, 8000);
       const limit =
@@ -362,6 +437,7 @@ export function VoiceControlsImpl({
         Speech.maxSpeechInputLength > 0
           ? Math.min(4000, Speech.maxSpeechInputLength)
           : 4000;
+      ownsSpeech.current = true;
       Speech.speak(reply.slice(0, limit), {
         rate: 0.9,
         onStart: () => {
@@ -373,6 +449,7 @@ export function VoiceControlsImpl({
         },
         onDone: () => {
           if (mounted.current && version === speechVersion.current) {
+            ownsSpeech.current = false;
             clearSpeechWait();
             setStartingSpeech(false);
             setSpeaking(false);
@@ -380,6 +457,7 @@ export function VoiceControlsImpl({
         },
         onStopped: () => {
           if (mounted.current && version === speechVersion.current) {
+            ownsSpeech.current = false;
             clearSpeechWait();
             setStartingSpeech(false);
             setSpeaking(false);
@@ -387,22 +465,24 @@ export function VoiceControlsImpl({
         },
         onError: () => {
           if (mounted.current && version === speechVersion.current) {
+            ownsSpeech.current = false;
             clearSpeechWait();
             setStartingSpeech(false);
             setSpeaking(false);
             setError(
-              "Audio playback couldn't start. You can read the reply above.",
+              "Audio playback couldn't start. You can read the reply instead.",
             );
           }
         },
       });
     } catch {
       if (mounted.current && version === speechVersion.current) {
+        void stopOwnedSpeech();
         clearSpeechWait();
         setStartingSpeech(false);
         setSpeaking(false);
         setError(
-          "Audio playback isn't available. You can read the reply above.",
+          "Audio playback isn't available. You can read the reply instead.",
         );
       }
     }
@@ -413,62 +493,77 @@ export function VoiceControlsImpl({
   const cancelling = state === "cancelling";
   const voiceBusy = preparing || transcribing || cancelling;
   const microphoneDisabled =
-    disabled || !!review || voiceBusy || (talk && availability !== "available");
-  const size = talk ? 70 : 46;
-  const microphone = (
+    disabled ||
+    !!review ||
+    voiceBusy ||
+    availability === "checking" ||
+    (talk && availability !== "available");
+  async function record() {
+    const available =
+      availability === "unknown" ? await check() : availability === "available";
+    if (!mounted.current || available === undefined || latest.current.disabled)
+      return;
+    if (!available) {
+      setShowUnavailable(true);
+      return;
+    }
+    if (
+      AppState.currentState === "background" ||
+      AppState.currentState === "inactive"
+    )
+      return;
+    Keyboard.dismiss();
+    setShowUnavailable(false);
+    void turn.start();
+  }
+  const microphoneLabel = listening
+    ? "Stop recording and transcribe"
+    : talk
+      ? "Start speaking"
+      : "Record a voice message";
+  const microphoneBusy = voiceBusy || availability === "checking";
+  const onMicrophone = () => {
+    if (listening) void turn.stop();
+    else void record();
+  };
+  const microphone = talk ? (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={
-        listening
-          ? "Stop recording and transcribe"
-          : talk
-            ? "Start speaking"
-            : "Record a voice message"
-      }
-      accessibilityState={{ disabled: microphoneDisabled, busy: voiceBusy }}
-      disabled={microphoneDisabled}
-      onPress={() => {
-        if (listening) void turn.stop();
-        else if (availability === "available") {
-          Keyboard.dismiss();
-          setShowUnavailable(false);
-          void turn.start();
-        } else setShowUnavailable(true);
+      accessibilityLabel={microphoneLabel}
+      accessibilityState={{
+        disabled: microphoneDisabled,
+        busy: microphoneBusy,
       }}
+      disabled={microphoneDisabled}
+      onPress={onMicrophone}
       style={({ pressed }) => ({
-        width: size,
-        height: size,
-        borderRadius: size / 2,
+        width: 70,
+        height: 70,
+        borderRadius: 35,
         flexShrink: 0,
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 1,
-        borderColor: talk
-          ? listening
-            ? colors.border
-            : colors.primary
-          : resolved === "dark"
-            ? "#655348"
-            : "#FFFFFF",
-        backgroundColor: listening
-          ? colors.peachSurface
-          : talk
-            ? colors.primary
-            : resolved === "dark"
-              ? "#25201DF5"
-              : "#FFF8EFF5",
-        boxShadow: talk ? undefined : "0 5px 14px #271C1314",
+        borderColor: listening ? colors.border : colors.primary,
+        backgroundColor: listening ? colors.peachSurface : colors.primary,
         opacity: microphoneDisabled ? 0.55 : pressed ? 0.72 : 1,
       })}
     >
       <Icon
         name={listening ? "stop" : "mic-outline"}
-        size={talk ? 27 : 21}
-        color={
-          listening ? colors.danger : talk ? colors.primaryText : colors.text
-        }
+        size={27}
+        color={listening ? colors.danger : colors.primaryText}
       />
     </Pressable>
+  ) : (
+    <ChatComposerControl
+      icon={listening ? "stop" : "mic-outline"}
+      label={microphoneLabel}
+      tone={listening ? "recording" : "quiet"}
+      onPress={onMicrophone}
+      disabled={microphoneDisabled}
+      busy={microphoneBusy}
+    />
   );
   const playback = !!reply && !muted && (
     <IconButton
@@ -530,7 +625,7 @@ export function VoiceControlsImpl({
       )}
       {!!review && (
         <View style={{ paddingVertical: 12, gap: 8 }}>
-          <AppText variant="label">Your voice, in words</AppText>
+          <AppText variant="label">Review transcript</AppText>
           {talk ? (
             <AppText selectable>{review}</AppText>
           ) : (
@@ -595,13 +690,23 @@ export function VoiceControlsImpl({
       )}
     </>
   );
+  const showDetails =
+    listening || voiceBusy || !!review || !!error || unavailable;
   return (
-    <View>
+    <View pointerEvents={renderComposer && !talk ? "box-none" : undefined}>
       {renderComposer ? (
-        <>
-          {details}
-          {renderComposer(microphone, playback)}
-        </>
+        talk ? (
+          <>
+            {details}
+            {renderComposer(microphone, playback)}
+          </>
+        ) : (
+          renderComposer(
+            microphone,
+            playback,
+            showDetails ? details : undefined,
+          )
+        )
       ) : (
         <>
           <Row style={{ justifyContent: "space-between" }}>

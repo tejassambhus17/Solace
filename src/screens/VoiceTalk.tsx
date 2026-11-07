@@ -1,5 +1,12 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  Animated,
   BackHandler,
   Keyboard,
   Platform,
@@ -8,8 +15,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Companion, useReducedMotion, type CompanionState } from "../Companion";
+import { Companion, useReducedMotion } from "../Companion";
 import { VoiceControls } from "../VoiceControls";
+import type { VoiceControlStage } from "../VoiceControlsImpl";
 import { spacing, useScreenGutter } from "../layout";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
@@ -21,18 +29,44 @@ import {
   Input,
   Row,
 } from "../ui";
+import { companionSendError } from "./ChatDetails";
 
 const MESSAGE_LIMIT = 4000;
-type TalkState = Extract<
-  CompanionState,
-  "idle" | "listening" | "thinking" | "speaking"
->;
-
-const stageText: Record<TalkState, string> = {
-  idle: "Talk to Solace",
-  listening: "Solace is listening",
-  thinking: "Preparing your voice turn",
-  speaking: "Solace is speaking",
+const METER_BARS = 13;
+const stages: Record<
+  VoiceControlStage | "replying",
+  [title: string, detail: string]
+> = {
+  idle: [
+    "Talk to Solace",
+    "Record a short message, review the words, then send.",
+  ],
+  preparing: [
+    "Starting microphone",
+    "Allow microphone access to start recording.",
+  ],
+  listening: [
+    "Solace is listening",
+    "Stop to transcribe, or discard the recording.",
+  ],
+  transcribing: [
+    "Transcribing your recording",
+    "Your words will appear in an editable draft.",
+  ],
+  cancelling: [
+    "Discarding recording",
+    "You can record again or type your message.",
+  ],
+  review: ["Review transcript", "Check the words before you send."],
+  replying: [
+    "Solace is replying",
+    "Your draft is kept while you wait for a reply.",
+  ],
+  "starting-playback": ["Preparing spoken reply", "Audio is getting ready."],
+  speaking: [
+    "Solace is speaking",
+    "You can mute or stop playback at any time.",
+  ],
 };
 
 export function VoiceTalkScreen() {
@@ -53,11 +87,69 @@ export function VoiceTalkScreen() {
   const [recordedDraft, setRecordedDraft] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const pending = sendingMessage || !!app.chatPending[draftKey];
-  const [failure, setFailure] = useState("");
-  const [voiceState, setVoiceState] = useState<TalkState>("idle");
+  const [failure, setFailure] = useState<{
+    message: string;
+    retryText?: string;
+  }>();
+  const [voiceStage, setVoiceStage] = useState<VoiceControlStage>("idle");
   const [muted, setMuted] = useState(false);
-  const [samples, setSamples] = useState<number[]>([]);
+  const [meter] = useState(() => new Animated.Value(0));
+  const [bars] = useState(() =>
+    Array.from({ length: METER_BARS }, () => new Animated.Value(-1)),
+  );
+  const samples = useRef<number[]>([]);
+  const barStyles = useMemo(
+    () =>
+      bars.map((value) => ({
+        opacity: value.interpolate({
+          inputRange: [-1, 0],
+          outputRange: [0, 1],
+          extrapolate: "clamp",
+        }),
+        transform: [
+          {
+            scaleY: value.interpolate({
+              inputRange: [0, 1],
+              outputRange: [2 / 21, 1],
+              extrapolate: "clamp",
+            }),
+          },
+        ],
+      })),
+    [bars],
+  );
+  const updateMeter = useCallback(
+    (level: number | null) => {
+      if (level === null || reduceMotion) {
+        if (samples.current.length) {
+          samples.current = [];
+          bars.forEach((bar) => bar.setValue(-1));
+          meter.setValue(0);
+        }
+        return;
+      }
+      samples.current = [...samples.current.slice(-(METER_BARS - 1)), level];
+      const emptyBars = METER_BARS - samples.current.length;
+      bars.forEach((bar, index) =>
+        bar.setValue(samples.current[index - emptyBars] ?? -1),
+      );
+      Animated.timing(meter, {
+        toValue: level,
+        duration: 110,
+        useNativeDriver: Platform.OS !== "web",
+        isInteraction: false,
+      }).start();
+    },
+    [bars, meter, reduceMotion],
+  );
   const [autoReadId, setAutoReadId] = useState<string>();
+  const [revealReplyId, setRevealReplyId] = useState<string>();
+  const [replyLayout, setReplyLayout] = useState<{
+    id?: string;
+    top: number;
+  }>();
+  const [expandedMessage, setExpandedMessage] = useState<string>();
+  const revealedReply = useRef<string | undefined>(undefined);
   const mounted = useRef(false);
   const sending = useRef(false);
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
@@ -74,6 +166,12 @@ export function VoiceTalkScreen() {
     (message) => message.role === "assistant",
   );
   const latestMessage = messages.findLast((message) => message.role === "user");
+  const lastMessage =
+    typeof latestMessage?.content === "string" ? latestMessage.content : "";
+  const longMessage =
+    lastMessage.length > 120 || /\n[\s\S]*\n/.test(lastMessage);
+  const messageKey = latestMessage?.id ?? `legacy-${messages.length}`;
+  const messageExpanded = expandedMessage === messageKey;
   const replyText =
     typeof latestReply?.content === "string" ? latestReply.content : "";
   const needsSupport =
@@ -85,9 +183,27 @@ export function VoiceTalkScreen() {
       : latestReply?.provider === "live"
         ? "AI reply"
         : "Solace reply";
-  const isRecordingOrTranscribing =
-    voiceState === "listening" || voiceState === "thinking";
-  const canSend = !!draft.trim() && !pending && !isRecordingOrTranscribing;
+  const recordingBusy = [
+    "preparing",
+    "listening",
+    "transcribing",
+    "cancelling",
+  ].includes(voiceStage);
+  const canSend =
+    !!draft.trim() && !pending && !recordingBusy && voiceStage !== "review";
+  const canRetry = !!failure?.retryText && failure.retryText === draft.trim();
+  const stage = pending
+    ? "replying"
+    : voiceStage === "idle" && recordedDraft && draft.trim()
+      ? "review"
+      : voiceStage;
+  const [stageTitle, stageDetail] = stages[stage];
+  const companionState =
+    stage === "listening" || stage === "speaking"
+      ? stage
+      : recordingBusy || pending || stage === "starting-playback"
+        ? "thinking"
+        : "idle";
 
   close.current = () => {
     if (beganOnNewChat.current && currentId.current)
@@ -106,9 +222,24 @@ export function VoiceTalkScreen() {
       back.remove();
     };
   }, []);
+  useEffect(() => () => meter.stopAnimation(), [meter]);
+  useEffect(() => {
+    if (
+      !revealReplyId ||
+      replyLayout?.id !== revealReplyId ||
+      revealedReply.current === revealReplyId
+    )
+      return;
+    revealedReply.current = revealReplyId;
+    scroll.current?.scrollTo({
+      y: Math.max(0, replyLayout.top - spacing.row),
+      animated: !reduceMotion,
+    });
+  }, [revealReplyId, replyLayout, reduceMotion]);
 
   function writeDraft(text: string) {
     draftRef.current = text;
+    if (failure && failure.retryText !== text.trim()) setFailure(undefined);
     setDraft(text);
     app.setChatDraft(draftKey, text);
   }
@@ -117,10 +248,12 @@ export function VoiceTalkScreen() {
     const existing = draftRef.current.trimEnd();
     const next = existing ? `${existing}\n${text}` : text;
     if (next.length > MESSAGE_LIMIT) {
-      setFailure("Shorten the draft to make room for this transcript.");
+      setFailure({
+        message: "Shorten the draft to make room for this transcript.",
+      });
       return false;
     }
-    setFailure("");
+    setFailure(undefined);
     setRecordedDraft(true);
     writeDraft(next);
     return true;
@@ -129,11 +262,10 @@ export function VoiceTalkScreen() {
   async function send() {
     const savedDraft = draftRef.current;
     const text = savedDraft.trim();
-    if (!text || pending || sending.current || isRecordingOrTranscribing)
-      return;
+    if (!text || !canSend || sending.current) return;
     sending.current = true;
     setSendingMessage(true);
-    setFailure("");
+    setFailure(undefined);
     Keyboard.dismiss();
     try {
       const result = await app.chat(text, id);
@@ -149,6 +281,7 @@ export function VoiceTalkScreen() {
       setRecordedDraft(false);
       setId(nextId);
       app.setParams({ id: nextId, openedNewChat: beganOnNewChat.current });
+      if (typeof assistant?.id === "string") setRevealReplyId(assistant.id);
       if (
         typeof assistant?.id === "string" &&
         !assistant.support &&
@@ -157,11 +290,10 @@ export function VoiceTalkScreen() {
         setAutoReadId(assistant.id);
     } catch (error) {
       if (mounted.current)
-        setFailure(
-          error instanceof Error
-            ? error.message
-            : "Couldn’t send your message. Your draft is ready to retry.",
-        );
+        setFailure({
+          message: companionSendError(error),
+          retryText: text,
+        });
     } finally {
       sending.current = false;
       if (mounted.current) setSendingMessage(false);
@@ -231,8 +363,8 @@ export function VoiceTalkScreen() {
           <BotanicalBackdrop style={{ right: -54, top: -60, opacity: 0.2 }} />
           <Companion
             size={compact ? 76 : 96}
-            state={pending ? "thinking" : voiceState}
-            soundLevel={voiceState === "listening" ? samples.at(-1) : undefined}
+            state={companionState}
+            soundMotion={meter}
           />
           <View
             accessibilityElementsHidden
@@ -244,17 +376,20 @@ export function VoiceTalkScreen() {
               gap: 3,
             }}
           >
-            {voiceState === "listening" &&
+            {voiceStage === "listening" &&
               !reduceMotion &&
-              samples.map((level, index) => (
-                <View
+              barStyles.map((motion, index) => (
+                <Animated.View
                   key={index}
-                  style={{
-                    width: 3,
-                    height: 2 + level * 19,
-                    borderRadius: 2,
-                    backgroundColor: colors.lavenderText,
-                  }}
+                  style={[
+                    {
+                      width: 3,
+                      height: 21,
+                      borderRadius: 2,
+                      backgroundColor: colors.lavenderText,
+                    },
+                    motion,
+                  ]}
                 />
               ))}
           </View>
@@ -269,15 +404,14 @@ export function VoiceTalkScreen() {
               marginTop: 3,
             }}
           >
-            {pending ? "Solace is replying" : stageText[voiceState]}
+            {stageTitle}
           </AppText>
           <AppText
             variant="caption"
             color={resolved === "light" ? colors.peachText : colors.muted}
             style={{ textAlign: "center", marginTop: 8, maxWidth: 270 }}
           >
-            Record a short message, review the words, then send.{" "}
-            {muted ? "Spoken replies are muted." : "Replies can play aloud."}
+            {stageDetail} {muted && "Spoken replies are muted."}
           </AppText>
         </View>
         <VoiceControls
@@ -291,12 +425,8 @@ export function VoiceTalkScreen() {
               : undefined
           }
           onTranscript={useTranscript}
-          onState={setVoiceState}
-          onMeter={(level) => {
-            if (level === null)
-              setSamples((current) => (current.length ? [] : current));
-            else setSamples((current) => [...current.slice(-12), level]);
-          }}
+          onStage={setVoiceStage}
+          onMeter={updateMeter}
           renderComposer={(microphone, playback) => (
             <View style={{ gap: spacing.row }}>
               <View style={{ alignItems: "center", paddingBottom: 3 }}>
@@ -317,7 +447,7 @@ export function VoiceTalkScreen() {
                   }
                   placeholder="Type your message here"
                   value={draft}
-                  editable={!pending && !isRecordingOrTranscribing}
+                  editable={!pending && !recordingBusy}
                   multiline
                   maxLength={MESSAGE_LIMIT}
                   onChangeText={writeDraft}
@@ -333,50 +463,84 @@ export function VoiceTalkScreen() {
                     accessibilityRole="alert"
                     color={colors.danger}
                   >
-                    {failure}
+                    {failure.message} {canRetry && "Your draft is still here."}
                   </AppText>
                 )}
               </View>
               <Button
-                title="Send message"
-                icon="paper-plane-outline"
+                title={canRetry ? "Retry message" : "Send message"}
+                icon={canRetry ? "refresh-outline" : "paper-plane-outline"}
                 disabled={!canSend}
                 loading={pending}
                 onPress={() => void send()}
               />
-              {!!replyText && (
-                <View
-                  style={{
-                    gap: 10,
-                    padding: 16,
-                    borderRadius: 18,
-                    backgroundColor: colors.surface,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                  }}
-                >
-                  {!!latestMessage?.content && (
-                    <AppText variant="caption" color={colors.muted} selectable>
-                      You: {String(latestMessage.content)}
-                    </AppText>
-                  )}
-                  <AppText variant="label">{replyLabel}</AppText>
-                  <AppText accessibilityLiveRegion="polite" selectable>
-                    {replyText}
-                  </AppText>
-                  {needsSupport && (
-                    <Button
-                      title="Find human support"
-                      variant="secondary"
-                      icon="heart-outline"
-                      onPress={() => app.navigate("support")}
-                    />
-                  )}
-                </View>
-              )}
             </View>
           )}
         />
+        {!!replyText && (
+          <View
+            key={latestReply?.id ?? "reply"}
+            onLayout={({ nativeEvent }) =>
+              setReplyLayout({ id: latestReply?.id, top: nativeEvent.layout.y })
+            }
+            style={{
+              gap: 10,
+              padding: 16,
+              borderRadius: 18,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <Row style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <AppText variant="label" accessibilityRole="header">
+                {replyLabel}
+              </AppText>
+              {(stage === "starting-playback" || stage === "speaking") && (
+                <AppText variant="caption" color={colors.muted}>
+                  {stage === "speaking" ? "Reading aloud" : "Preparing audio…"}
+                </AppText>
+              )}
+            </Row>
+            <AppText accessibilityLiveRegion="polite" selectable>
+              {replyText}
+            </AppText>
+            {needsSupport && (
+              <Button
+                title="Find human support"
+                variant="secondary"
+                icon="heart-outline"
+                onPress={() => app.navigate("support")}
+              />
+            )}
+            {!!lastMessage && (
+              <View style={{ gap: 4 }}>
+                <AppText
+                  variant="caption"
+                  color={colors.muted}
+                  selectable
+                  numberOfLines={
+                    longMessage && !messageExpanded ? 3 : undefined
+                  }
+                >
+                  You: {lastMessage}
+                </AppText>
+                {longMessage && (
+                  <Button
+                    title={messageExpanded ? "Show less" : "Show full message"}
+                    variant="ghost"
+                    onPress={() =>
+                      setExpandedMessage(
+                        messageExpanded ? undefined : messageKey,
+                      )
+                    }
+                    style={{ alignSelf: "flex-start", minHeight: 44 }}
+                  />
+                )}
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

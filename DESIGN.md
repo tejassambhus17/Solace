@@ -38,6 +38,8 @@ Today follows the latest phone reference. The dark arrival uses a violet lake sc
 
 1. Scenic artwork extends into the top safe area. The lotus wordmark, personal greeting, Reminders and Moments controls sit inside the safe area.
 2. Five mood choices use the same watercolor petals, dimensions, and spacing in both themes. The selected tile marks the latest saved check-in. Tapping a tile opens the existing check-in and uses a gentle haptic on supported devices. The tint transition respects Reduce Motion.
+
+   Android phone widths use compact spacing and five equal mood tiles in one row when each target has at least 48 dp. The row reflows in narrower windows. Android also uses tighter cards on Today, Explore, Journey, and Profile. Larger text can still expand those cards.
 3. **Today’s Moment** opens a five-minute Calm Reset and respects the saved environment. Four compact practice shortcuts follow it.
 4. **Your Journey** shows a linear measure of the actual three-step daily routine. Explore More links to Guided Programs, Wellness Toolkit, Check-Ins and the full Explore library.
 
@@ -49,9 +51,9 @@ The three-step path is supported by actual saved account and device records. Its
 
 ## Explore and supporting screens
 
-Explore lets the twilight lake extend into the top safe area while the brand, title, search, and saved toolkit controls stay within reach. Six compact category chips include a dedicated Sleep filter. The five-minute Calm Your Mind card leads to a two-column grid of illustrated recommendations. Breath Reset, Five Senses, and Sleep Wind Down use three-, five-, and ten-minute sessions respectively. Quick Reflection opens the self-paced journal with a four-minute estimate.
+Explore lets the twilight lake extend into the top safe area while the brand, title, search, and saved toolkit controls stay within reach. Six compact category chips include a dedicated Sleep filter. Illustrated recommendations use an even two-column grid and stack when width or system text size calls for more room. Breath Reset, Five Senses, and Sleep Wind Down use three-, five-, and ten-minute sessions respectively. Quick Reflection opens the self-paced journal with a four-minute estimate.
 
-Create Your Wellness Plan opens the editable three-day plan. Explore More provides direct routes to Guided Programs, Wellness Toolkit, and Check-Ins. Additional tools include the timed practice builder, where a chosen focus and duration determine the preview and session.
+Create Your Wellness Plan opens the editable three-day plan. Explore More uses compact horizontal cards for Guided Programs, Wellness Toolkit, and Reflective Check-ins. The two illustrated cards at the bottom open Wellness Tools and Build a Timed Practice. Both dedicated screens share a botanical landscape header. Wellness Tools uses illustrated rows and category chips. The builder uses equal focus cards, duration choices, and a timeline drawn from the same configuration as the Moment player. Focus choices wrap into two rows when width or larger type calls for more space.
 
 Journey emphasizes factual weekly history and reflection. Participation milestones remain optional/expandable; XP never measures emotional worth. Welcome, login, signup and Today have no upper-right profile shortcut.
 

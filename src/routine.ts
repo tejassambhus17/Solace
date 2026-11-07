@@ -83,9 +83,14 @@ function customizeActivity(
   };
 }
 
+const negativePreference =
+  /\b(?:not|never|avoid|dislike|don['’]t|didn['’]t|no longer)\b/i;
+const memoryText = (record: RecordItem) =>
+  String(record.text || record.content || "");
+
 function preferenceActivity(text: string): RitualActivity | null {
   // Explicit activity words only; free writing is not used to infer a diagnosis.
-  if (/\b(not|never|avoid|dislike|don't|do not)\b/i.test(text)) return null;
+  if (negativePreference.test(text)) return null;
   if (/\b(grounding|grounded|five.senses)\b/i.test(text)) return "grounding";
   if (/\b(breathing|breathwork|breathe)\b/i.test(text)) return "breathing";
   if (/\b(journaling|journal|reflection|writing)\b/i.test(text))
@@ -132,7 +137,12 @@ export function pickDailyRoutine(
   };
   const eligible = (record: RecordItem) => {
     const recordedDay = recordDay(record);
-    return !!recordedDay && recordedDay <= day;
+    const timestamp = Date.parse(record.createdAt);
+    return (
+      !!recordedDay &&
+      recordedDay <= day &&
+      (Number.isNaN(timestamp) || timestamp <= now.valueOf())
+    );
   };
   const { checkins, reflections, sessions } = data;
   const records = journeyRecords(
@@ -163,14 +173,13 @@ export function pickDailyRoutine(
     source = "today-checkin";
   }
   if (user?.personalization === true) {
-    const preference = newest(
+    const approvedMemories = newest(
       (data.memories || []).filter(
         (record) => record.approved === true && eligible(record),
       ),
-    )
-      .map((record) =>
-        preferenceActivity(String(record.text || record.content || "")),
-      )
+    );
+    const preference = approvedMemories
+      .map((record) => preferenceActivity(memoryText(record)))
       .find(Boolean);
     if (preference) {
       activity = preference;
@@ -178,11 +187,25 @@ export function pickDailyRoutine(
         "Chosen from an activity preference you approved. You can change preferences in Profile.";
       source = "preference";
     } else {
+      const rememberedSessions = new Set(
+        approvedMemories
+          .filter((record) => {
+            const text = memoryText(record);
+            return (
+              record.sourceType === "session" &&
+              typeof record.sourceId === "string" &&
+              /\b(?:helped|helpful)\b/i.test(text) &&
+              !negativePreference.test(text)
+            );
+          })
+          .map((record) => record.sourceId),
+      );
       const helpful = records.sessions.find(
         (record) =>
           record.localOnly !== true &&
           record.completed === true &&
           record.feedback === "Helped" &&
+          rememberedSessions.has(record.id) &&
           (["breathing", "grounding", "reflection", "rest"].includes(
             record.type,
           ) ||
@@ -192,8 +215,8 @@ export function pickDailyRoutine(
         activity = helpful.type === "resource" ? "rest" : helpful.type;
         reason =
           helpful.type === "resource"
-            ? "You found a sleep guide helpful before. This is a short guided rest."
-            : "You marked this kind of activity helpful before. Try it again, or choose something else.";
+            ? "You saved that a sleep guide helped. This is a short guided rest."
+            : "You marked this kind of activity helpful and chose to remember it. You can try it again or choose something else.";
         source = "feedback";
       } else if (source !== "today-checkin") {
         const goal = newest(data.goals || []).find(

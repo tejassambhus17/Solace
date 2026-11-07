@@ -51,8 +51,8 @@ function preferredPractice(record: EvidenceRecord): ChatPracticeId | undefined {
     [/\b(?:breathwork|breathing|breath exercises)\b/i, "breathing"],
     [/\b(?:grounding|five senses)\b/i, "grounding"],
     [/\b(?:reflection|journaling|journal)\b/i, "reflection"],
-    [/\b(?:wind.down|bedtime|guided rest)\b/i, "wind-down"],
-    [/\b(?:focus practice|focus pause|focus moment)\b/i, "focus"],
+    [/\b(?:wind.down|bedtime|guided rest|rest moments?)\b/i, "wind-down"],
+    [/\b(?:focus practice|focus pause|focus moments?)\b/i, "focus"],
     [/\b(?:gratitude|appreciation)\b/i, "gratitude"],
   ] as const;
   const matches = options.filter(([pattern]) => pattern.test(preference));
@@ -79,12 +79,35 @@ function helpfulPractice(record: EvidenceRecord): ChatPracticeId | undefined {
 const revisionOf = (record: EvidenceRecord) =>
   record.updatedAt ?? record.createdAt;
 
-function evidencePractice(kind: ChatEvidenceKind, record: EvidenceRecord) {
+function evidencePractice(
+  kind: ChatEvidenceKind,
+  record: EvidenceRecord,
+  memories: readonly EvidenceRecord[],
+) {
   if (kind === "checkin")
     return typeof record.mood === "string"
       ? moodPractice.get(record.mood.toLowerCase())
       : undefined;
-  if (kind === "helpful-moment") return helpfulPractice(record);
+  if (kind === "helpful-moment") {
+    const practice = helpfulPractice(record);
+    if (!practice) return;
+    const savedPreference =
+      practice === "focus"
+        ? "grounding"
+        : practice === "gratitude"
+          ? "reflection"
+          : practice;
+    // The rating is private unless the account also approved a linked
+    // preference through the Moment's Remember what helped action.
+    return memories.some((memory) => {
+      if (memory.sourceType !== "session" || memory.sourceId !== record.id)
+        return false;
+      const preference = preferredPractice(memory);
+      return preference === savedPreference || preference === practice;
+    })
+      ? practice
+      : undefined;
+  }
   return preferredPractice(record);
 }
 
@@ -112,7 +135,7 @@ export function availableChatEvidence(
         (kind === "checkin" && now - created > 7 * 86_400_000)
       )
         continue;
-      const practice = evidencePractice(kind, record);
+      const practice = evidencePractice(kind, record, sources.memories);
       const revision = revisionOf(record);
       if (
         !practice ||
@@ -132,7 +155,8 @@ export function availableChatEvidence(
 
 const reasons: Record<ChatEvidenceKind, string> = {
   checkin: "A mood check-in you saved matched this practice.",
-  "helpful-moment": "You previously marked this kind of Moment as helpful.",
+  "helpful-moment":
+    "You marked this kind of Moment as helpful and approved a preference linked to it.",
   "approved-preference":
     "An activity preference you approved matched this practice.",
 };
@@ -151,7 +175,7 @@ export function describeChatExplanation(
     if (
       record &&
       revisionOf(record) === revision &&
-      evidencePractice(kind, record) === practice
+      evidencePractice(kind, record, sources.memories) === practice
     )
       return { basis: "personalized" as const, reason: reasons[kind] };
   }

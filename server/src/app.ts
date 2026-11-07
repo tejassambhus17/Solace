@@ -65,6 +65,8 @@ import {
   createPasswordRecoveryRoutes,
   type RecoveryMailer,
 } from "./password-recovery.js";
+import { habitRoutes, habitState } from "./habits.js";
+import { registerHabitAi } from "./habit-ai.js";
 
 type RecordData = Record<string, unknown> & { id: string; createdAt: string };
 type AuthRequest = Request & { user?: UserRow; token?: string };
@@ -264,8 +266,10 @@ export function createApp(config: AppConfig) {
     }
     return true;
   };
-  const state = (owner: string) =>
-    Object.fromEntries(collections.map((c) => [c, list(owner, c)]));
+  const state = (owner: string) => ({
+    ...Object.fromEntries(collections.map((c) => [c, list(owner, c)])),
+    ...habitState(store, owner),
+  });
   const issueToken = (id: string) => {
     const token = newToken();
     const now = Date.now();
@@ -776,6 +780,16 @@ export function createApp(config: AppConfig) {
       "SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE u.id=? AND t.hash=? AND t.expires_at>?",
       [user(req).id, tokenHash(req.token!), Date.now()],
     );
+  registerHabitAi(app, {
+    ai: config.ai,
+    account: (req) => currentAccount(req as AuthRequest),
+    habits: (owner) => habitState(store, owner).habits,
+    progress: (owner) => habitState(store, owner).habitProgress,
+  });
+  app.use(
+    "/api/habits",
+    habitRoutes(store, (req) => user(req as AuthRequest).id),
+  );
   const approvedMemories = (owner: string, enabled: boolean): MomentMemory[] =>
     enabled
       ? list(owner, "memories")

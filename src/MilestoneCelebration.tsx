@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  AppState,
   Easing,
   Image,
   Modal,
@@ -111,10 +112,19 @@ function Celebration({
 }) {
   const { colors } = useTheme();
   const reduced = useReducedMotion();
+  const [foreground, setForeground] = useState(
+    () => !AppState.currentState || AppState.currentState === "active",
+  );
   const [reveal] = useState(() => new Animated.Value(1));
   const revealed = useRef(false);
   useEffect(() => {
-    if (revealed.current || reduced) {
+    const listener = AppState.addEventListener("change", (state) =>
+      setForeground(state === "active"),
+    );
+    return () => listener.remove();
+  }, []);
+  useEffect(() => {
+    if (revealed.current || reduced || !foreground) {
       revealed.current = true;
       reveal.setValue(1);
       return;
@@ -130,7 +140,7 @@ function Celebration({
     });
     animation.start();
     return () => animation.stop();
-  }, [reduced, reveal]);
+  }, [foreground, reduced, reveal]);
   return (
     <Modal transparent visible onRequestClose={onClose}>
       <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
@@ -208,16 +218,23 @@ export function MilestoneCelebration({ allowed }: { allowed: boolean }) {
     void (async () => {
       const raw = await AsyncStorage.getItem(key);
       if (!currentAccount) return;
-      const stored: unknown = raw === null ? null : JSON.parse(raw);
-      const valid =
+      let stored: unknown = null;
+      if (raw !== null) {
+        try {
+          stored = JSON.parse(raw);
+        } catch {}
+      }
+      const savedIds =
         Array.isArray(stored) &&
-        stored.every((value) => typeof value === "string");
-      const baseline = valid
-        ? stored
-        : initialMilestones.current
-            .filter(({ earned }) => earned)
-            .map(({ id }) => id);
-      if (!valid) await AsyncStorage.setItem(key, JSON.stringify(baseline));
+        stored.every((value): value is string => typeof value === "string")
+          ? stored
+          : null;
+      const baseline =
+        savedIds ??
+        initialMilestones.current
+          .filter(({ earned }) => earned)
+          .map(({ id }) => id);
+      if (!savedIds) await AsyncStorage.setItem(key, JSON.stringify(baseline));
       if (currentAccount) setSeen(baseline);
     })().catch(() => {});
     return () => {

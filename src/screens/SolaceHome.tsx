@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Image,
   Pressable,
@@ -24,14 +24,14 @@ const choices = [
   {
     mode: "companion",
     title: "Talk with Solace",
-    description: "A caring AI companion to listen, support, and guide you.",
+    description: "A caring AI companion to listen and guide.",
     dark: require("../../assets/solace-companion-twilight.jpg"),
     light: require("../../assets/redesign-chat-scene-light.jpg"),
   },
   {
     mode: "journal",
     title: "My Journal",
-    description: "A private space to write, reflect, and sort your thoughts.",
+    description: "A private space to write and reflect.",
     dark: require("../../assets/solace-journal-twilight.jpg"),
     light: require("../../assets/redesign-explore-reflect.jpg"),
   },
@@ -42,6 +42,7 @@ export function SolaceHome() {
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
   const { height } = useWindowDimensions();
+  const [focused, setFocused] = useState<string | null>(null);
   const gutter = useScreenGutter();
   const compact = height < 700;
   const dark = resolved === "dark";
@@ -55,7 +56,7 @@ export function SolaceHome() {
           styles.hero,
           {
             marginHorizontal: -gutter,
-            minHeight: (compact ? 204 : 264) + top,
+            minHeight: (compact ? 194 : 264) + top,
             paddingTop: top + 15,
             paddingHorizontal: gutter,
           },
@@ -78,12 +79,16 @@ export function SolaceHome() {
             ),
           ]}
         />
-        <Row style={styles.brand}>
+        <View
+          style={styles.brand}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
           <LotusMark size={27} />
           <AppText variant="heading" color="#FFF4EF" style={styles.brandName}>
             Solace
           </AppText>
-        </Row>
+        </View>
         <View style={styles.intro}>
           <AppText
             variant="display"
@@ -102,16 +107,6 @@ export function SolaceHome() {
         </View>
       </View>
       <View style={styles.choices}>
-        <BotanicalBackdrop
-          variant="footer"
-          style={{
-            bottom: -77,
-            right: -42,
-            width: 200,
-            height: 142,
-            opacity: dark ? 0.38 : 0.3,
-          }}
-        />
         {choices.map((choice) => (
           <Pressable
             key={choice.mode}
@@ -119,12 +114,17 @@ export function SolaceHome() {
             accessibilityLabel={choice.title}
             accessibilityHint={choice.description}
             onPress={() => app.switchSolaceMode(choice.mode)}
+            onFocus={() => setFocused(choice.mode)}
+            onBlur={() => setFocused(null)}
             style={({ pressed }) => [
               styles.card,
+              compact && styles.compactCard,
               {
-                minHeight: compact ? 161 : 194,
                 backgroundColor: colors.surface,
-                borderColor: colors.heroBorder,
+                borderColor:
+                  focused === choice.mode
+                    ? colors.lavenderText
+                    : colors.heroBorder,
                 opacity: pressed ? 0.84 : 1,
               },
             ]}
@@ -140,7 +140,7 @@ export function SolaceHome() {
                 style={[
                   StyleSheet.absoluteFill,
                   artGradient(
-                    `linear-gradient(180deg, ${colors.surface}00 24%, ${colors.surface}62 49%, ${colors.surface}F2 79%, ${colors.surface} 100%)`,
+                    `linear-gradient(180deg, ${colors.surface}00 24%, ${colors.surface}62 49%, ${colors.surface}F2 73%, ${colors.surface} 100%)`,
                   ),
                 ]}
               />
@@ -172,6 +172,23 @@ export function SolaceHome() {
           </Pressable>
         ))}
       </View>
+      {!compact && (
+        <View
+          pointerEvents="none"
+          style={[styles.ornament, { marginHorizontal: -gutter }]}
+        >
+          <BotanicalBackdrop
+            variant="footer"
+            style={{
+              bottom: -36,
+              right: -36,
+              width: 168,
+              height: 118,
+              opacity: dark ? 0.32 : 0.24,
+            }}
+          />
+        </View>
+      )}
     </Screen>
   );
 }
@@ -184,7 +201,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 14,
   },
-  brand: { gap: 6 },
+  brand: { flexDirection: "row", alignItems: "center", gap: 6 },
   brandName: { fontSize: 24, lineHeight: 28 },
   intro: { gap: 4, maxWidth: 210 },
   title: { fontSize: 46, lineHeight: 49 },
@@ -196,7 +213,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: "flex-end",
     paddingTop: 68,
+    minHeight: 194,
   },
+  compactCard: { paddingTop: 60, minHeight: 152 },
+  ornament: { height: 52, overflow: "hidden" },
   cardArt: { position: "absolute", top: 0, left: 0, right: 0, bottom: 34 },
   cardContent: { padding: 15, gap: 10, alignItems: "flex-end" },
   cardText: { flex: 1, minWidth: 0, gap: 3 },

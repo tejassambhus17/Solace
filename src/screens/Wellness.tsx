@@ -17,7 +17,7 @@ import {
   savedWeeklyStory,
 } from "../../server/src/weekly-facts";
 import { useApp, type WeeklyReflectionResult } from "../store";
-import { savedReflectionRoute } from "../routes";
+import { isRecordId, savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
@@ -30,6 +30,7 @@ import {
 } from "../moments";
 import { useBreathingMotion } from "../breathing-motion";
 import { WeeklyStoryOverview } from "./WeeklyStory";
+import { CheckinNextStep } from "./CheckinNextStep";
 import {
   Screen,
   Card,
@@ -846,9 +847,15 @@ function Checkin() {
   const [more, setMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [savedId, setSavedId] = useState<string | null>(null);
   const saveLock = useRef(false);
+  const savedId = app.params?.savedCheckinId;
+  const savedCheckin = isRecordId(savedId)
+    ? app.data.checkins.find((entry) => entry.id === savedId)
+    : undefined;
+  const awaitingSync =
+    savedCheckin &&
+    (savedCheckin.localOnly ||
+      app.pendingWrites.some((entry) => entry.id === savedId));
   function writeDraft(nextMood = mood, nextTags = tags, nextNote = note) {
     if (saveLock.current) return;
     setMood(nextMood);
@@ -893,9 +900,8 @@ function Checkin() {
         day: localDay(),
         createdAt: stamp(),
       });
-      setSavedId(String(result.id));
       app.setEditorDraft(draftKey, null, submittedDraft);
-      setSaved(true);
+      app.setParams({ savedCheckinId: result.id });
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -903,35 +909,27 @@ function Checkin() {
       setSaving(false);
     }
   }
-  if (saved)
+  if (savedCheckin)
     return (
       <Screen>
         <Header />
         <PageIntro
           title={
-            app.pendingWrites.some((entry) => entry.id === savedId)
+            awaitingSync
               ? app.draftProtection === "device"
                 ? "Kept on this device"
                 : "Kept in this tab"
               : "Your check-in is saved"
           }
         >
-          {app.pendingWrites.some((entry) => entry.id === savedId)
+          {awaitingSync
             ? app.draftProtection === "device"
               ? "Your check-in is saved securely on this device and waiting to sync to your account."
               : "Your check-in is waiting to sync. Keep this browser tab open; closing it will remove this unsynced writing."
-            : "Thank you for making a little space for yourself. Your next small step is ready on Today."}
+            : "Thank you for making a little space for yourself. Choose a next step if it feels right."}
         </PageIntro>
-        <Artwork
-          kind="petal"
-          size={170}
-          style={{ alignSelf: "center", marginBottom: 26 }}
-        />
-        <Button
-          title="See my next step"
-          onPress={() => app.navigate("today")}
-        />
-        {app.pendingWrites.some((entry) => entry.id === savedId) && (
+        <CheckinNextStep checkin={savedCheckin} />
+        {awaitingSync && (
           <Button
             title="Manage unsynced writing"
             variant="ghost"

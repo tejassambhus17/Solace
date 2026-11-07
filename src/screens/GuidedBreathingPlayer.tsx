@@ -1,11 +1,11 @@
-import React, { useEffect, useRef } from "react";
+import React, { useMemo } from "react";
 import {
   Animated,
-  Easing,
   Image,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
@@ -13,9 +13,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SolaceMoment } from "../../server/src/moment-contract";
 import { AmbientSound } from "../AmbientSound";
-import { useReducedMotion } from "../Companion";
 import { EnvironmentScene } from "../Environment";
-import { useScreenGutter } from "../layout";
+import { spacing, useScreenGutter } from "../layout";
 import {
   momentClockText,
   type momentBreathingPosition,
@@ -23,7 +22,14 @@ import {
   type MomentEnvironment,
 } from "../moments";
 import { artGradient, useTheme } from "../theme";
-import { AppText, Button, coverImageStyle, Icon, Screen } from "../ui";
+import {
+  AppText,
+  Button,
+  coverImageStyle,
+  Icon,
+  Screen,
+  useNavigationInset,
+} from "../ui";
 
 type Exit = { resume: boolean; dismiss: () => void; confirm: () => void };
 
@@ -31,6 +37,7 @@ export function GuidedBreathingPlayer({
   activity,
   position,
   rhythm,
+  breathingMotion,
   elapsedMs,
   environment,
   running,
@@ -47,6 +54,7 @@ export function GuidedBreathingPlayer({
   activity: SolaceMoment;
   position: ReturnType<typeof momentPosition>;
   rhythm: ReturnType<typeof momentBreathingPosition>;
+  breathingMotion: Animated.Value;
   elapsedMs: number;
   environment: MomentEnvironment;
   running: boolean;
@@ -62,40 +70,34 @@ export function GuidedBreathingPlayer({
 }) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
-  const reduced = useReducedMotion();
-  const { height, width } = useWindowDimensions();
-  const { top } = useSafeAreaInsets();
-  const gutter = useScreenGutter();
-  const stageHeight = Math.max(310, Math.min(550, height * 0.605));
+  const { fontScale, height, width } = useWindowDimensions();
+  const { bottom, left, right, top } = useSafeAreaInsets();
+  const gutter = Math.max(useScreenGutter(), left, right);
+  const bottomClearance = Math.max(useNavigationInset(), bottom);
+  const compact = height < 480;
+  const transportClearance = 150 + Math.max(0, fontScale - 1) * 36;
+  const stageHeight = Math.max(
+    180,
+    Math.min(
+      550,
+      height * 0.605,
+      height - top - bottomClearance - transportClearance,
+    ),
+  );
   const ringSize = Math.min(350, width * 0.86, stageHeight * 0.85);
   const elapsed = Math.floor(elapsedMs / 1000);
-  const scale = useRef(new Animated.Value(1)).current;
-  const breathProgress = rhythm?.progress;
-  useEffect(() => {
-    if (reduced || !started) {
-      scale.setValue(1);
-      return;
-    }
-    if (breathProgress === undefined) return;
-    const animation = Animated.timing(scale, {
-      toValue: 0.96 + breathProgress * 0.12,
-      duration: 245,
-      easing: Easing.linear,
-      useNativeDriver: Platform.OS !== "web",
-      isInteraction: false,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [breathProgress, reduced, scale, started]);
+  const scale = useMemo(
+    () =>
+      breathingMotion.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.96, 1.08],
+      }),
+    [breathingMotion],
+  );
 
-  const phase = running
-    ? (rhythm?.phase ?? position.step.title)
-    : started
-      ? "Paused"
-      : "Ready to begin";
-  const seconds = running
-    ? (rhythm?.remaining ?? position.stepRemaining)
-    : undefined;
+  const cue = rhythm?.phase ?? position.step.title;
+  const cueSeconds = rhythm?.remaining ?? position.stepRemaining;
+  const phase = running ? cue : started ? "Paused" : "Ready to begin";
   const playLabel = running
     ? "Pause practice"
     : started
@@ -104,11 +106,7 @@ export function GuidedBreathingPlayer({
   const stageInk = dark ? "#F7ECF4" : "#422C53";
   const stageMuted = dark ? "#E5D2EE" : "#5F4B70";
   return (
-    <Screen
-      edgeToEdgeTop
-      heroStatusBar={dark ? "light" : "dark"}
-      style={{ paddingHorizontal: 0, paddingTop: top + 9 }}
-    >
+    <Screen scroll={false} style={styles.frame}>
       <View style={[styles.header, { paddingHorizontal: gutter }]}>
         <PlayerControl
           label="Close breathing practice"
@@ -130,140 +128,167 @@ export function GuidedBreathingPlayer({
           onToggle={toggleSound}
         />
       </View>
-      <View style={[styles.stage, { minHeight: stageHeight }]}>
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            artGradient(
-              dark
-                ? `linear-gradient(180deg, ${colors.bg} 0%, #2A2045 40%, #322649 55%, #49325A 72%, ${colors.bg} 100%)`
-                : `linear-gradient(180deg, ${colors.bg} 0%, #EDDCF2 38%, #E5CFE9 55%, #E2C9E5 65%, ${colors.bg} 100%)`,
-            ),
-          ]}
-        />
-        <View pointerEvents="none" style={styles.landscape}>
-          {environment === "twilight" ? (
-            <Image
-              accessible={false}
-              source={require("../../assets/today-twilight-lotus.jpg")}
-              style={coverImageStyle}
-              resizeMode="cover"
-              fadeDuration={0}
-            />
-          ) : (
-            <EnvironmentScene
-              environment={environment}
-              active={running}
-              style={[StyleSheet.absoluteFill, { borderRadius: 0 }]}
-            />
-          )}
+      <ScrollView
+        style={styles.scroller}
+        contentContainerStyle={{
+          paddingBottom: bottomClearance + spacing.bottom,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.stage, { minHeight: stageHeight }]}>
           <View
+            pointerEvents="none"
             style={[
               StyleSheet.absoluteFill,
               artGradient(
                 dark
-                  ? `linear-gradient(180deg, #322649 0%, #32264900 39%, #1814260A 68%, ${colors.bg} 100%)`
-                  : `linear-gradient(180deg, #E5CFE9 0%, #E5CFE94D 32%, #E5CFE912 64%, ${colors.bg} 100%)`,
+                  ? `linear-gradient(180deg, ${colors.bg} 0%, #2A2045 40%, #322649 55%, #49325A 72%, ${colors.bg} 100%)`
+                  : `linear-gradient(180deg, ${colors.bg} 0%, #EDDCF2 38%, #E5CFE9 55%, #E2C9E5 65%, ${colors.bg} 100%)`,
               ),
             ]}
           />
-        </View>
-        <View
-          style={[
-            styles.phaseWrap,
-            { paddingBottom: Math.max(44, stageHeight * 0.16) },
-          ]}
-        >
-          <Animated.Image
-            pointerEvents="none"
-            accessible={false}
-            source={require("../../assets/guided-breath-rings.png")}
-            resizeMode="contain"
-            fadeDuration={0}
-            style={{
-              position: "absolute",
-              width: ringSize,
-              height: ringSize,
-              transform: [{ scale }],
-            }}
-          />
-          <View style={[styles.phaseCopy, { width: ringSize * 0.62 }]}>
-            <AppText
-              variant="heading"
-              accessibilityLiveRegion="polite"
-              color={stageInk}
-              style={styles.phase}
+          <View pointerEvents="none" style={styles.landscape}>
+            {environment === "twilight" ? (
+              <Image
+                accessible={false}
+                source={require("../../assets/today-twilight-lotus.jpg")}
+                style={coverImageStyle}
+                resizeMode="cover"
+                fadeDuration={0}
+              />
+            ) : (
+              <EnvironmentScene
+                environment={environment}
+                active={running}
+                style={[StyleSheet.absoluteFill, { borderRadius: 0 }]}
+              />
+            )}
+            <View
+              style={[
+                StyleSheet.absoluteFill,
+                artGradient(
+                  dark
+                    ? `linear-gradient(180deg, #322649 0%, #32264900 39%, #1814260A 68%, ${colors.bg} 100%)`
+                    : `linear-gradient(180deg, #E5CFE9 0%, #E5CFE94D 32%, #E5CFE912 64%, ${colors.bg} 100%)`,
+                ),
+              ]}
+            />
+          </View>
+          <View
+            style={[
+              styles.phaseWrap,
+              { paddingBottom: Math.max(44, stageHeight * 0.16) },
+            ]}
+          >
+            <Animated.Image
+              pointerEvents="none"
+              accessible={false}
+              source={require("../../assets/guided-breath-rings.png")}
+              resizeMode="contain"
+              fadeDuration={0}
+              style={{
+                position: "absolute",
+                width: ringSize,
+                height: ringSize,
+                transform: [{ scale }],
+              }}
+            />
+            <View
+              style={[
+                styles.phaseCopy,
+                { width: ringSize * (compact ? 0.72 : 0.62) },
+              ]}
             >
-              {phase}
-            </AppText>
-            <AppText color={stageMuted} style={styles.seconds}>
-              {seconds === undefined
-                ? started
-                  ? "Your time is kept"
-                  : "At your own pace"
-                : `${seconds} ${seconds === 1 ? "second" : "seconds"}`}
-            </AppText>
+              <AppText
+                variant="heading"
+                accessibilityLiveRegion="polite"
+                color={stageInk}
+                style={[styles.phase, compact && styles.compactPhase]}
+              >
+                {phase}
+              </AppText>
+              <AppText color={stageMuted} style={styles.seconds}>
+                {running
+                  ? `${cueSeconds} ${cueSeconds === 1 ? "second" : "seconds"}`
+                  : started
+                    ? "Your time is kept"
+                    : `${activity.durationSec / 60} min · Timed`}
+              </AppText>
+            </View>
           </View>
         </View>
-      </View>
-      <View style={[styles.transport, { paddingHorizontal: gutter }]}>
-        <View style={styles.controls}>
-          <PlayerControl
-            label="Restart"
-            icon="refresh-outline"
-            disabled={!started}
-            onPress={restart}
-          />
-          <PlayerControl
-            label={playLabel}
-            icon={running ? "pause" : "play"}
-            primary
-            onPress={togglePlay}
-          />
-          <PlayerControl label="Stop practice" icon="stop" onPress={leave} />
-        </View>
-        <AppText variant="caption" style={styles.centered}>
-          {position.index + 1} of {activity.steps.length} · {activity.title}
-        </AppText>
-        <View
-          accessibilityRole="progressbar"
-          accessibilityLabel="Moment progress"
-          aria-valuemin={0}
-          aria-valuemax={activity.durationSec}
-          aria-valuenow={elapsed}
-          aria-valuetext={`${elapsed} of ${activity.durationSec} seconds`}
-          style={[styles.progress, { backgroundColor: colors.border }]}
-        >
+        <View style={[styles.transport, { paddingHorizontal: gutter }]}>
+          <View style={styles.controls}>
+            <PlayerControl
+              label="Restart"
+              icon="refresh-outline"
+              disabled={!started}
+              onPress={restart}
+            />
+            <PlayerControl
+              label={playLabel}
+              icon={running ? "pause" : "play"}
+              primary
+              onPress={togglePlay}
+            />
+            <PlayerControl label="Stop practice" icon="stop" onPress={leave} />
+          </View>
+          <AppText variant="caption" style={styles.centered}>
+            Step {position.index + 1} of {activity.steps.length} ·{" "}
+            {activity.title}
+          </AppText>
           <View
-            style={{
-              height: "100%",
-              width: `${(elapsedMs / (activity.durationSec * 1000)) * 100}%`,
-              backgroundColor: colors.lavender,
-            }}
-          />
-        </View>
-        <AppText variant="caption" color={colors.muted} style={styles.centered}>
-          {momentClockText(elapsed)} / {momentClockText(activity.durationSec)}
-        </AppText>
-        {!!notice && (
+            accessibilityRole="progressbar"
+            accessibilityLabel="Moment progress"
+            aria-valuemin={0}
+            aria-valuemax={activity.durationSec}
+            aria-valuenow={elapsed}
+            aria-valuetext={`${elapsed} of ${activity.durationSec} seconds`}
+            style={[styles.progress, { backgroundColor: colors.border }]}
+          >
+            <View
+              style={{
+                height: "100%",
+                width: `${(elapsedMs / (activity.durationSec * 1000)) * 100}%`,
+                backgroundColor: colors.lavender,
+              }}
+            />
+          </View>
           <AppText
             variant="caption"
-            accessibilityLiveRegion="polite"
+            color={colors.muted}
             style={styles.centered}
           >
-            {notice}
+            {momentClockText(elapsed)} / {momentClockText(activity.durationSec)}
           </AppText>
-        )}
-        <AppText
-          variant="caption"
-          color={colors.muted}
-          style={[styles.centered, { marginTop: 6 }]}
-        >
-          {position.step.instruction}
-        </AppText>
-        {children}
-      </View>
+          {started && !running && (
+            <AppText
+              variant="caption"
+              color={colors.muted}
+              style={styles.centered}
+            >
+              {cue} · {cueSeconds} sec remaining
+            </AppText>
+          )}
+          {!!notice && (
+            <AppText
+              variant="caption"
+              accessibilityLiveRegion="polite"
+              style={styles.centered}
+            >
+              {notice}
+            </AppText>
+          )}
+          <AppText
+            variant="caption"
+            color={colors.muted}
+            style={[styles.centered, { marginTop: 6 }]}
+          >
+            {position.step.instruction}
+          </AppText>
+          {children}
+        </View>
+      </ScrollView>
       <Modal
         visible={!!exit}
         transparent
@@ -271,10 +296,15 @@ export function GuidedBreathingPlayer({
         onRequestClose={exit?.dismiss}
       >
         {!!exit && (
-          <View
-            style={[
+          <ScrollView
+            style={{ backgroundColor: colors.overlay }}
+            contentContainerStyle={[
               styles.modal,
-              { backgroundColor: colors.overlay, padding: gutter },
+              {
+                paddingHorizontal: gutter,
+                paddingTop: Math.max(gutter, top),
+                paddingBottom: Math.max(gutter, bottom),
+              },
             ]}
           >
             <View
@@ -300,7 +330,7 @@ export function GuidedBreathingPlayer({
                 onPress={exit.confirm}
               />
             </View>
-          </View>
+          </ScrollView>
         )}
       </Modal>
     </Screen>
@@ -349,7 +379,15 @@ function PlayerControl({
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 8, zIndex: 1 },
+  frame: { flex: 1, paddingTop: 0, paddingBottom: 0, paddingHorizontal: 0 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    zIndex: 1,
+    paddingTop: 9,
+  },
+  scroller: { flex: 1 },
   headerTitle: { flex: 1, textAlign: "center", fontSize: 17, lineHeight: 23 },
   stage: { justifyContent: "center", overflow: "hidden" },
   landscape: {
@@ -370,6 +408,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 30,
     lineHeight: Platform.OS === "android" ? 37 : 34,
+  },
+  compactPhase: {
+    fontSize: 25,
+    lineHeight: Platform.OS === "android" ? 32 : 29,
   },
   seconds: { textAlign: "center", fontVariant: ["tabular-nums"], marginTop: 1 },
   transport: { alignItems: "stretch", gap: 8, paddingTop: 2 },
@@ -398,7 +440,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderRadius: 2,
   },
-  modal: { flex: 1, justifyContent: "center", alignItems: "center" },
+  modal: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
   exitCard: {
     width: "100%",
     maxWidth: 390,

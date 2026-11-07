@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState as NativeAppState,
   BackHandler,
@@ -28,6 +28,7 @@ import {
   momentClockText,
   momentPosition,
   newMomentSessionId,
+  nextMomentTickDelay,
   pauseMoment,
   resumeMoment,
   type GeneratedMoment,
@@ -36,6 +37,7 @@ import {
 import type { SolaceMoment } from "../../server/src/moment-contract";
 import { RecommendationExplanation } from "./RecommendationExplanation";
 import { GuidedBreathingPlayer } from "./GuidedBreathingPlayer";
+import { useBreathingMotion } from "../breathing-motion";
 
 const errorText = (error: unknown) =>
   error instanceof Error
@@ -574,6 +576,7 @@ export function MomentPlayerScreen() {
         !technique && app.params.provider === "live" ? "live" : "offline"
       }
       guidedSource={guidedSource}
+      returnToBuilder={app.params.timedPractice === true}
     />
   );
 }
@@ -584,12 +587,14 @@ function PlayableMoment({
   conversationId,
   provider,
   guidedSource,
+  returnToBuilder,
 }: {
   activity: SolaceMoment;
   technique?: Technique;
   conversationId?: string;
   provider: "live" | "offline";
   guidedSource?: "Explore" | "Today" | "Solace chat" | "My Journal";
+  returnToBuilder: boolean;
 }) {
   const app = useApp();
   const { colors } = useTheme();
@@ -639,32 +644,38 @@ function PlayableMoment({
     : Math.floor(elapsedMs / 1000);
   const progressText = `${progressNow} of ${progressMax} ${selfPaced ? "steps" : "seconds"}`;
   const reflectionPractice = !!technique && activity.type === "reflection";
-  const rhythm = running
-    ? momentBreathingPosition(
-        activity,
-        position,
-        elapsedMs,
-        provider === "offline",
-      )
-    : null;
-  function pause(message = "", completePractice = false) {
-    clock.current = pauseMoment(clock.current, now(), elapsedLimit);
-    setElapsedMs(clock.current.elapsedMs);
-    setRunning(false);
-    if (message) setNotice(message);
-    if (
-      completePractice ||
-      (!selfPaced && clock.current.elapsedMs >= activity.durationSec * 1000)
-    ) {
-      if (reflectionPractice) Keyboard.dismiss();
-      const completedAt = new Date();
-      finishedAt.current ||= {
-        createdAt: completedAt.toISOString(),
-        day: localDay(completedAt),
-      };
-      setFinished(true);
-    }
-  }
+  const completedSeconds = Math.floor(elapsedMs / 1000);
+  const rhythm =
+    started && !finished
+      ? momentBreathingPosition(
+          activity,
+          position,
+          elapsedMs,
+          provider === "offline",
+        )
+      : null;
+  const breathingMotion = useBreathingMotion(rhythm, running, reducedMotion);
+  const pause = useCallback(
+    (message = "", completePractice = false) => {
+      clock.current = pauseMoment(clock.current, now(), elapsedLimit);
+      setElapsedMs(clock.current.elapsedMs);
+      setRunning(false);
+      if (message) setNotice(message);
+      if (
+        completePractice ||
+        (!selfPaced && clock.current.elapsedMs >= activity.durationSec * 1000)
+      ) {
+        if (reflectionPractice) Keyboard.dismiss();
+        const completedAt = new Date();
+        finishedAt.current ||= {
+          createdAt: completedAt.toISOString(),
+          day: localDay(completedAt),
+        };
+        setFinished(true);
+      }
+    },
+    [activity.durationSec, elapsedLimit, reflectionPractice, selfPaced],
+  );
   function resume() {
     if (finishedAt.current) return;
     setExitConfirmation(false);
@@ -703,13 +714,26 @@ function PlayableMoment({
   }
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    function tick() {
+      if (clock.current.runningSince === null) return;
       const elapsed = elapsedMomentMs(clock.current, now(), elapsedLimit);
       setElapsedMs(elapsed);
-      if (!selfPaced && elapsed >= elapsedLimit * 1000) pause();
-    }, 250);
-    return () => clearInterval(timer);
-  }, [running, elapsedLimit, selfPaced]);
+      if (elapsed >= elapsedLimit * 1000) {
+        if (!selfPaced) pause();
+        return;
+      }
+      timer = setTimeout(tick, nextMomentTickDelay(elapsed, elapsedLimit));
+    }
+    timer = setTimeout(
+      tick,
+      nextMomentTickDelay(
+        elapsedMomentMs(clock.current, now(), elapsedLimit),
+        elapsedLimit,
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [running, elapsedLimit, pause, selfPaced]);
   useEffect(() => {
     if (savedSession) scroll.current?.scrollTo({ y: 0, animated: false });
   }, [savedSession]);
@@ -718,18 +742,20 @@ function PlayableMoment({
       if (state !== "active" && clock.current.runningSince !== null)
         pause("Paused while you were away. Continue whenever you're ready.");
     });
+    return () => subscription.remove();
+  }, [pause]);
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  useEffect(() => {
     const hardwareBack = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
-        leave();
+        leaveRef.current();
         return true;
       },
     );
-    return () => {
-      subscription.remove();
-      hardwareBack.remove();
-    };
-  }, [started, finished, savedSession, exitConfirmation]);
+    return () => hardwareBack.remove();
+  }, []);
   async function save() {
     if (saveLock.current || !finishedAt.current) return;
     saveLock.current = true;
@@ -743,7 +769,7 @@ function PlayableMoment({
       activity: { ...activity, environment },
       environment,
       provider,
-      durationSec: Math.floor(elapsedMs / 1000),
+      durationSec: completedSeconds,
       plannedDurationSec: activity.durationSec,
       completed: true,
       feedback: feedback || "skipped",
@@ -768,6 +794,7 @@ function PlayableMoment({
         activity={activity}
         position={position}
         rhythm={rhythm}
+        breathingMotion={breathingMotion}
         elapsedMs={elapsedMs}
         environment={environment}
         running={running}
@@ -829,6 +856,12 @@ function PlayableMoment({
               : "Your Moment is complete. Save it to your Journey, with feedback if you'd like."
             : activity.description}
         </AppText>
+        {technique && savedSession && (
+          <TechniqueSaveStatus
+            activeSeconds={savedSession.durationSec ?? completedSeconds}
+            saved
+          />
+        )}
         <EnvironmentScene
           environment={environment}
           active={running}
@@ -840,9 +873,9 @@ function PlayableMoment({
         >
           <Companion
             state={finished ? "happy" : rhythm ? "breathing" : "idle"}
-            animate={!technique || running || finished}
+            animate={running || finished || (!technique && !started)}
             breathing={activity.breathing}
-            breathingProgress={running && rhythm ? rhythm.progress : undefined}
+            breathingMotion={breathingMotion}
             phase={
               running && rhythm
                 ? `${rhythm.phase}, ${rhythm.remaining}`
@@ -1078,16 +1111,32 @@ function PlayableMoment({
               readOnly={saving || !!saveSnapshot.current}
               canDiscard={reflectionPractice}
             />
+            {!!technique && (
+              <View style={{ marginTop: 18 }}>
+                <TechniqueSaveStatus
+                  activeSeconds={completedSeconds}
+                  saving={saving}
+                  hasError={!!error}
+                />
+              </View>
+            )}
             <Button
-              title={error ? "Retry saving Moment" : "Save Moment to Journey"}
+              title={
+                saving && technique
+                  ? "Saving to Journey…"
+                  : error
+                    ? "Retry saving Moment"
+                    : "Save Moment to Journey"
+              }
               onPress={save}
               loading={saving}
-              style={{ marginTop: 18 }}
+              style={{ marginTop: technique ? 0 : 18 }}
             />
             {!!error && (
               <Notice error>
-                {error} Your completed Moment and feedback are still here. Retry
-                saves the same entry.
+                {technique
+                  ? "Your active time and feedback are still here. Try again to confirm the same entry."
+                  : `${error} Your completed Moment and feedback are still here. Retry saves the same entry.`}
               </Notice>
             )}
           </View>
@@ -1095,12 +1144,13 @@ function PlayableMoment({
         {savedSession && (
           <View style={{ marginTop: 23 }}>
             <Row style={{ justifyContent: "center", marginBottom: 19 }}>
-              <Icon name="checkmark-circle" color={colors.sageText} />
+              <Icon
+                name={technique ? "leaf-outline" : "checkmark-circle"}
+                color={colors.sageText}
+              />
               <AppText variant="caption">
-                {momentClockText(
-                  savedSession.durationSec ?? activity.durationSec,
-                )}{" "}
-                recorded ·{" "}
+                {!technique &&
+                  `${momentClockText(savedSession.durationSec ?? completedSeconds)} recorded · `}
                 {ENVIRONMENTS.find((item) => item.id === environment)?.short}
               </AppText>
             </Row>
@@ -1146,9 +1196,13 @@ function PlayableMoment({
               />
             )}
             <Button
-              title="Return to Today"
+              title={
+                returnToBuilder ? "Return to Timed Practice" : "Return to Today"
+              }
               variant="ghost"
-              onPress={() => app.navigate(routes.today)}
+              onPress={
+                returnToBuilder ? app.back : () => app.navigate(routes.today)
+              }
               style={{ marginTop: 8 }}
             />
           </View>
@@ -1248,6 +1302,45 @@ function PlayableMoment({
         </View>
       )}
     </View>
+  );
+}
+
+function TechniqueSaveStatus({
+  activeSeconds,
+  saved = false,
+  saving = false,
+  hasError = false,
+}: {
+  activeSeconds: number;
+  saved?: boolean;
+  saving?: boolean;
+  hasError?: boolean;
+}) {
+  const { colors } = useTheme();
+  const status = saved
+    ? "Recorded in Journey"
+    : saving
+      ? "Saving to Journey…"
+      : hasError
+        ? "Journey save unconfirmed"
+        : "Ready to save to Journey";
+  return (
+    <Card style={{ marginBottom: saved ? 18 : 8, gap: 4 }}>
+      <AppText
+        variant="label"
+        accessibilityLiveRegion="polite"
+        color={saved ? colors.sageText : hasError ? colors.danger : colors.text}
+      >
+        {status}
+      </AppText>
+      <AppText
+        variant="caption"
+        color={colors.muted}
+        style={{ fontVariant: ["tabular-nums"] }}
+      >
+        {momentClockText(activeSeconds)} active time
+      </AppText>
+    </Card>
   );
 }
 

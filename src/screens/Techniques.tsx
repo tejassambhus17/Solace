@@ -33,6 +33,10 @@ function durationLabel(technique: Technique) {
   return `${technique.selfPaced ? "About " : ""}${technique.activity.durationSec / 60} min`;
 }
 
+function paceLabel(technique: Technique) {
+  return technique.selfPaced ? "Self-paced" : "Timed";
+}
+
 function restoredOffset(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, value)
@@ -193,7 +197,7 @@ export function TechniquesScreen() {
           <Pressable
             key={technique.id}
             accessibilityRole="button"
-            accessibilityLabel={`${technique.title}, ${durationLabel(technique)}, ${technique.label}`}
+            accessibilityLabel={`${technique.title}, ${durationLabel(technique)}, ${paceLabel(technique)}, ${technique.label}`}
             accessibilityHint={technique.description}
             onPress={() => open(technique)}
             style={({ pressed }) => [
@@ -222,6 +226,13 @@ export function TechniquesScreen() {
               </AppText>
               <AppText variant="caption" color={colors.muted}>
                 {technique.description}
+              </AppText>
+              <AppText
+                variant="caption"
+                color={colors.lavenderText}
+                style={styles.tileMeta}
+              >
+                {durationLabel(technique)} · {paceLabel(technique)}
               </AppText>
             </View>
             <View style={styles.chevron}>
@@ -309,7 +320,10 @@ export function TechniqueDetailScreen() {
         {(
           [
             ["time-outline", durationLabel(technique)],
-            ["stats-chart-outline", "Beginner"],
+            [
+              technique.selfPaced ? "hand-left-outline" : "timer-outline",
+              paceLabel(technique),
+            ],
             ["leaf-outline", technique.label],
           ] as const
         ).map(([icon, label]) => (
@@ -432,6 +446,7 @@ const styles = StyleSheet.create({
     gap: 1,
   },
   tileTitle: { fontSize: 25, lineHeight: Platform.OS === "android" ? 32 : 28 },
+  tileMeta: { marginTop: 3 },
   chevron: { justifyContent: "center", paddingHorizontal: spacing.compact },
   hero: { position: "absolute", left: 0, right: 0, top: 0, overflow: "hidden" },
   heroHeader: { minHeight: 47 },

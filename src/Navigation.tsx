@@ -70,6 +70,7 @@ const TabDestination = React.memo(function TabDestination({
   destination,
   selected,
   ink,
+  labelScale,
   rippleColor,
   reducedMotion,
   onMeasure,
@@ -79,6 +80,7 @@ const TabDestination = React.memo(function TabDestination({
   destination: (typeof destinations)[number];
   selected: boolean;
   ink: string;
+  labelScale?: number;
   rippleColor: string;
   reducedMotion: boolean;
   onMeasure: (name: string, frame: TabFrame) => void;
@@ -170,7 +172,14 @@ const TabDestination = React.memo(function TabDestination({
           color={ink}
         />
       </Animated.View>
-      <AppText variant="caption" color={ink} style={styles.label}>
+      <AppText
+        variant="caption"
+        color={ink}
+        numberOfLines={android ? 1 : undefined}
+        adjustsFontSizeToFit={android}
+        maxFontSizeMultiplier={labelScale}
+        style={styles.label}
+      >
         {destination.title}
       </AppText>
     </Pressable>
@@ -229,6 +238,10 @@ export const TabBar = React.memo(function TabBar({
     () => measuredTabStops(destinationNames, frames, rowWidth, spotlightSize),
     [frames, rowWidth],
   );
+  // Fit the longest 11sp Inter tab label with breathing room at large text sizes.
+  const androidLabelScale = android
+    ? Math.max(1, ((rowWidth - rowPadding * 2) / destinations.length - 6) / 44)
+    : undefined;
   const [spotlightX] = useState(() => new Animated.Value(0));
   const gestureState = useRef({ activeTab, onSelect, reducedMotion, stops });
   gestureState.current = { activeTab, onSelect, reducedMotion, stops };
@@ -422,6 +435,7 @@ export const TabBar = React.memo(function TabBar({
             destination={destination}
             selected={selected}
             ink={selected ? colors.tabActiveText : colors.muted}
+            labelScale={androidLabelScale}
             rippleColor={resolved === "dark" ? "#FFFFFF24" : "#49326120"}
             reducedMotion={reducedMotion}
             onMeasure={measureTab}
@@ -545,6 +559,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     textAlign: "center",
+    alignSelf: android ? "stretch" : undefined,
+    paddingHorizontal: android ? 1 : undefined,
   },
   iconFrame: {
     width: spotlightSize,

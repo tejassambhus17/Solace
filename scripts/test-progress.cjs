@@ -40,10 +40,12 @@ const {
   journeyRange,
   journeyReport,
   journeyWeek,
+  latestJourneyActivity,
   nextMilestoneCelebration,
 } = load("src/journey-analytics.ts", {
   "./content": content,
   "./progress": progress,
+  "./routes": load("src/routes.ts"),
 });
 const { journeyGoalProgress } = load("src/journey-goals.ts", {
   "../server/src/goal-contract": load("server/src/goal-contract.ts"),
@@ -53,6 +55,53 @@ const { journeyGoalProgress } = load("src/journey-goals.ts", {
 });
 const now = () => new Date(2026, 10, 5, 12);
 const item = (id, day, extra = {}) => ({ id, day, ...extra });
+
+test("latest Journey activity opens an eligible exact record across collections", () => {
+  const day = "2026-11-05";
+  const time = (hour) => new Date(2026, 10, 5, hour).toISOString();
+  const checkin = item("calm", day, { createdAt: time(6) });
+  const journal = item("entry", day, {
+    kind: "journal",
+    createdAt: time(7),
+    localOnly: true,
+  });
+  const practice = item("moment", day, { completed: true, createdAt: time(8) });
+  const noise = {
+    checkins: [
+      item("future", "2026-11-06"),
+      item("bad/id", day, { createdAt: time(9) }),
+    ],
+    sessions: [
+      item("abandoned", day, { completed: false, createdAt: time(9) }),
+      item("guide", day, {
+        type: "resource",
+        completed: true,
+        createdAt: time(10),
+      }),
+    ],
+    reflections: [item("weekly", day, { createdAt: time(9) })],
+    assessments: [item("assessment", day, { createdAt: time(10) })],
+  };
+  assert.equal(
+    latestJourneyActivity(journeyAnalytics(noise, now())),
+    undefined,
+  );
+  noise.checkins.push(checkin);
+  assert.equal(
+    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
+    "calm",
+  );
+  noise.reflections.push(journal);
+  assert.equal(
+    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
+    "entry",
+  );
+  noise.sessions.push(practice);
+  assert.equal(
+    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
+    "moment",
+  );
+});
 
 test("milestone celebrations use saved records and survive re-reading the account marker", () => {
   const checkins = [

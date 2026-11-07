@@ -1,5 +1,112 @@
 # Verification record
 
+## Wellness Tools and Timed Practice — 7 November 2026
+
+The two bottom Explore accordions were the baseline. Their links and the original practice picker were mapped before replacement. Production browser comparisons at widths of 320 and 430 pixels in both themes found identical geometry and styles for the Explore sections above the replacement cards. At 430 pixels and standard text size, the new cards measured 140 pixels tall with a 16-pixel gap. Both sides of each card used the same navigation action.
+
+| Wellness Tools item | Existing destination |
+| --- | --- |
+| Browse all practices | Explore’s complete, searchable practice catalog |
+| Ambient Sound Mixer | Ambient mixer with the existing sound layers |
+| Solace Moments | Moment creation |
+| Gentle Movement | Three-minute guided movement in the Moment player |
+| Guides & Resources | Existing wellness resource guides |
+| Sleep Wind-Down Guide | Existing four-step self-paced guide |
+| Five-Senses Exercise | Self-paced grounding |
+| Reflective Check-Ins | Mood, worry, and self-compassion questionnaires |
+| Daily Affirmation | Today’s affirmation |
+| Daily Challenge | Today’s challenge |
+| Breathing Exercise | Slow breathing technique detail and player |
+| Gratitude Journal | Existing Journal editor with an optional prompt |
+| Mood Check-in | Daily mood check-in |
+
+| Timed focus | Existing player mode |
+| --- | --- |
+| Calm | Paced breathing with natural breathing breaks |
+| Focus | Sensory grounding |
+| Sleep | Quiet rest and wind-down |
+| Energy | Gentle seated movement with rest intervals |
+
+- The production browser opened all 13 tools, including the Browse shortcut and the gratitude prompt. Back restored the selected filter and scroll position, and the existing editor retained an unsaved draft. The library rendered all five groups once. Relax, Move, and Grow displayed their relevant groups.
+- All 16 builder configurations opened the existing Moment player with exact durations. Calm at five minutes used `1:00`, `2:30`, and `1:30`. The builder restored the selected focus and duration on Back. Longer sessions vary their stages and include breaks where appropriate.
+- A browser test clock advanced the existing player through a complete five-minute session. Paused time and a simulated background gap did not accrue. Exit before completion saved zero records. An injected 503 followed by rapid retry made two requests and saved one 300-second record with feedback. Journey immediately showed the new activity, and the completion screen’s return action restored the builder choices.
+- At 320 pixels with simulated 140% text, both pages had no horizontal overflow and the final tool and Start Practice remained reachable. The browser also opened the mixer and player with their artwork requests returning 404s.
+- On the Android API 33 emulator at 393 dp in dark mode, Move filtered to Gentle Movement and system Back restored the library filter and Explore position. A 20-minute Sleep session opened, paused, resumed, and paused again when backgrounded. Leaving without saving returned to the builder with Sleep and 20 minutes selected. At 320 dp with 130% system text, the last tool and Start Practice both scrolled fully clear of the navigation overlay.
+- TypeScript and formatting passed. Navigation passed 12 tests, session state passed 65, Moments passed 15, and the backend passed 116. The backend tests cover account isolation and idempotent 20-minute persistence through the existing Journey data pipeline. Android release lint and production Expo web, Android, and iOS JavaScript exports passed.
+- The API should be updated before distributing the updated client so it accepts the registered 15- and 20-minute session snapshots. Installed builds need the updated JavaScript bundle. No native modules or signing configuration were changed.
+- Native iOS and physical-device checks remain open. On iPhone, open each entry, follow a tool and use swipe-back, check reachability with larger text, then complete and save a timed practice against the updated API. Repeat the save on a physical Android phone.
+
+| Production web screenshots | Light | Dark |
+| --- | --- | --- |
+| Wellness Tools header and first groups | [Light](screenshots/wellness-tools-timed-practice/wellness-tools-light-430.png) | [Dark](screenshots/wellness-tools-timed-practice/wellness-tools-dark-430.png) |
+| Wellness Tools lower groups | [Light](screenshots/wellness-tools-timed-practice/wellness-tools-lower-light-430.png) | [Dark](screenshots/wellness-tools-timed-practice/wellness-tools-lower-dark-430.png) |
+| Timed Practice from header to Start Practice | [Light](screenshots/wellness-tools-timed-practice/timed-practice-full-light-430.png) | [Dark](screenshots/wellness-tools-timed-practice/timed-practice-full-dark-430.png) |
+
+Implementation files are `App.tsx`, `src/routes.ts`, `src/screens/Explore.tsx`, `src/screens/ExploreFeatureHeader.tsx`, `src/screens/WellnessTools.tsx`, `src/wellness-tools.ts`, `src/screens/TimedPractice.tsx`, `src/screens/Moments.tsx`, `src/moments.ts`, `server/src/timed-practice-contract.ts`, and `server/src/validation.ts`. Test coverage is in `scripts/test-navigation.cjs`, `scripts/test-moments.cjs`, and `server/tests/timed-practice.test.ts`. Product notes are in `README.md`, `DESIGN.md`, and `docs/REQUIREMENTS.md`.
+
+## Appearance and preferences cleanup — 7 November 2026
+
+- The production web preview verified that Appearance & preferences no longer lists memories, reminders, privacy or About. The 320- and 430-pixel layouts matched in light and dark, with no horizontal overflow. At 430 pixels, the settings fit in one viewport.
+- All four links opened their existing destinations from Profile and returned with one Back. Light, Dark and System controls worked. The sound and accessibility guidance and its Solace Moments link remained available. Opt-in and opt-out made one successful account update each. Dark appearance and the saved consent state survived reload, and the saved memory remained present after opt-out.
+- The Android API 33 emulator opened all four Profile links and used system Back from each. Light and Dark appearance, the Solace Moments link, both directions of the approved-preferences switch, and Back from Settings passed on the emulator.
+- TypeScript, Prettier, Android release lint, web and iOS production exports, 10 navigation tests, and 114 backend tests passed. Native iOS navigation and swipe-back remain unverified.
+
+## Explore recommendations and destination cards — 7 November 2026
+
+- The production web preview rendered four 74-pixel rows at 320 in light and dark mode, and four equal cards per grid at 370, 390, 408, 410, and 430 pixels. The 370- and 390-pixel grids reserved two lines for titles. The 408-, 410-, and 430-pixel grids measured 117 pixels per card. Explore More measured three 63-pixel horizontal rows with 12-pixel gaps. Text at 140% wrapped without clipping.
+- The browser verified all seven existing destinations, including 3:00 for Breath Reset, 5:00 for Five Senses grounding, and 10:00 for Sleep Wind Down. One Back restored the exact scroll position after ordinary and rapid same-spot taps. The touch guard also passed with Reduce Motion. Four simulated image 404s showed activity icons in the reserved artwork areas, and an authenticated reload retained access to the cards.
+- The Android API 33 emulator opened all seven destinations and returned to Explore with one system Back per card. The 320 dp light layout reflowed to single-column recommendations at 130% system text after a cold restart. The final 393 dp dark grid showed four equal 117 dp cards with the crescent and notebook visible in their artwork.
+- TypeScript, Prettier, Android release lint, the web and iOS production JavaScript exports, 8 navigation tests, 65 session-state tests, and 114 backend tests passed. Native iPhone layout and swipe-back remain unverified.
+
+## Journey Habit Progress card — 7 November 2026
+
+- The production web preview matched Your Goal’s surface, border, and radius. The card measured 173 pixels at 320 in both themes (previously 212) and 156 at 430 in dark mode (previously 189). Both metrics and the Garden status remained readable at 140% rendered text.
+- With persisted weekday and flexible schedules, the browser showed 5 actions and 80% for Week, 5 and 67% for Month, 11 and 83% for All time, and 3 and 75% for the previous week. Period changes made no API requests. The full card opened Habit Insights and Back restored Journey’s scroll position.
+- A Today completion made one write and updated the weekly card to 6 actions and 100%. Garden changed from Growing plant to Blooming flower. Reopening the browser and SQLite restored the selected All time period, the updated totals, and the earned Garden stage. Separate empty accounts distinguished zero completed goals from a period without scheduled goals.
+- The Android API 33 emulator rendered the saved Month summary at 320 dp in light mode with 130% system text. After a cold restart, the 393 dp dark layout restored Month, one completed action, 50% of scheduled goals met, and Sprout. The card opened Habit Insights and Android system Back returned to Journey.
+- TypeScript, Prettier, Android release lint, the web and iOS production JavaScript exports, 65 session-state tests, 20 progress tests, and 114 backend tests passed. Native iOS layout remains unverified.
+
+## Explore wellness feature cards — 7 November 2026
+
+- The production web preview showed the shared cards between Featured Moment and Recommended for You. They measured 74 pixels each at 320 in light and dark and 82 each at 430 in dark, with a 12-pixel gap. At 140% rendered text both cards expanded without horizontal overflow or clipping.
+- Browser taps on the artwork and right side of each card opened Guided Techniques and the Habits Dashboard. A rapid second tap initially reached a destination control during navigation. The scoped arrival guard passed the same-spot double-tap retest with normal motion and Reduce Motion. One Back restored the exact Explore scroll position, the open disclosure, and the selected Breathe filter when returning from the catalog.
+- On the Android API 33 emulator, both cards expanded to about 143 dp with a 12 dp gap at 320 dp and 130% system text. Double taps opened each destination, and one hardware Back restored the Explore scroll position. A separate dark-mode pass verified the pair at 393 dp.
+- TypeScript, Prettier, Android release lint, the web and iOS production JavaScript exports, 7 navigation tests, 64 session-state tests, and 114 backend tests passed. Native iOS layout and swipe-back remain unverified.
+
+## Floating Companion composer — 7 November 2026
+
+- The production web preview showed four individually tinted controls over the conversation at 320 × 640 in light mode and 390 × 844 in dark mode. The title was centered, the root Back button was absent, and the Journal handoff retained its Back destination. At 140% rendered text the composer stayed within the viewport.
+- The browser verified multiline growth from 48 to 132 pixels, internal scrolling, one saved turn after rapid Send presses, failed-draft retry, Add actions, tab and conversation restoration, and access to the last suggestion. Browser keyboard coverage used a simulated viewport change. Voice coverage used synthetic audio and a local transcription fixture.
+- The Android API 33 emulator exposed an edge-to-edge keyboard overlap. Frame-based keyboard avoidance kept the composer above the real keyboard on retest, hid the tab bar, and kept the multiline input capped at 132 logical units. Add dismissed the keyboard and opened the actions menu. A multiline message saved once, its suggestion opened, and Android Back and tab switching returned to the same conversation.
+- The Android emulator handled microphone permission denial, then recorded and uploaded audio to an isolated transcription fixture after permission was granted. Using the reviewed transcript populated the draft without sending it. The web and Android runs used a local provider fixture for chat replies.
+- The 320-unit Android light layout at 130% system text retained the centered title, floating controls, and overflow menu. Conversation history opened from the menu and Android Back returned to Companion. The visible New chat shortcut uses a shorter label on narrow screens and at larger text sizes. A separate dark-mode emulator pass verified the header and four floating controls.
+- TypeScript, Prettier, Android release lint, iOS and web production JavaScript exports, 98 client tests, and 114 backend tests passed. Physical-device checks and native iOS keyboard, safe-area, and gesture checks remain pending.
+
+## Today Explore More and Daily Pause — 7 November 2026
+
+- Production web checks at 320 × 640 in dark mode and 430 × 932 in light mode verified the two tiles above Check-ins, a connected three-step row, and a full-width Daily Pause action. At 320 pixels, the Explore group went from 252 to 147 pixels tall and the Daily Pause card from 289 to 198. At 140% rendered text, the narrow web preview showed no clipping or horizontal overflow.
+- The browser opened all three Explore destinations and returned to Today. Each Daily Pause action saved one record through the test API. Partial and full completion survived reloads, and the saved activity, duration, skip and enabled choices changed the next step as expected. The isolated browser test accelerated the Moment timer.
+- The Android API 33 emulator passed Customize, next-step navigation and Android Back in the default-text dark layout and the light 320-unit layout at 130% system text. The narrow layout stacked the Explore cards, kept the Daily Pause markers aligned, and let the expanded Customize controls scroll above the tab bar. Native iPhone verification remains pending.
+- TypeScript, Prettier, Android release lint, the iOS JavaScript export, and 114 backend tests passed. The 42 routine, navigation, Moment, and wellness tests passed, including a rendered Today check and one preference write after two rapid Customize save presses.
+
+## Today’s Habits card — 7 November 2026
+
+- Production web checks at 390 × 844 in dark mode and 320 × 568 in light mode found 24 logical units between Your Journey and Today’s Habits, matching surfaces and borders, and action heights of at least 48 units. The one-row card measured 115 units, down from 224. Long habit names wrapped at the compact width.
+- The browser checks covered empty and unscheduled states, the three-row preview, header and row navigation, and saved completion and undo in Today, the Habits Dashboard, and Journey. The completed row remained available for undo with four scheduled habits.
+- The Android API 33 emulator rendered the card in light and dark mode. Done and Undo updated the count in Today and the Habits Dashboard, and Android Back returned to the card. Native iOS appearance was not checked.
+- TypeScript, formatting, Android release lint, 63 session and component tests, and 114 backend tests passed.
+
+## Physical Android staging release — 7 November 2026
+
+- Built the ARM64 Android release APK with the staging HTTPS API. Gradle assembly and release lint passed. Verified the APK signature, the embedded JavaScript bundle, and the staging API origin. The package installed on a physical Xiaomi 2312FRAFDI running Android 15 and cold-started with Metro stopped.
+- Skipped onboarding and opened the Google sign-in browser. Cancelling returned to the signed-out app. Google account consent and the successful return from Google are deferred. Android resolves the Solace callback to the installed app.
+- Signed in with a disposable staging account and opened Today, Solace, Journal, Explore, Journey, and Profile. Logged a habit completion from Today. After a cold restart the session restored and the Habits dashboard still showed the completion. Left the phone on Today with the disposable account signed in.
+- The APK uses local test signing and a temporary HTTPS staging origin. This pass covers the physical Android smoke test.
+
+## Solace Habits — 7 November 2026
+
+[Habits, Companion, garden, schedule and device checks](HABITS_QA.md).
+
 ## First-launch walkthrough — 7 November 2026
 
 [Onboarding, authentication, personalization and replay verification](ONBOARDING_QA.md).
@@ -15,6 +122,14 @@
 ## Companion, Journal and Guided Techniques
 
 The [connected QA report](COMPANION_JOURNAL_TECHNIQUES.md) records navigation and persistence checks, live Gemini requests, rendered phone layouts, device checks and outstanding release gates.
+
+The [finishing pass](COMPANION_JOURNAL_TECHNIQUES.md#finishing-pass) covers the compact chooser, keyboard navigation, Voice Talk reply placement, filtered Journal saves, excerpt consent and guided player controls.
+
+The [everyday flow upgrades](COMPANION_JOURNAL_TECHNIQUES.md#everyday-flow-upgrades) cover direct Companion actions, visible Journal save status, guided pacing and the Latest activity link in Journey.
+
+## Premium feature expansion — 6 November 2026
+
+[Feature checklist, build checks and synthetic QA evidence](PREMIUM_EXPANSION.md). The browser completed a live Gemini chat-to-Moment journey, voice recording and playback, Daily Pause, weekly story edits, simultaneous ambient playback and a real milestone reveal. Native iOS signing and device acceptance are tracked in the checklist.
 
 ## Cross-platform UI repair — 6 November 2026
 
@@ -492,6 +607,34 @@ The connected Android display was off during the redesign check. Installed-devic
 - **Layout and device:** Compared both 394 × 852 CSS-pixel browser captures with the supplied mockup. The browser had no horizontal overflow at 320 and 430 pixels. On the connected physical Android phone, the existing debug app loaded the updated source from Metro, and Week, Month and scrolling to the saved-story links were checked. A new native release APK, Xcode build and physical iPhone were not tested. Live provider output was not tested; the local browser used offline guidance and the server tests used a stub.
 
 [Dark capture](screenshots/journey-redesign-dark.jpg) · [Light capture](screenshots/journey-redesign-light.jpg)
+
+## Check-in next steps — 7 November 2026
+
+| Status | Scenario | Observed result |
+|---|---|---|
+| Fixed and retested | Today → Low → Save → Try a short reset | In Chromium at 320 × 640, the confirmation offered Five-senses grounding and explained the recommendation. Paused, resumed, advanced all five steps and saved “Helped”. Journey opened the exact completion with two active seconds and retained it after reload. |
+| Fixed and retested | Today → Stressed → Save → Try a short reset → Back | Opened the three-minute Slow breathing player. Back restored the same saved check-in confirmation. Leaving before starting produced zero completions. |
+| Fixed and retested | Save and practice with the browser offline | The check-in reported “Kept in this tab” and the session save reported an unconfirmed state. The test server had zero records until reconnect. Reconnect synced one check-in and a manual retry saved one completion with its original duration and feedback. |
+| Fixed and retested | Talk about this → Review → Companion → Send | At 320 × 640 dark and 390 × 844 light, the preview showed the mood and left the note off by default. Opt-in showed the exact note and cancelling reset the selection. Opening or editing the draft sent zero AI requests. One explicit Send posted the edited mood-only message and received a live Gemini reply. Opening an existing draft kept it intact, and the separate append action kept existing text and added only the approved check-in content. |
+
+The previous success screen sent users back to Today to find another action. The confirmation now opens a registered technique and uses the saved record ID for the return path. Companion receives only an editable draft after review. Journal, memory consent, and the existing activity completion pipeline use their existing contracts.
+
+**Android native smoke.** On the Pixel 3a API 33 emulator, the debug app loaded the updated bundle from Metro. A disposable account logged in and saved a Low check-in. After dismissing the first-check-in milestone, the reset opened the grounding player. Android Back restored the confirmation. The optional note appeared only when selected, and the native Companion composer contained the mood-only draft before Send.
+
+Client TypeScript and Prettier passed. Server integration passed 92/92, session state 47/47, Journey progress 20/20, Moment clock 11/11 and wellness 7/7. Expo production exports succeeded for web, Android and iOS. The isolated Android release built with `assembleRelease` and `lintVitalRelease`, and the APK contains `assets/index.android.bundle`. The release installed and cold-launched to Welcome on the emulator. It used a reserved HTTPS host for packaging verification. Use the configured test API for a signed-device run.
+
+**Blocked on physical devices.** No physical handset was detected and this Windows host cannot sign or run the iOS app. On a connected test phone with the current build and a test API, save a Low check-in with a synthetic note. Open the reset and return using the device’s back navigation. Open the review, toggle the note and confirm that only the chosen text reaches the editable draft. Repeat in both themes with larger text.
+
+[Light confirmation](screenshots/checkin-next-step-light.png) · [Dark Companion review](screenshots/checkin-companion-review-dark.png)
+
+## Android layout sizing — 7 November 2026
+
+- **Fixed and retested.** At 393 dp wide and 1.17× system text in dark mode, open Today and inspect “How are you feeling today?” The previous tile-width heuristic split the picker into rows of three and two, with 64 dp tall tiles. After compacting Android gutters and tile padding, the same emulator shows five equal tiles in one row, approximately 64 × 56 dp each. The featured card and quick actions are shorter, and Journey is visible above the tab bar.
+- **Fixed and retested.** At 320 dp and 1.4× system text in light mode, the five tiles measured approximately 52 × 58 dp and retained their full labels. Tapping Stressed opened the check-in with Stressed selected. Android Back returned to Today. The tab rail fit all five labels on one line, including Explore and Journey. Only these short labels fit to their available widths. The rest of the screen still follows Android text scaling.
+- **Native smoke.** Used the Pixel 3a API 33 emulator at 440 dpi and the isolated debug app with a disposable account. Opened all five main tabs at 320 dp and 1.4×. Visually checked Explore’s tiles, Journey’s metrics and Profile’s rows, which expand for longer labels. Restored the emulator’s original display settings. A physical Android handset was unavailable. The new layout values apply only to Android.
+- **Checks.** TypeScript, Prettier, 92 server integration tests and the web, Android and iOS production exports passed. The isolated Android APK passed `assembleRelease` and `lintVitalRelease`, then installed and cold-launched to Welcome on the emulator. It uses a reserved HTTPS origin for build QA.
+
+[Android before](screenshots/ui-repair/android-sizing-before-today.png) · [Android after](screenshots/ui-repair/android-sizing-after-today.png) · [320 dp with larger text](screenshots/ui-repair/android-sizing-narrow-light.png)
 
 ## Google sign-in and Biometric Lock — 7 November 2026
 

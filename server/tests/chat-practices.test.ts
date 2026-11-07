@@ -184,7 +184,7 @@ test("chat explanations only cite matching authorized evidence and hide it after
   }
 });
 
-test("explanation candidates come from the latest mood and completed helpful practices", () => {
+test("explanations use the latest mood and only helpful practices with approved linked feedback", () => {
   const now = Date.parse("2026-11-06T10:00:00.000Z");
   const createdAt = new Date(now).toISOString();
   const sources = {
@@ -229,10 +229,37 @@ test("explanation candidates come from the latest mood and completed helpful pra
       kind,
       practice,
     })),
-    [
-      { id: "mood", kind: "checkin", practice: "breathing" },
-      { id: "helpful", kind: "helpful-moment", practice: "focus" },
+    [{ id: "mood", kind: "checkin", practice: "breathing" }],
+  );
+  const approved = {
+    ...sources,
+    memories: [
+      ...sources.memories,
+      {
+        id: "remembered-feedback",
+        createdAt,
+        category: "preference",
+        approved: true,
+        sourceType: "session",
+        sourceId: "helpful",
+        text: "I find grounding Moments helpful.",
+      },
     ],
+  };
+  const evidence = availableChatEvidence(approved, now).find(
+    (item) => item.kind === "helpful-moment",
+  );
+  assert.ok(evidence);
+  assert.equal(evidence.id, "helpful");
+  assert.equal(evidence.practice, "focus");
+  const explanation = { basis: "personalized", evidence } as const;
+  assert.equal(
+    describeChatExplanation(explanation, "focus", true, approved).basis,
+    "personalized",
+  );
+  assert.equal(
+    describeChatExplanation(explanation, "focus", true, sources).basis,
+    "general",
   );
 });
 

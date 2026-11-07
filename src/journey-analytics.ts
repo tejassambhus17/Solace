@@ -1,4 +1,5 @@
 import { localDay, recordDay } from "./content";
+import { isRecordId } from "./routes";
 import {
   activeSeconds,
   adjacentCalendarDay,
@@ -313,6 +314,31 @@ export function journeyAnalytics(
 }
 
 type JourneyAnalytics = ReturnType<typeof journeyAnalytics>;
+
+export function latestJourneyActivity(analytics: JourneyAnalytics) {
+  let latest: (DayEntry & { day: string }) | undefined;
+  let latestTime = -Infinity;
+  for (const [day, activity] of analytics.days) {
+    if (latest && day < latest.day) continue;
+    for (const entry of activity.entries) {
+      const { collection, record } = entry;
+      if (
+        !isRecordId(record.id) ||
+        (collection !== "checkins" &&
+          !(collection === "reflections" && record.kind === "journal") &&
+          !(collection === "sessions" && isCompletedMoment(record)))
+      )
+        continue;
+      const timestamp = Date.parse(record.createdAt);
+      const time = Number.isFinite(timestamp) ? timestamp : -Infinity;
+      if (!latest || day > latest.day || time > latestTime) {
+        latest = { ...entry, day };
+        latestTime = time;
+      }
+    }
+  }
+  return latest;
+}
 
 export function nextMilestoneCelebration(
   milestones: JourneyAnalytics["milestones"],

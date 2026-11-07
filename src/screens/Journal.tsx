@@ -196,9 +196,15 @@ function JournalChip({
 }
 
 function EntryMeta({ record }: { record: Item }) {
+  const app = useApp();
   const { colors } = useTheme();
   const date = entryDate(record);
   const mood = moodPetals.find((choice) => choice.mood === record.mood);
+  const syncState = record.localOnly
+    ? app.pendingWrites.find(
+        (entry) => entry.collection === "reflections" && entry.id === record.id,
+      )?.syncState
+    : undefined;
   return (
     <View style={styles.wrap}>
       {!!date && (
@@ -223,7 +229,64 @@ function EntryMeta({ record }: { record: Item }) {
           </AppText>
         </Row>
       )}
-      {record.localOnly && <JournalNotice>Waiting to sync</JournalNotice>}
+      {record.localOnly && (
+        <JournalNotice error={syncState === "failed"}>
+          {syncState === "syncing"
+            ? "Syncing…"
+            : syncState === "failed"
+              ? "Sync needs attention"
+              : "Waiting to sync"}
+        </JournalNotice>
+      )}
+    </View>
+  );
+}
+
+function JournalEntrySyncStatus({
+  record,
+  disabled = false,
+}: {
+  record: Item;
+  disabled?: boolean;
+}) {
+  const app = useApp();
+  const pending = app.pendingWrites.find(
+    (entry) => entry.collection === "reflections" && entry.id === record.id,
+  );
+  if (!record.localOnly)
+    return <JournalNotice>Saved to your account.</JournalNotice>;
+  const syncing = pending?.syncState === "syncing";
+  const failed = pending?.syncState === "failed";
+  return (
+    <View style={styles.group}>
+      <JournalNotice>
+        {syncing
+          ? "Syncing to your account…"
+          : app.draftProtection === "device"
+            ? "Saved on this device. Waiting to sync to your account."
+            : "Kept in this browser tab. Leave it open until this entry syncs."}
+      </JournalNotice>
+      {failed && (
+        <JournalNotice error>
+          {pending.syncError ??
+            "Couldn’t sync this entry. Its copy is still here."}
+        </JournalNotice>
+      )}
+      <Button
+        title={failed ? "Retry sync" : "Sync this entry"}
+        icon="cloud-upload-outline"
+        variant="secondary"
+        loading={syncing}
+        disabled={
+          disabled || (!syncing && app.syncingWrites) || !isRecordId(record.id)
+        }
+        onPress={() => {
+          if (isRecordId(record.id))
+            void app
+              .flushPendingWrites({ collection: "reflections", id: record.id })
+              .catch(() => {});
+        }}
+      />
     </View>
   );
 }
@@ -302,12 +365,19 @@ function JournalLibrary() {
         }),
     [records, favorites, moodOnly, mood, needle, oldest],
   );
-  const open = (destination: string, params?: Record<string, string>) => {
+  const open = (
+    destination: string,
+    params?: Record<string, string | boolean>,
+  ) => {
     app.setParams({ scrollY: listScroll.offset.current });
     app.navigate(destination, params);
   };
-  const write = () => open(routes.journalEditor);
   const hasFilters = !!needle || !!mood || moodOnly;
+  const write = () =>
+    open(
+      routes.journalEditor,
+      hasFilters || favorites ? { revealSavedEntry: true } : undefined,
+    );
   const clearFilters = () =>
     app.setParams({ query: "", mood: null, favorites: false, moodOnly: false });
   const header = (
@@ -684,6 +754,8 @@ function JournalEditor({ record }: { record?: Item }) {
   const [showInsightInfo, setShowInsightInfo] = useState(false);
   const [showDraftInfo, setShowDraftInfo] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savedEntry, setSavedEntry] = useState<Item>();
+  const [retryingDraft, setRetryingDraft] = useState(false);
   const [error, setError] = useState("");
   const savingRef = useRef(false);
   const flush = useRef(app.flushEditorDrafts);
@@ -696,6 +768,7 @@ function JournalEditor({ record }: { record?: Item }) {
       : "";
   const open = useRef(true);
   const tags = enteredTags(value.tags);
+  const draftStatus = app.editorDraftPersistence[key];
   useLayoutEffect(() => {
     open.current = true;
     return () => {
@@ -730,7 +803,7 @@ function JournalEditor({ record }: { record?: Item }) {
     app.setEditorDraft(key, submitted);
     try {
       await app.flushEditorDrafts();
-      await app.save(
+      const saved = await app.save(
         "reflections",
         {
           id,
@@ -746,7 +819,7 @@ function JournalEditor({ record }: { record?: Item }) {
       );
       app.setEditorDraft(key, null, submitted);
       draftActive.current = false;
-      if (open.current) app.back();
+      if (open.current) setSavedEntry(saved);
     } catch (error) {
       if (open.current)
         setError(
@@ -760,6 +833,40 @@ function JournalEditor({ record }: { record?: Item }) {
       if (open.current) setSaving(false);
     }
   };
+  if (savedEntry) {
+    const confirmed =
+      app.data.reflections.find((item) => item.id === savedEntry.id) ??
+      savedEntry;
+    const revealEntry = !record && app.params.revealSavedEntry === true;
+    return (
+      <Screen style={styles.screen}>
+        <JournalHeader title="My Journal" back={app.back} />
+        <View
+          style={[
+            styles.panel,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <AppText variant="heading" accessibilityRole="header">
+            {confirmed.localOnly
+              ? "Your entry is waiting to sync"
+              : record
+                ? "Entry updated"
+                : "Entry saved"}
+          </AppText>
+          <JournalEntrySyncStatus record={confirmed} />
+          <Button
+            title={revealEntry ? "View entry" : "Done"}
+            onPress={() => {
+              app.back();
+              if (revealEntry && isRecordId(confirmed.id))
+                app.navigate(routes.journalEntry, { id: confirmed.id });
+            }}
+          />
+        </View>
+      </Screen>
+    );
+  }
   return (
     <Screen style={[styles.screen, styles.editor]}>
       <JournalHeader
@@ -774,6 +881,23 @@ function JournalEditor({ record }: { record?: Item }) {
           onPress={() => setShowDraftInfo(!showDraftInfo)}
         />
       </JournalHeader>
+      {showDraftInfo && (
+        <View
+          style={[
+            styles.draftInfo,
+            {
+              backgroundColor: colors.lavenderSurface,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <JournalNotice>
+            {app.draftProtection === "device"
+              ? "Drafts autosave to protected storage on this device."
+              : "Drafts stay in this browser tab until you reload or close it."}
+          </JournalNotice>
+        </View>
+      )}
       {!!prompt && (
         <View
           style={[
@@ -970,17 +1094,37 @@ function JournalEditor({ record }: { record?: Item }) {
           </View>
         )}
       </View>
-      {(showDraftInfo || record?.localOnly) && (
-        <JournalNotice>
-          {record?.localOnly
-            ? "This entry is waiting to sync. You can keep editing the draft while it waits."
-            : app.draftProtection === "device"
-              ? "Drafts autosave to protected storage on this device."
-              : "Drafts stay in this browser tab until you reload or close it."}
-        </JournalNotice>
-      )}
-      {app.offlineError && draft && (
-        <JournalNotice error>{app.offlineError}</JournalNotice>
+      {draft && !saving && (
+        <View style={styles.group}>
+          <JournalNotice
+            error={
+              !retryingDraft &&
+              draftStatus === "failed" &&
+              app.draftProtection === "device"
+            }
+          >
+            {app.draftProtection === "memory"
+              ? "Draft kept in this browser tab. Closing or reloading removes unsaved changes."
+              : draftStatus === "committed"
+                ? "Draft saved on this device."
+                : draftStatus === "failed" && !retryingDraft
+                  ? "Couldn’t save this draft on this device. Your changes are still open."
+                  : "Saving draft on this device…"}
+          </JournalNotice>
+          {app.draftProtection === "device" && draftStatus === "failed" && (
+            <Button
+              title="Retry draft save"
+              variant="secondary"
+              loading={retryingDraft}
+              onPress={() => {
+                setRetryingDraft(true);
+                void app.flushEditorDrafts().finally(() => {
+                  if (open.current) setRetryingDraft(false);
+                });
+              }}
+            />
+          )}
+        </View>
       )}
       {error && <JournalNotice error>{error}</JournalNotice>}
       <Row style={styles.editorAction}>
@@ -1002,7 +1146,7 @@ function JournalEditor({ record }: { record?: Item }) {
           />
         </View>
         <Button
-          title={saving ? "Saving entry" : "Save entry"}
+          title={saving ? "Saving entry" : error ? "Retry save" : "Save entry"}
           icon="checkmark"
           loading={saving}
           disabled={!value.text.trim() || !!record?.localOnly}
@@ -1010,14 +1154,7 @@ function JournalEditor({ record }: { record?: Item }) {
           style={styles.flex}
         />
       </Row>
-      {!!record?.localOnly && (
-        <Button
-          title="Sync this entry"
-          variant="secondary"
-          loading={app.syncingWrites}
-          onPress={() => void app.flushPendingWrites().catch(() => {})}
-        />
-      )}
+      {!!record?.localOnly && <JournalEntrySyncStatus record={record} />}
     </Screen>
   );
 }
@@ -1120,24 +1257,8 @@ function JournalDetail({ record }: { record?: Item }) {
         )}
       </View>
       {bookmark.error && <JournalNotice error>{bookmark.error}</JournalNotice>}
-      {record.localOnly ? (
-        <>
-          <JournalNotice>
-            {app.draftProtection === "device"
-              ? "Saved on this device. Sync to use this entry on another device or reflect with Solace."
-              : "This entry is waiting to sync in this browser tab. Sync before closing the tab."}
-          </JournalNotice>
-          <Button
-            title="Sync this entry"
-            icon="cloud-upload-outline"
-            loading={app.syncingWrites}
-            onPress={() => void app.flushPendingWrites().catch(() => {})}
-          />
-          {app.offlineError && (
-            <JournalNotice error>{app.offlineError}</JournalNotice>
-          )}
-        </>
-      ) : (
+      <JournalEntrySyncStatus record={record} disabled={deleting} />
+      {!record.localOnly && (
         <>
           <Button
             title="Reflect with Solace"
@@ -1254,6 +1375,7 @@ const styles = StyleSheet.create({
   },
   entrySeparator: { height: spacing.row },
   editor: { flexGrow: 1, gap: spacing.compact },
+  draftInfo: { borderRadius: 15, borderWidth: 1, padding: spacing.row },
   header: { gap: 4, marginHorizontal: -8, marginBottom: 1 },
   headerTitle: { flex: 1, fontSize: 25, lineHeight: 32 },
   headerAction: { borderRadius: 22 },

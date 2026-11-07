@@ -19,14 +19,24 @@ export function NavigationDetail({
   children,
   reducedMotion,
   stationary,
+  guardArrivalTouches = false,
 }: {
   children: React.ReactNode;
   reducedMotion: boolean;
   stationary: boolean;
+  guardArrivalTouches?: boolean;
 }) {
   const rtl = I18nManager.isRTL;
   const [arrival] = useState(() => new Animated.Value(1));
+  const [guardingTouches, setGuardingTouches] = useState(guardArrivalTouches);
   const ready = useRef(false);
+  useLayoutEffect(() => {
+    if (!guardArrivalTouches) return;
+    // A second tap at the card's old position can otherwise activate the
+    // destination beneath it, even when motion is reduced.
+    const settle = setTimeout(() => setGuardingTouches(false), 220);
+    return () => clearTimeout(settle);
+  }, [guardArrivalTouches]);
   useLayoutEffect(() => {
     const firstArrival = !ready.current;
     ready.current = true;
@@ -63,7 +73,12 @@ export function NavigationDetail({
     [arrival, rtl],
   );
   return (
-    <View style={styles.clip}>
+    <View
+      style={styles.clip}
+      pointerEvents={
+        guardArrivalTouches && guardingTouches ? "box-only" : "auto"
+      }
+    >
       <Animated.View
         style={[styles.content, !stationary && !reducedMotion && motion]}
       >

@@ -9,17 +9,41 @@ export const routes = {
   journalEntry: "journal-entry",
   journalReflect: "journal-reflect",
   explore: "explore",
+  exploreCatalog: "explore-catalog",
+  wellnessTools: "wellness-tools",
+  timedPractice: "timed-practice",
   techniques: "techniques",
   technique: "technique-detail",
+  habits: "habits",
+  habitCreate: "habit-create",
+  habitLibrary: "habit-library",
+  habitDetails: "habit-details",
+  habitEdit: "habit-edit",
+  habitInsights: "habit-insights",
+  habitGarden: "habit-garden",
+  habitReminders: "habit-reminders",
   momentPlayer: "moment-player",
   breathing: "breathing",
   journey: "journey",
+  journeyCheckin: "journey-checkin",
+  sessionDetail: "session-detail",
   reflectionDetail: "reflection-detail",
   profile: "profile",
   onboarding: "onboarding-replay",
   memory: "memory",
   support: "support",
 } as const;
+
+export const habitRoutes = new Set<string>([
+  routes.habits,
+  routes.habitCreate,
+  routes.habitLibrary,
+  routes.habitDetails,
+  routes.habitEdit,
+  routes.habitInsights,
+  routes.habitGarden,
+  routes.habitReminders,
+]);
 
 export type SolaceMode = "companion" | "journal";
 
