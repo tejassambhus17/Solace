@@ -12,30 +12,32 @@ import {
   Image,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
 } from "react-native";
-import {
-  AndroidHaptics,
-  performAndroidHapticsAsync,
-  selectionAsync,
-} from "expo-haptics";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { playHaptic } from "../haptics";
 import { useReducedMotion } from "../Companion";
 import { localDay } from "../content";
+import { DaylightHeroBlend } from "../DaylightScenicFade";
+import { DaylightScenicScrim, daylightPhotoInk } from "../DaylightScenicScrim";
 import { createExplorePractice, exploreShortcuts } from "../explore-practices";
 import { spacing, useScreenGutter } from "../layout";
 import { pickDailyRoutine } from "../routine";
+import { routes } from "../routes";
+import { MainTabHeader, useMainTabHeaderInsets } from "../SolaceBrandHeader";
 import { useApp } from "../store";
-import { useTheme } from "../theme";
+import { artGradient, useTheme } from "../theme";
 import { DailyRitualOptions } from "./DailyRitualOptions";
-import { TodayHabits } from "./HabitEntryPoints";
+import { getTodayHabitsPreview, TodayHabits } from "./HabitEntryPoints";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { TodayProgressCard } from "./TodayProgressCard";
 import {
   AppText,
   coverImageStyle,
   Icon,
+  IconButton,
   LotusMark,
   MoodPetal,
   moodPetals,
@@ -49,28 +51,32 @@ const quickActions = [
     icon: "leaf-outline",
     route: "breathing",
     params: { durationSec: 180 },
-    tone: "breathe",
+    image: require("../../assets/today-quick-breathe.jpg"),
+    ink: "#B5F6D4",
   },
   {
     title: "Reflect",
     icon: "pencil-outline",
     route: "reflection",
     params: {},
-    tone: "reflect",
+    image: require("../../assets/today-quick-reflect.jpg"),
+    ink: "#E6CAFF",
   },
   {
     title: "Sleep",
     icon: "moon-outline",
     route: "sleep",
     params: {},
-    tone: "sleep",
+    image: require("../../assets/redesign-explore-sleep.jpg"),
+    ink: "#DED5FF",
   },
   {
     title: "Focus",
     icon: "locate-outline",
     route: "grounding",
     params: {},
-    tone: "focus",
+    image: require("../../assets/today-quick-focus.jpg"),
+    ink: "#FFE3B1",
   },
 ] as const;
 
@@ -81,14 +87,14 @@ function TodayMoodOption({
   choice: { mood, image },
   status,
   wrap,
-  labelScaleLimit,
+  compactLight,
   reducedMotion,
   onPress,
 }: {
   choice: MoodChoice;
   status?: "saved" | "pending";
   wrap: boolean;
-  labelScaleLimit?: number;
+  compactLight: boolean;
   reducedMotion: boolean;
   onPress: () => void;
 }) {
@@ -137,16 +143,17 @@ function TodayMoodOption({
       style={[
         styles.mood,
         isAndroid && styles.androidMood,
+        compactLight && isAndroid && styles.lightCompactMood,
         wrap && styles.largeMood,
         {
-          backgroundColor: dark ? "#302839" : "#FFFAF3",
+          backgroundColor: dark ? "#302839" : colors.bg,
           borderColor: selected
             ? dark
               ? "#BE99F2"
               : colors.lavenderText
             : dark
               ? "#45394E"
-              : colors.heroBorder,
+              : colors.border,
         },
       ]}
     >
@@ -155,7 +162,7 @@ function TodayMoodOption({
         style={[
           styles.moodTint,
           {
-            backgroundColor: dark ? "#493765" : colors.lavenderSurface,
+            backgroundColor: dark ? "#493765" : colors.primary,
             opacity: tint,
           },
         ]}
@@ -164,9 +171,6 @@ function TodayMoodOption({
       <AppText
         variant={selected ? "label" : "caption"}
         color={selected ? colors.lavenderText : colors.text}
-        numberOfLines={isAndroid && !wrap ? 1 : undefined}
-        adjustsFontSizeToFit={isAndroid && !wrap}
-        maxFontSizeMultiplier={labelScaleLimit}
         style={[styles.moodText, isAndroid && styles.androidMoodText]}
       >
         {mood}
@@ -176,10 +180,10 @@ function TodayMoodOption({
 }
 
 const exploreArt = {
-  plan: {
+  [routes.guidedPrograms]: {
     image: require("../../assets/today-explore-guided.jpg"),
     color: "#D9B3FF",
-    detail: "Three-day plans",
+    detail: "Multi-day plans",
   },
   toolkit: {
     image: require("../../assets/today-explore-toolkit.jpg"),
@@ -192,6 +196,102 @@ const exploreArt = {
     detail: "Track your mood",
   },
 } as const;
+
+function TodayExploreCard({
+  shortcut,
+  wrapTitle,
+  onPress,
+}: {
+  shortcut: (typeof exploreShortcuts)[number];
+  wrapTitle?: boolean;
+  onPress: () => void;
+}) {
+  const { colors, resolved } = useTheme();
+  const dark = resolved === "dark";
+  const art = exploreArt[shortcut.route];
+  const wide = shortcut.route === "checkin";
+  const title = wrapTitle ? shortcut.title.replace(" ", "\n") : shortcut.title;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={shortcut.title}
+      accessibilityHint={art.detail}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.exploreCard,
+        wide ? styles.exploreCardWide : styles.exploreCardTile,
+        !dark && { backgroundColor: colors.surface },
+        {
+          borderColor: pressed ? art.color : dark ? "#6D5B7A75" : colors.border,
+        },
+      ]}
+    >
+      <Image
+        source={art.image}
+        style={[coverImageStyle, wide && styles.exploreArtWide]}
+        resizeMode="cover"
+        accessible={false}
+        pointerEvents="none"
+        fadeDuration={0}
+      />
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          dark
+            ? wide
+              ? styles.exploreScrimWide
+              : styles.exploreScrim
+            : wide
+              ? artGradient(
+                  `linear-gradient(90deg, ${colors.surface} 0%, ${colors.surface} 36%, ${colors.surface}D9 52%, ${colors.surface}00 82%)`,
+                )
+              : artGradient(
+                  `linear-gradient(180deg, ${colors.surface}00 0%, ${colors.surface}10 41%, ${colors.surface}F5 73%, ${colors.surface} 100%)`,
+                ),
+        ]}
+      />
+      <View pointerEvents="none" style={styles.exploreCardHeader}>
+        <View
+          style={[
+            styles.exploreCardIcon,
+            !dark && { backgroundColor: colors.tabActiveSurface },
+          ]}
+        >
+          <Icon
+            name={shortcut.icon}
+            color={dark ? art.color : colors.tabActiveText}
+            size={20}
+          />
+        </View>
+        {dark ? (
+          <Icon name="chevron-forward" size={15} color="#FFF9F7" />
+        ) : (
+          <View
+            style={[
+              styles.lightExploreArrow,
+              { backgroundColor: colors.surface },
+            ]}
+          >
+            <Icon name="chevron-forward" size={15} color={colors.accent} />
+          </View>
+        )}
+      </View>
+      <View style={styles.exploreCardCopy}>
+        <AppText
+          variant="label"
+          color={dark ? "#FFF9F7" : colors.text}
+          style={styles.exploreCardTitle}
+        >
+          {title}
+        </AppText>
+        <AppText variant="caption" color={dark ? "#E7DCEB" : colors.muted}>
+          {art.detail}
+        </AppText>
+      </View>
+    </Pressable>
+  );
+}
 
 const calmReset = {
   ...createExplorePractice("breathe", 5),
@@ -235,37 +335,79 @@ function useToday() {
 export function TodayScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
-  const { width, fontScale } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
-  const { top } = useSafeAreaInsets();
+  const headerInsets = useMainTabHeaderInsets();
   const reducedMotion = useReducedMotion();
   const dark = resolved === "dark";
   const largeText = fontScale > 1.2;
+  const lightPhotoMoment = !dark && !largeText;
+  const momentTitleInk = dark
+    ? "#FFF9F4"
+    : lightPhotoMoment
+      ? daylightPhotoInk.title
+      : colors.text;
+  const momentDetailInk = dark
+    ? "#FFF9F5"
+    : lightPhotoMoment
+      ? daylightPhotoInk.detail
+      : colors.muted;
   const compact = width < 360;
-  const exploreColumnWidth =
-    (Math.min(width, 480) - 2 * gutter - spacing.compact) / 2;
-  const stackExploreCards = exploreColumnWidth < 126 * fontScale;
-  const inlineExploreCards = exploreColumnWidth >= 176 * fontScale;
-  const moodPadding =
-    isAndroid && compact
-      ? 6
-      : compact || isAndroid
-        ? spacing.compact
-        : spacing.row;
-  const moodGap = isAndroid ? (compact ? 4 : 6) : compact ? 6 : spacing.compact;
+  const compactLight = !dark && !compact && height <= 850 && !largeText;
+  const exploreTileTextWidth =
+    (Math.min(width, 480) - 2 * gutter - spacing.row) / 2 - 2 * spacing.row;
+  const wrapExploreTitles = exploreTileTextWidth < 132 * fontScale;
+  const moodPadding = compact ? 6 : isAndroid ? spacing.compact : spacing.row;
+  const moodGap = compact ? 4 : isAndroid ? 6 : spacing.compact;
   const moodWidth =
     (Math.min(width, 480) - 2 * (gutter + moodPadding + 1) - 4 * moodGap) / 5;
-  const wrapMoods = isAndroid
-    ? moodWidth < 48
-    : largeText || moodWidth < 50 * fontScale + 6;
-  // Use the same scale for all five labels, based on the widest one (Stressed).
-  const moodLabelScale =
-    isAndroid && !wrapMoods ? Math.max(1, (moodWidth - 5) / 48) : undefined;
+  const wrapMoods = largeText || moodWidth < Math.max(48, 44 * fontScale + 4);
   const now = useToday();
   const today = localDay(now);
+  const quickTileWidth =
+    (Math.min(width, 480) - 2 * gutter - 3 * spacing.compact) /
+    quickActions.length;
+  const quickTileHeight = Math.max(110, Math.min(125, quickTileWidth + 35));
+  const wrapQuickActions = !dark && (fontScale > 1.3 || width < 310);
   const [showReason, setShowReason] = useState(false);
-  const { checkins, goals, memories, preferences, reflections, sessions } =
-    app.data;
+  const requestedSection = app.params?.section;
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const dailyPauseLayout = useRef<{
+    content?: number;
+    card?: number;
+    opened?: number;
+  }>({});
+  const jumpToDailyPause = useCallback(() => {
+    const layout = dailyPauseLayout.current;
+    if (
+      requestedSection !== "daily-pause" ||
+      layout.opened === app.routeKey ||
+      layout.content === undefined ||
+      layout.card === undefined ||
+      !scroll.current
+    )
+      return;
+    scroll.current.scrollTo({
+      y: layout.content + layout.card,
+      animated: !reducedMotion,
+    });
+    layout.opened = app.routeKey;
+  }, [requestedSection, app.routeKey, reducedMotion]);
+  useEffect(() => jumpToDailyPause(), [jumpToDailyPause]);
+  const {
+    checkins,
+    goals,
+    habits,
+    habitProgress,
+    memories,
+    preferences,
+    reflections,
+    sessions,
+  } = app.data;
+  const dailyHabits = useMemo(
+    () => getTodayHabitsPreview(habits, habitProgress, now),
+    [habits, habitProgress, now],
+  );
   const routine = useMemo(
     () =>
       pickDailyRoutine(
@@ -305,7 +447,9 @@ export function TodayScreen() {
       ? "current-checkin"
       : routine.source === "user-choice"
         ? "your-choice"
-        : ["preference", "feedback", "goal"].includes(routine.source)
+        : ["preference", "feedback", "goal", "wellness-goal"].includes(
+              routine.source,
+            )
           ? "personalized"
           : "general";
   const stepCount = routine.steps.length;
@@ -315,38 +459,9 @@ export function TodayScreen() {
     backgroundColor: dark ? "#211C2B" : colors.surface,
     borderColor: dark ? "#51415E" : colors.heroBorder,
   };
-  const secondary = dark ? "#CEC4DA" : colors.heroMuted;
-  const dailyPrimary = dark ? "#E7C7A8" : colors.primary;
-  const dailyPrimaryInk = dark ? "#2B211A" : colors.primaryText;
-  const accents = dark
-    ? {
-        breathe: { background: "#202C2B", border: "#3D514D", icon: "#84F4BF" },
-        reflect: { background: "#2A223A", border: "#4D3C66", icon: "#DAB4FF" },
-        sleep: { background: "#2F2529", border: "#59444B", icon: "#FFC66D" },
-        focus: { background: "#23282A", border: "#424C4D", icon: "#BCE8C8" },
-      }
-    : {
-        breathe: {
-          background: colors.sageSurface,
-          border: "#CCDCC8",
-          icon: colors.sageText,
-        },
-        reflect: {
-          background: colors.lavenderSurface,
-          border: "#DED0E7",
-          icon: colors.lavenderText,
-        },
-        sleep: {
-          background: colors.peachSurface,
-          border: "#EFD2BA",
-          icon: colors.peachText,
-        },
-        focus: {
-          background: colors.sageSurface,
-          border: "#CCDCC8",
-          icon: colors.sageText,
-        },
-      };
+  const secondary = dark ? "#CEC4DA" : colors.muted;
+  const dailyPrimary = colors.primary;
+  const dailyPrimaryInk = colors.primaryText;
   useEffect(
     () => setShowReason(false),
     [today, routine.suggestion.activity, next?.id],
@@ -367,13 +482,7 @@ export function TodayScreen() {
   }
 
   function openCheckin(mood: MoodChoice["mood"]) {
-    if (Platform.OS === "ios") {
-      void selectionAsync().catch(() => {});
-    } else if (Platform.OS === "android") {
-      void performAndroidHapticsAsync(AndroidHaptics.Segment_Tick).catch(
-        () => {},
-      );
-    }
+    void playHaptic("selection");
     if (Platform.OS !== "web") {
       AccessibilityInfo.announceForAccessibility(
         `${mood} selected for your check-in.`,
@@ -383,12 +492,18 @@ export function TodayScreen() {
   }
 
   return (
-    <Screen edgeToEdge heroStatusBar="light" style={styles.screen}>
+    <Screen
+      edgeToEdge
+      heroStatusBar={dark ? "light" : "dark"}
+      style={styles.screen}
+      scrollRef={scroll}
+    >
       <View
         style={[
           styles.hero,
           isAndroid && styles.androidHero,
-          { paddingTop: top + 3, paddingHorizontal: gutter },
+          !dark && [styles.lightHero, { backgroundColor: colors.bg }],
+          headerInsets,
         ]}
       >
         <Image
@@ -399,88 +514,97 @@ export function TodayScreen() {
           pointerEvents="none"
           fadeDuration={0}
         />
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              backgroundImage: dark
-                ? "linear-gradient(90deg, #12101ED9 0%, #1E172B59 45%, #17132300 78%)"
-                : "linear-gradient(90deg, #17271BD4 0%, #1A30205E 46%, #24352900 82%)",
-            },
-          ]}
-        />
-        <View
-          pointerEvents="none"
-          style={[
-            styles.heroFade,
-            {
-              backgroundImage: `linear-gradient(180deg, transparent 0%, ${colors.bg} 100%)`,
-            },
-          ]}
-        />
-        <Row style={styles.header}>
-          <Row style={styles.brand}>
-            <LotusMark size={30} />
-            <AppText variant="heading" color="#FFF8F2" style={styles.brandName}>
-              Solace
-            </AppText>
-          </Row>
-          <Row style={styles.headerActions}>
-            {[
+        {dark ? (
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
               {
-                label: "Reminders",
-                icon: "notifications-outline",
-                route: "reminders",
+                backgroundImage:
+                  "linear-gradient(90deg, #12101ED9 0%, #1E172B59 45%, #17132300 78%)",
               },
+            ]}
+          />
+        ) : (
+          <DaylightHeroBlend color={colors.bg} />
+        )}
+        {dark && (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.heroFade,
               {
-                label: "Create a Solace Moment",
-                icon: "sparkles-outline",
-                route: "moments",
+                backgroundImage: `linear-gradient(180deg, transparent 0%, ${colors.bg} 100%)`,
               },
-            ].map(({ label, icon, route }) => (
-              <Pressable
-                key={route}
-                accessibilityRole="button"
-                accessibilityLabel={label}
-                onPress={() => app.navigate(route)}
-                style={({ pressed }) => [
-                  styles.headerAction,
-                  {
-                    backgroundColor: dark ? "#2C233DC9" : "#24352CB0",
-                    borderColor: dark ? "#6D5A758C" : "#E3EAD46B",
-                    opacity: pressed ? 0.72 : 1,
-                  },
-                ]}
-              >
-                <Icon name={icon} color="#FFF7F3" size={21} />
-                {route === "reminders" &&
-                  app.data.reminders.some(
-                    (reminder) => reminder.enabled === true,
-                  ) && <View style={styles.reminderDot} />}
-              </Pressable>
-            ))}
-          </Row>
-        </Row>
+            ]}
+          />
+        )}
+        <MainTabHeader color={dark ? "#FFF8F2" : colors.text}>
+          {[
+            {
+              label: "Reminders",
+              icon: "notifications-outline",
+              route: "reminders",
+            },
+            {
+              label: "Create a Solace Moment",
+              icon: "sparkles-outline",
+              route: "moments",
+            },
+          ].map(({ label, icon, route }) => (
+            <IconButton
+              key={route}
+              name={icon}
+              label={label}
+              onPress={() => app.navigate(route)}
+              appearance={dark ? "artwork" : "outlined"}
+              size={48}
+              indicator={
+                route === "reminders" &&
+                app.data.reminders.some((reminder) => reminder.enabled === true)
+              }
+            />
+          ))}
+        </MainTabHeader>
         <View style={styles.greeting}>
-          <AppText variant="label" color="#FFDAA4" style={styles.salutation}>
+          <AppText
+            variant="label"
+            color={dark ? colors.lavenderAction : colors.lavenderText}
+            style={styles.salutation}
+          >
             {greeting}
           </AppText>
           <AppText
             variant="display"
             accessibilityRole="header"
-            color="#FFF9F4"
-            style={styles.name}
+            color={dark ? "#FFF9F4" : colors.text}
+            style={[styles.name, !dark && styles.lightName]}
           >
             {name}.
           </AppText>
-          <AppText color="#FFF7F5" style={styles.welcome}>
+          <AppText
+            color={dark ? "#FFF7F5" : colors.text}
+            style={[
+              styles.welcome,
+              dark ? styles.welcomeShadow : styles.lightWelcome,
+            ]}
+          >
             A calmer, kinder space for your mind.
           </AppText>
         </View>
       </View>
 
-      <View style={[styles.content, { paddingHorizontal: gutter }]}>
+      <View
+        style={[
+          styles.content,
+          !dark && styles.lightContent,
+          { paddingHorizontal: gutter },
+        ]}
+        onLayout={({ nativeEvent }) => {
+          dailyPauseLayout.current.content = nativeEvent.layout.y;
+          jumpToDailyPause();
+        }}
+      >
         {app.pendingWrites.length > 0 && (
           <Pressable
             accessibilityRole="button"
@@ -537,16 +661,22 @@ export function TodayScreen() {
                 style={[
                   styles.moodEntryDisc,
                   { borderColor: panel.borderColor },
+                  !dark && { backgroundColor: colors.lavenderSurface },
                 ]}
               >
                 <Icon
                   name="pulse-outline"
-                  color={dark ? "#E8DBEF" : colors.sageText}
+                  color={dark ? "#E8DBEF" : colors.accent}
                   size={18}
                 />
               </View>
             </Pressable>
           </Row>
+          {!checkins.length && (
+            <AppText variant="caption" color={dark ? "#E8DBEF" : colors.muted}>
+              Start here. Choose the mood that feels closest.
+            </AppText>
+          )}
           <Row
             style={[styles.moodRow, { gap: moodGap }, wrapMoods && styles.wrap]}
           >
@@ -562,7 +692,7 @@ export function TodayScreen() {
                     : undefined
                 }
                 wrap={wrapMoods}
-                labelScaleLimit={moodLabelScale}
+                compactLight={compactLight}
                 reducedMotion={reducedMotion}
                 onPress={() => openCheckin(choice.mood)}
               />
@@ -570,128 +700,247 @@ export function TodayScreen() {
           </Row>
         </View>
 
-        <View
-          style={[
-            styles.focus,
-            isAndroid && styles.androidFocus,
-            {
-              borderColor: dark ? "#A8836F" : "#D0B58C",
-              backgroundColor: dark ? "#211D2E" : "#344933",
-            },
-          ]}
-        >
-          <Image
-            source={artwork[resolved].reset}
-            style={coverImageStyle}
-            resizeMode="cover"
-            accessible={false}
-            pointerEvents="none"
-            fadeDuration={0}
-          />
+        <TodayProgressCard
+          routine={routine}
+          habits={{
+            completed: dailyHabits.done,
+            scheduled: dailyHabits.fixed.length,
+          }}
+          loading={app.initializing}
+          error={!!app.sessionError}
+          compactLayout={compactLight}
+          onViewDetails={() => app.navigate(routes.journey)}
+        />
+
+        <View style={styles.momentGroup}>
           <View
-            pointerEvents="none"
             style={[
-              StyleSheet.absoluteFill,
+              styles.focus,
+              isAndroid && styles.androidFocus,
+              !dark && largeText && styles.lightFocusStack,
               {
-                backgroundImage: dark
-                  ? "linear-gradient(90deg, #211C2DF5 0%, #211C2DCC 56%, #221B2A24 100%)"
-                  : "linear-gradient(90deg, #14281CF5 0%, #172D20CC 56%, #14281C24 100%)",
+                borderColor: dark ? "#A8836F" : colors.border,
+                backgroundColor:
+                  dark || lightPhotoMoment ? "#211D2E" : colors.lavenderSurface,
               },
             ]}
-          />
-          <Row style={styles.focusBadge}>
-            <Icon name="leaf-outline" size={14} color="#FFDEAD" />
-            <AppText variant="label" color="#FFDEAD" style={styles.focusLabel}>
-              Today’s Moment
-            </AppText>
-          </Row>
-          <AppText
-            variant="title"
-            accessibilityRole="header"
-            color="#FFF9F4"
-            style={[
-              styles.focusTitle,
-              isAndroid && styles.androidFocusTitle,
-              largeText && styles.fullWidth,
-            ]}
           >
-            {calmReset.title}
-          </AppText>
-          <AppText
-            color="#FFF9F5"
-            style={[
-              styles.focusDetail,
-              isAndroid && styles.androidFocusDetail,
-              (compact || largeText) && styles.wideCopy,
-            ]}
-          >
-            A guided pause to slow down and settle.
-          </AppText>
-          <Row
-            style={[styles.focusFooter, isAndroid && styles.androidFocusFooter]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              onPress={startMoment}
-              style={({ pressed }) => [
-                styles.focusAction,
-                {
-                  backgroundColor: dark ? "#F3D2AE" : "#FFF4DF",
-                  opacity: pressed ? 0.8 : 1,
-                },
+            <Image
+              source={artwork[resolved].reset}
+              style={
+                !dark && largeText ? styles.lightFocusArtStack : coverImageStyle
+              }
+              resizeMode="cover"
+              accessible={false}
+              pointerEvents="none"
+              fadeDuration={0}
+            />
+            {dark && (
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    backgroundImage:
+                      "linear-gradient(90deg, #211C2DF5 0%, #211C2DCC 56%, #221B2A24 100%)",
+                  },
+                ]}
+              />
+            )}
+            {lightPhotoMoment && (
+              <DaylightScenicScrim
+                coverage={compact ? 64 : 59}
+                fadeThrough={88}
+              />
+            )}
+            <Row
+              style={[
+                styles.focusBadge,
+                lightPhotoMoment && styles.lightPhotoBadge,
+                !dark &&
+                  !lightPhotoMoment && {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                  },
               ]}
             >
-              <Icon name="play" color="#2B2137" size={16} />
+              <Icon
+                name="leaf-outline"
+                size={14}
+                color={
+                  dark
+                    ? "#FFDEAD"
+                    : lightPhotoMoment
+                      ? daylightPhotoInk.detail
+                      : colors.accent
+                }
+              />
               <AppText
                 variant="label"
-                color="#2B2137"
-                style={styles.startLabel}
+                color={
+                  dark
+                    ? "#FFDEAD"
+                    : lightPhotoMoment
+                      ? daylightPhotoInk.detail
+                      : colors.accent
+                }
+                style={styles.focusLabel}
               >
-                Start Moment
-              </AppText>
-            </Pressable>
-            <Row style={styles.duration}>
-              <Icon name="timer-outline" size={16} color="#FFF5F1" />
-              <AppText
-                variant="label"
-                color="#FFF5F1"
-                style={styles.durationText}
-              >
-                5 min
+                Today’s Moment
               </AppText>
             </Row>
-          </Row>
-        </View>
-
-        <Row style={[styles.quickActions, largeText && styles.wrap]}>
-          {quickActions.map((action) => {
-            const tone = accents[action.tone];
-            return (
+            <AppText
+              variant="title"
+              accessibilityRole="header"
+              color={momentTitleInk}
+              style={[
+                styles.focusTitle,
+                isAndroid && styles.androidFocusTitle,
+                largeText && styles.fullWidth,
+              ]}
+            >
+              {calmReset.title}
+            </AppText>
+            <AppText
+              color={momentDetailInk}
+              style={[
+                styles.focusDetail,
+                isAndroid && styles.androidFocusDetail,
+                (compact || largeText) && styles.wideCopy,
+                !dark && !largeText && styles.lightFocusDetail,
+              ]}
+            >
+              A guided pause to slow down and settle.
+            </AppText>
+            <Row
+              style={[
+                styles.focusFooter,
+                isAndroid && styles.androidFocusFooter,
+              ]}
+            >
               <Pressable
-                key={action.title}
                 accessibilityRole="button"
-                onPress={() => app.navigate(action.route, action.params)}
+                onPress={startMoment}
                 style={({ pressed }) => [
-                  styles.quickAction,
-                  isAndroid && styles.androidQuickAction,
-                  largeText && styles.largeQuickAction,
+                  styles.focusAction,
                   {
-                    backgroundColor: tone.background,
-                    borderColor: tone.border,
-                    opacity: pressed ? 0.75 : 1,
+                    backgroundColor: colors.lavenderAction,
+                    opacity: pressed ? 0.8 : 1,
                   },
                 ]}
               >
-                <View style={styles.quickIcon}>
-                  <Icon name={action.icon} color={tone.icon} size={23} />
-                </View>
-                <AppText variant="label" style={styles.quickLabel}>
+                <Icon name="play" color={colors.lavenderActionText} size={16} />
+                <AppText
+                  variant="label"
+                  color={colors.lavenderActionText}
+                  style={styles.startLabel}
+                >
+                  Start Moment
+                </AppText>
+              </Pressable>
+              <Row
+                style={[
+                  styles.duration,
+                  !dark &&
+                    !lightPhotoMoment && {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                    },
+                ]}
+              >
+                <Icon
+                  name="timer-outline"
+                  size={16}
+                  color={dark || lightPhotoMoment ? "#FFF5F1" : colors.accent}
+                />
+                <AppText
+                  variant="label"
+                  color={dark || lightPhotoMoment ? "#FFF5F1" : colors.text}
+                  style={styles.durationText}
+                >
+                  5 min
+                </AppText>
+              </Row>
+            </Row>
+          </View>
+
+          <Row style={[styles.quickActions, wrapQuickActions && styles.wrap]}>
+            {quickActions.map((action) => (
+              <Pressable
+                key={action.title}
+                accessibilityRole="button"
+                accessibilityLabel={action.title}
+                onPress={() => app.navigate(action.route, action.params)}
+                style={({ pressed }) => [
+                  styles.quickAction,
+                  !dark && styles.lightQuickAction,
+                  wrapQuickActions && styles.lightQuickWrap,
+                  {
+                    minHeight: quickTileHeight,
+                    borderColor: panel.borderColor,
+                    opacity: pressed ? 0.82 : 1,
+                    ...(!dark && { backgroundColor: colors.surface }),
+                  },
+                ]}
+              >
+                {dark ? (
+                  <>
+                    <Image
+                      source={action.image}
+                      style={coverImageStyle}
+                      resizeMode="cover"
+                      fadeDuration={0}
+                      accessible={false}
+                      pointerEvents="none"
+                    />
+                    <View
+                      pointerEvents="none"
+                      style={[StyleSheet.absoluteFill, styles.quickScrim]}
+                    />
+                    <View style={styles.quickIcon}>
+                      <Icon name={action.icon} color={action.ink} size={22} />
+                    </View>
+                  </>
+                ) : (
+                  <View
+                    style={[
+                      styles.lightQuickArt,
+                      { backgroundColor: colors.surface2 },
+                    ]}
+                  >
+                    <Image
+                      source={action.image}
+                      style={coverImageStyle}
+                      resizeMode="cover"
+                      fadeDuration={0}
+                      accessible={false}
+                      pointerEvents="none"
+                    />
+                    <View
+                      style={[
+                        styles.lightQuickIcon,
+                        { backgroundColor: `${colors.surface}F5` },
+                      ]}
+                    >
+                      <Icon
+                        name={action.icon}
+                        color={colors.accent}
+                        size={18}
+                      />
+                    </View>
+                  </View>
+                )}
+                <AppText
+                  variant="label"
+                  color={dark ? "#FFF8F2" : colors.text}
+                  style={[styles.quickLabel, !dark && styles.lightQuickLabel]}
+                >
                   {action.title}
                 </AppText>
               </Pressable>
-            );
-          })}
-        </Row>
+            ))}
+          </Row>
+        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -747,7 +996,7 @@ export function TodayScreen() {
                       styles.progressFill,
                       {
                         width: `${progress}%`,
-                        backgroundColor: dark ? "#C49AF5" : colors.primary,
+                        backgroundColor: dark ? "#C49AF5" : colors.accent,
                       },
                     ]}
                   />
@@ -765,8 +1014,11 @@ export function TodayScreen() {
           <Icon name="chevron-forward" size={17} />
         </Pressable>
 
-        <TodayHabits surfaceStyle={[panel, dark && styles.journeyDepth]} />
-        <View style={[styles.explore, isAndroid && styles.androidSection]}>
+        <TodayHabits
+          daily={dailyHabits}
+          surfaceStyle={[panel, dark && styles.journeyDepth]}
+        />
+        <View>
           <Row style={styles.exploreHead}>
             <Row style={styles.exploreTitle}>
               <Icon name="grid-outline" size={19} />
@@ -781,7 +1033,9 @@ export function TodayScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="See all practices"
-              onPress={() => app.navigate("explore")}
+              onPress={() =>
+                app.navigate(routes.explore, { resetExplore: true })
+              }
               style={({ pressed }) => [
                 styles.seeAll,
                 { opacity: pressed ? 0.68 : 1 },
@@ -794,78 +1048,28 @@ export function TodayScreen() {
             </Pressable>
           </Row>
           <View style={styles.exploreCards}>
-            {exploreShortcuts.map((shortcut) => {
-              const art = exploreArt[shortcut.route];
-              const fullWidth =
-                stackExploreCards || shortcut.route === "checkin";
-              const horizontal = fullWidth || inlineExploreCards;
-              return (
-                <Pressable
+            <View style={styles.exploreCardRow}>
+              {exploreShortcuts.slice(0, 2).map((shortcut) => (
+                <TodayExploreCard
                   key={shortcut.route}
-                  accessibilityRole="button"
-                  accessibilityLabel={shortcut.title}
-                  accessibilityHint={art.detail}
+                  shortcut={shortcut}
+                  wrapTitle={wrapExploreTitles}
                   onPress={() => app.navigate(shortcut.route)}
-                  style={({ pressed }) => [
-                    styles.exploreCard,
-                    horizontal && styles.exploreCardHorizontal,
-                    fullWidth && styles.exploreCardFullWidth,
-                    {
-                      borderColor: dark ? "#6D5B7A75" : colors.border,
-                      opacity: pressed ? 0.8 : 1,
-                    },
-                  ]}
-                >
-                  <Image
-                    source={art.image}
-                    style={[
-                      coverImageStyle,
-                      horizontal && styles.exploreArtHorizontal,
-                    ]}
-                    resizeMode="cover"
-                    accessible={false}
-                    pointerEvents="none"
-                    fadeDuration={0}
-                  />
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      StyleSheet.absoluteFill,
-                      horizontal
-                        ? styles.exploreScrimHorizontal
-                        : styles.exploreScrim,
-                    ]}
-                  />
-                  <Icon name={shortcut.icon} color={art.color} size={21} />
-                  <View style={horizontal && styles.exploreCardCopy}>
-                    <AppText
-                      variant="label"
-                      color="#FFF9F7"
-                      style={styles.exploreCardTitle}
-                    >
-                      {shortcut.title}
-                    </AppText>
-                    <AppText
-                      variant="caption"
-                      color="#E7DCEB"
-                      style={styles.exploreDetail}
-                    >
-                      {art.detail}
-                    </AppText>
-                  </View>
-                  <View
-                    pointerEvents="none"
-                    style={horizontal ? undefined : styles.exploreChevron}
-                  >
-                    <Icon name="chevron-forward" size={15} color="#FFF9F7" />
-                  </View>
-                </Pressable>
-              );
-            })}
+                />
+              ))}
+            </View>
+            <TodayExploreCard
+              shortcut={exploreShortcuts[2]}
+              onPress={() => app.navigate(exploreShortcuts[2].route)}
+            />
           </View>
         </View>
 
         <View
+          onLayout={({ nativeEvent }) => {
+            dailyPauseLayout.current.card = nativeEvent.layout.y;
+            jumpToDailyPause();
+          }}
           style={[
             styles.daily,
             isAndroid && styles.androidDaily,
@@ -1113,28 +1317,8 @@ const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0, paddingTop: 0 },
   hero: { overflow: "hidden", paddingBottom: spacing.section },
   androidHero: { paddingBottom: spacing.screenTop },
+  lightHero: { paddingBottom: spacing.screenTop },
   heroFade: { position: "absolute", bottom: 0, left: 0, right: 0, height: 42 },
-  header: { minHeight: 48, justifyContent: "space-between", gap: 6 },
-  brand: { gap: 6, flexShrink: 1 },
-  brandName: { fontSize: 24, lineHeight: 28 },
-  headerActions: { gap: 4 },
-  headerAction: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  reminderDot: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "#BFDA9B",
-  },
   greeting: { marginTop: 3, maxWidth: "100%" },
   salutation: { fontSize: 12, lineHeight: 16, letterSpacing: 1.25 },
   name: {
@@ -1147,14 +1331,18 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     lineHeight: 18,
     maxWidth: "77%",
+  },
+  welcomeShadow: {
     textShadowColor: "#120F1C",
     textShadowRadius: 6,
     textShadowOffset: { width: 0, height: 1 },
   },
-  content: { marginTop: -4 },
+  lightName: { maxWidth: "60%" },
+  lightWelcome: { maxWidth: "54%" },
+  content: { marginTop: -4, gap: spacing.section },
+  lightContent: { gap: spacing.card },
   fill: { flex: 1, minWidth: 0 },
   unsynced: {
-    marginBottom: 12,
     borderRadius: 14,
     minHeight: 44,
     flexDirection: "row",
@@ -1210,14 +1398,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   androidMood: { minHeight: 56, paddingVertical: 4, gap: 3 },
+  lightCompactMood: { minHeight: 52 },
   largeMood: { flexBasis: "28%", flexGrow: 1 },
   moodTint: { ...StyleSheet.absoluteFill, borderRadius: 17 },
   moodPetal: { width: 29, height: 24 },
   moodText: { textAlign: "center", fontSize: 11, lineHeight: 15 },
   androidMoodText: { alignSelf: "stretch" },
+  momentGroup: { gap: spacing.row },
   focus: {
     minHeight: 176,
-    marginTop: spacing.section,
     padding: spacing.card,
     justifyContent: "center",
     overflow: "hidden",
@@ -1235,10 +1424,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#D5AC7630",
   },
   focusLabel: { fontSize: 11, lineHeight: 15 },
+  lightPhotoBadge: {
+    backgroundColor: "#2D2239B8",
+    borderColor: "#F3E2FB85",
+  },
   focusTitle: { width: "78%", fontSize: 31, lineHeight: 36, marginTop: 4 },
   androidFocus: {
     minHeight: 160,
-    marginTop: spacing.card,
     paddingVertical: 9,
   },
   androidFocusTitle: { fontSize: 29 },
@@ -1246,6 +1438,14 @@ const styles = StyleSheet.create({
   focusDetail: { maxWidth: "66%", fontSize: 13, lineHeight: 18, marginTop: 3 },
   androidFocusDetail: { maxWidth: "76%" },
   wideCopy: { maxWidth: "90%" },
+  lightFocusDetail: { maxWidth: "52%" },
+  lightFocusStack: { paddingTop: spacing.card },
+  lightFocusArtStack: {
+    width: "100%",
+    height: 122,
+    borderRadius: 13,
+    marginBottom: spacing.row,
+  },
   focusFooter: {
     marginTop: spacing.row,
     justifyContent: "space-between",
@@ -1275,33 +1475,64 @@ const styles = StyleSheet.create({
   },
   durationText: { fontSize: 11, lineHeight: 14 },
   quickActions: {
-    marginTop: spacing.row,
     alignItems: "stretch",
     gap: spacing.compact,
   },
   quickAction: {
     flex: 1,
     minWidth: 0,
-    minHeight: 74,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-end",
     paddingHorizontal: 3,
     paddingVertical: spacing.compact,
-    gap: 4,
+    gap: 6,
     borderWidth: 1,
     borderRadius: 15,
+    overflow: "hidden",
+    backgroundColor: "#1E2027",
   },
-  androidQuickAction: { minHeight: 68, paddingVertical: 6 },
   quickIcon: {
-    width: 28,
-    height: 28,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#151522A3",
     alignItems: "center",
     justifyContent: "center",
   },
-  largeQuickAction: { flexBasis: "43%" },
-  quickLabel: { textAlign: "center", fontSize: 13, lineHeight: 18 },
+  lightQuickAction: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    justifyContent: "space-between",
+    gap: 0,
+  },
+  lightQuickWrap: { flexBasis: "45%" },
+  lightQuickArt: {
+    flex: 1,
+    minHeight: 62,
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingBottom: spacing.compact,
+    overflow: "hidden",
+  },
+  lightQuickIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickLabel: {
+    alignSelf: "stretch",
+    textAlign: "center",
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  lightQuickLabel: { paddingHorizontal: 2, paddingVertical: 6 },
+  quickScrim: artGradient(
+    "linear-gradient(180deg, #12101B0D 0%, #12101B26 48%, #12101BBF 78%, #12101BEF 100%)",
+  ),
   journey: {
-    marginTop: spacing.section,
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: "row",
@@ -1317,7 +1548,6 @@ const styles = StyleSheet.create({
     borderColor: "#494153",
   },
   androidJourney: {
-    marginTop: spacing.card,
     paddingVertical: spacing.compact,
   },
   journeyIcon: {
@@ -1339,8 +1569,6 @@ const styles = StyleSheet.create({
   },
   progressFill: { height: "100%", borderRadius: 3 },
   progressText: { flexShrink: 1, fontSize: 11, lineHeight: 15 },
-  explore: { marginTop: spacing.section },
-  androidSection: { marginTop: spacing.screenTop },
   exploreHead: {
     justifyContent: "space-between",
     gap: 4,
@@ -1350,54 +1578,59 @@ const styles = StyleSheet.create({
   exploreHeading: { flex: 1, fontSize: 19, lineHeight: 24 },
   seeAll: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 3 },
   seeAllText: { fontSize: 12, lineHeight: 17, flexShrink: 1 },
-  exploreCards: {
+  exploreCards: { gap: spacing.row },
+  exploreCardRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.compact,
     alignItems: "stretch",
+    gap: spacing.row,
   },
   exploreCard: {
-    flexBasis: "44%",
-    flexGrow: 1,
     minWidth: 0,
-    minHeight: 48,
-    paddingHorizontal: spacing.row,
-    paddingVertical: spacing.compact,
-    gap: spacing.compact,
+    padding: spacing.row,
+    gap: spacing.row,
+    justifyContent: "space-between",
     overflow: "hidden",
     borderRadius: 16,
     borderWidth: 1,
     backgroundColor: "#282137",
   },
-  exploreCardHorizontal: {
+  exploreCardTile: { flex: 1, minHeight: 144 },
+  exploreCardWide: { minHeight: 116 },
+  exploreCardHeader: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
   },
-  exploreCardFullWidth: { flexBasis: "100%", gap: spacing.row },
-  exploreCardCopy: { flex: 1, minWidth: 0 },
-  exploreChevron: {
-    position: "absolute",
-    top: spacing.compact,
-    right: spacing.row,
+  exploreCardIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#181220B3",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  exploreArtHorizontal: { left: "36%" },
-  exploreScrim: {
-    backgroundImage:
-      "linear-gradient(180deg, #18122040 0%, #201829C7 42%, #17121FF5 100%)",
+  lightExploreArrow: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  exploreScrimHorizontal: {
-    backgroundImage:
-      "linear-gradient(90deg, #17121F 0%, #17121F 36%, #201829BA 61%, #18122066 100%)",
-  },
-  exploreCardTitle: { fontSize: 13, lineHeight: 18 },
-  exploreDetail: { fontSize: 12, lineHeight: 16, marginTop: 2 },
+  exploreCardCopy: { gap: 2 },
+  exploreArtWide: { left: "30%" },
+  exploreScrim: artGradient(
+    "linear-gradient(180deg, #18122054 0%, #20182988 32%, #17121FF2 73%, #17121F 100%)",
+  ),
+  exploreScrimWide: artGradient(
+    "linear-gradient(90deg, #17121F 0%, #17121F 30%, #201829C7 53%, #18122066 100%)",
+  ),
+  exploreCardTitle: { fontSize: 15, lineHeight: 20 },
   daily: {
     borderWidth: 1,
     borderRadius: 18,
-    marginTop: spacing.section,
     padding: spacing.card,
   },
-  androidDaily: { marginTop: spacing.screenTop, padding: spacing.row },
+  androidDaily: { padding: spacing.row },
   dailyHeading: { flex: 1, minWidth: 0, gap: spacing.compact },
   dailyTitle: { flex: 1, fontSize: 20, lineHeight: 24 },
   dailyMark: {

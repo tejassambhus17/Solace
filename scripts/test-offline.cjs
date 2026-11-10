@@ -127,6 +127,7 @@ test("journal draft identity and metadata survive a vault restart for the owner 
   const draft = {
     id: pending.id,
     createdAt: pending.createdAt,
+    day: "2024-02-29",
     title: "On a walk",
     text: "An updated paragraph\n",
     mood: "Calm",

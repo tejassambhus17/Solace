@@ -6,26 +6,19 @@ import { createApp } from "../src/app.js";
 import { Store } from "../src/database.js";
 import type { AIConfig } from "../src/generation.js";
 import { habitDay } from "../src/habit-contract.js";
+import { openAIResponse } from "./openai-fixture.js";
 
 const offline: AIConfig = {
   mode: "offline",
   model: "habit-qa",
   baseUrl: "https://example.invalid",
 };
-const gemini: AIConfig = {
+const live: AIConfig = {
   ...offline,
   mode: "live",
-  gemini: { apiKey: "synthetic-test-key", model: "gemini-3.1-flash-lite" },
+  apiKey: "synthetic-test-key",
 };
-const response = (value: unknown) =>
-  Response.json({
-    candidates: [
-      {
-        finishReason: "STOP",
-        content: { parts: [{ text: JSON.stringify(value) }] },
-      },
-    ],
-  });
+const response = (value: unknown) => openAIResponse(JSON.stringify(value));
 const selected = { starter: "walk", days: 3, target: 5, anchor: "morning" };
 
 async function fixture(ai = offline) {
@@ -153,7 +146,7 @@ test("schedule adjustments use only the selected owner's habit and leave existin
 
 test("AI receives only requested counts and selected goal settings, never private titles or identity", async () => {
   const { store, app, account, suggest, personalize, createHabit } =
-    await fixture(gemini);
+    await fixture(live);
   try {
     const token = await account("Private account name");
     const habit = await createHabit(token);
@@ -181,18 +174,16 @@ test("AI receives only requested counts and selected goal settings, never privat
     const inputs: unknown[] = [];
     await mockedProvider(
       async (url, init) => {
-        assert.match(String(url), /generativelanguage\.googleapis\.com/);
+        assert.equal(url, "https://example.invalid/responses");
         const payload = JSON.parse(String(init?.body));
         assert.equal(payload.store, false);
-        assert.equal(
-          payload.generationConfig.responseMimeType,
-          "application/json",
-        );
+        assert.equal(payload.text.format.type, "json_schema");
+        assert.equal(payload.text.format.strict, true);
         assert.doesNotMatch(
           JSON.stringify(payload),
           /Private habit|Private account|synthetic-test-key/,
         );
-        inputs.push(JSON.parse(payload.contents[0].parts[0].text));
+        inputs.push(JSON.parse(payload.input));
         return response(selected);
       },
       async () => {
@@ -225,7 +216,7 @@ test("AI receives only requested counts and selected goal settings, never privat
 });
 
 test("invalid provider structures are rejected and urgent text bypasses the provider", async () => {
-  const { store, account, suggest, state } = await fixture(gemini);
+  const { store, account, suggest, state } = await fixture(live);
   try {
     const token = await account();
     let calls = 0;
@@ -259,7 +250,7 @@ test("invalid provider structures are rejected and urgent text bypasses the prov
 });
 
 test("revoking personalization during generation discards the now-stale reflection", async () => {
-  const { store, account, suggest, personalize } = await fixture(gemini);
+  const { store, account, suggest, personalize } = await fixture(live);
   try {
     const token = await account();
     await personalize(token, true);

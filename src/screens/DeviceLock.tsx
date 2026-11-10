@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { AppState, Platform, StyleSheet, Switch, View } from "react-native";
+import {
+  AppState,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  View,
+} from "react-native";
 import { StatusBar } from "expo-status-bar";
 import {
   deviceLockAvailability,
@@ -8,6 +15,9 @@ import {
 } from "../device-lock";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
+import { spacing } from "../layout";
+import { switchColors } from "../switch-colors";
+import { webRadioProps } from "../radio-keyboard";
 import { AppText, Button, Card, Icon, Row, Screen } from "../ui";
 
 const delayLabels = {
@@ -61,13 +71,27 @@ export function DeviceLockSettingsCard() {
   }
   return (
     <Card style={styles.settings}>
-      <Row style={{ gap: 8 }}>
-        <Icon
-          name="finger-print-outline"
-          size={20}
-          color={colors.lavenderText}
-        />
-        <AppText variant="heading" style={{ flex: 1 }}>
+      <Row style={styles.settingsHeader}>
+        <View
+          style={[
+            styles.settingsIcon,
+            { backgroundColor: colors.lavenderSurface },
+          ]}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          aria-hidden
+        >
+          <Icon
+            name="finger-print-outline"
+            size={19}
+            color={colors.lavenderText}
+          />
+        </View>
+        <AppText
+          variant="heading"
+          accessibilityRole="header"
+          style={styles.settingsCopy}
+        >
           Biometric Lock
         </AppText>
       </Row>
@@ -75,19 +99,20 @@ export function DeviceLockSettingsCard() {
         Require biometrics to open Solace or My Journal on this device.
       </AppText>
       {availability && availability !== "ready" && (
-        <AppText color={colors.muted}>
+        <AppText variant="caption" color={colors.muted}>
           {unavailableLabels[availability]}
         </AppText>
       )}
       {(availability === "ready" || appDelay !== null) && (
         <Row style={styles.option}>
-          <AppText variant="label" style={{ flex: 1 }}>
+          <AppText variant="label" style={styles.settingsCopy}>
             Lock Solace
           </AppText>
           <Switch
             accessibilityLabel="Lock Solace"
             value={appDelay !== null}
             disabled={app.deviceLockBusy}
+            {...switchColors(colors, appDelay !== null)}
             onValueChange={(enabled) =>
               save({ appDelay: enabled ? 60 : null, journal })
             }
@@ -95,19 +120,52 @@ export function DeviceLockSettingsCard() {
         </Row>
       )}
       {appDelay !== null && (
-        <View style={{ gap: 6 }}>
+        <View style={styles.delayGroup}>
           <AppText variant="caption" color={colors.muted}>
             When Solace is in the background
           </AppText>
-          {deviceLockDelays.map((delay) => (
-            <Button
-              key={delay}
-              title={delayLabels[delay]}
-              variant={appDelay === delay ? "primary" : "secondary"}
-              disabled={app.deviceLockBusy || appDelay === delay}
-              onPress={() => save({ appDelay: delay, journal })}
-            />
-          ))}
+          <View
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Biometric lock delay"
+            style={styles.delayOptions}
+          >
+            {deviceLockDelays.map((delay) => {
+              const selected = appDelay === delay;
+              return (
+                <Pressable
+                  key={delay}
+                  accessibilityRole="radio"
+                  accessibilityState={{
+                    checked: selected,
+                    disabled: app.deviceLockBusy,
+                  }}
+                  aria-checked={selected}
+                  {...webRadioProps(selected)}
+                  disabled={app.deviceLockBusy}
+                  onPress={() => {
+                    if (!selected) save({ appDelay: delay, journal });
+                  }}
+                  style={({ pressed }) => [
+                    styles.delayChoice,
+                    {
+                      borderColor: selected ? colors.sageText : colors.border,
+                      backgroundColor: selected
+                        ? colors.sageSurface
+                        : colors.surface,
+                      opacity: pressed || app.deviceLockBusy ? 0.72 : 1,
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="label"
+                    color={selected ? colors.sageText : colors.text}
+                  >
+                    {delayLabels[delay]}
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </View>
           <AppText variant="caption" color={colors.muted}>
             Solace also locks whenever it starts again.
           </AppText>
@@ -115,13 +173,14 @@ export function DeviceLockSettingsCard() {
       )}
       {(availability === "ready" || journal) && (
         <Row style={styles.option}>
-          <AppText variant="label" style={{ flex: 1 }}>
+          <AppText variant="label" style={styles.settingsCopy}>
             Lock My Journal
           </AppText>
           <Switch
             accessibilityLabel="Lock My Journal"
             value={journal}
             disabled={app.deviceLockBusy}
+            {...switchColors(colors, journal)}
             onValueChange={(enabled) => save({ appDelay, journal: enabled })}
           />
         </Row>
@@ -140,6 +199,10 @@ export function DeviceUnlockScreen({ scope }: { scope: "app" | "journal" }) {
   const { colors, resolved } = useTheme();
   const [error, setError] = useState("");
   const journal = scope === "journal";
+  const fallback =
+    !journal && app.appUnlock.phase === "fallback" ? app.appUnlock : null;
+  const message = error || fallback?.message;
+  const canRetry = journal ? !!app.deviceLock : fallback?.canRetry;
   const [recovering, setRecovering] = useState(false);
   const label = journal ? "Unlock My Journal" : "Unlock Solace";
   async function run(action: () => Promise<void>) {
@@ -174,18 +237,21 @@ export function DeviceUnlockScreen({ scope }: { scope: "app" | "journal" }) {
           ? "Confirm your device biometrics to open your private entries."
           : "Confirm your device biometrics to continue to your saved space."}
       </AppText>
-      {error ? (
+      {message ? (
         <AppText color={colors.danger} accessibilityRole="alert">
-          {error}
+          {message}
         </AppText>
       ) : null}
-      {!!app.deviceLock && (
+      {canRetry && (
         <Button
           title="Unlock with biometrics"
           icon="finger-print-outline"
           loading={app.deviceLockBusy}
           disabled={app.busy || recovering}
-          onPress={() => void run(() => app.unlockDeviceLock(scope))}
+          onPress={() => {
+            const unlock = () => app.unlockDeviceLock(scope);
+            void (journal ? run(unlock) : unlock().catch(() => {}));
+          }}
         />
       )}
       {recovering ? (
@@ -244,8 +310,30 @@ export function DevicePrivacyCover() {
 }
 
 const styles = StyleSheet.create({
-  settings: { gap: 10 },
-  option: { minHeight: 48, justifyContent: "space-between" },
+  settings: { gap: spacing.row },
+  settingsHeader: { gap: spacing.row },
+  settingsCopy: { flex: 1, minWidth: 0 },
+  settingsIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  option: { minHeight: 48, justifyContent: "space-between", gap: spacing.row },
+  delayGroup: { gap: spacing.compact },
+  delayOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.compact,
+  },
+  delayChoice: {
+    minHeight: 48,
+    borderRadius: spacing.card,
+    borderWidth: 1,
+    paddingHorizontal: spacing.row,
+    justifyContent: "center",
+  },
   unlock: { flexGrow: 1, justifyContent: "center", gap: 14 },
   symbol: {
     width: 56,

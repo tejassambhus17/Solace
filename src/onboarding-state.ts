@@ -1,10 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useRef, useState } from "react";
+import type { WellnessGoal } from "../server/src/wellness-goals";
 import type { useApp } from "./store";
 
 const walkthroughKey = "solace.onboarding.completed.v1";
 const completed = "1";
-const choiceKey = (account: string) => `solace.onboarding.choice.v1.${account}`;
 
 export type WalkthroughAction = "skip" | "complete";
 export type AuthPage = "login" | "signup";
@@ -15,8 +15,13 @@ type IntroApp = Pick<
   | "sessionError"
   | "sessionExpired"
   | "user"
-  | "updateUser"
+  | "saveWellnessGoals"
 >;
+
+type GoalFlow = {
+  account: string;
+  goals?: WellnessGoal[];
+};
 
 export function useOnboarding(app: IntroApp) {
   const [device, setDevice] = useState<"loading" | "new" | "complete">(
@@ -26,27 +31,18 @@ export function useOnboarding(app: IntroApp) {
   const [finishing, setFinishing] = useState(false);
   const [walkthroughError, setWalkthroughError] = useState("");
   const writingWalkthrough = useRef(false);
-  const [authPresented, setAuthPresented] = useState(false);
-  const [offer, setOffer] = useState<{
-    account: string;
-    status: "choice" | "saving";
-    error?: string;
-  } | null>(null);
-  const savingChoice = useRef(false);
+  const [goalFlow, setGoalFlow] = useState<GoalFlow | null>(null);
+  const savingGoals = useRef(false);
+  const goalDraft = useRef<{ account: string; goals: WellnessGoal[] } | null>(
+    null,
+  );
   const signedIn = !!app.user && !app.sessionExpired;
   const knownSession = signedIn || app.sessionExpired;
   const account = signedIn && app.user ? String(app.user.id) : null;
-  const candidate = authPresented ? account : null;
-  const current = useRef({
-    account,
-    consent: app.user?.personalization === true,
-    update: app.updateUser,
-  });
-  current.current = {
-    account,
-    consent: app.user?.personalization === true,
-    update: app.updateUser,
-  };
+  const knownAccount = app.user?.id;
+  const current = useRef(account);
+  current.current = account;
+  const currentFlow = goalFlow?.account === account ? goalFlow : null;
 
   useEffect(() => {
     let active = true;
@@ -74,38 +70,17 @@ export function useOnboarding(app: IntroApp) {
   }, [device, knownSession]);
 
   useEffect(() => {
-    if (
-      device === "complete" &&
-      !knownSession &&
-      !app.initializing &&
-      !app.appLocked &&
-      !app.sessionError
-    )
-      setAuthPresented(true);
-  }, [app.appLocked, app.initializing, app.sessionError, device, knownSession]);
+    setGoalFlow((flow) => (flow?.account === account ? flow : null));
+  }, [account]);
 
   useEffect(() => {
-    if (!candidate) return;
-    if (current.current.consent) {
-      setAuthPresented(false);
-      void AsyncStorage.setItem(choiceKey(candidate), completed).catch(
-        () => {},
-      );
-      return;
-    }
-    let active = true;
-    const read = (value: string | null) => {
-      if (!active) return;
-      if (value === completed) setAuthPresented(false);
-      else setOffer({ account: candidate, status: "choice" });
-    };
-    void AsyncStorage.getItem(choiceKey(candidate)).then(read, () =>
-      read(null),
-    );
-    return () => {
-      active = false;
-    };
-  }, [candidate]);
+    const draft = goalDraft.current;
+    if (
+      draft &&
+      (knownAccount ? draft.account !== knownAccount : !app.sessionExpired)
+    )
+      goalDraft.current = null;
+  }, [app.sessionExpired, knownAccount]);
 
   const finishWalkthrough = async (action: WalkthroughAction) => {
     if (writingWalkthrough.current) return;
@@ -122,7 +97,7 @@ export function useOnboarding(app: IntroApp) {
       setDevice("complete");
     } catch {
       setWalkthroughError(
-        "Couldn’t save your progress. Try again, or tap Skip to continue for this launch.",
+        "Couldn’t save your progress. Try again, or tap Log in to continue for this launch.",
       );
     } finally {
       writingWalkthrough.current = false;
@@ -130,47 +105,57 @@ export function useOnboarding(app: IntroApp) {
     }
   };
 
-  const finishPersonalization = async (enable: boolean) => {
-    const { account, update } = current.current;
-    if (!account || account !== offer?.account || savingChoice.current) return;
-    savingChoice.current = true;
-    setOffer({ account, status: "saving" });
+  const finishGoals = async (goals: WellnessGoal[]) => {
+    if (!account || savingGoals.current) return;
+    savingGoals.current = true;
+    // Keep the picker mounted if the account snapshot commits before the
+    // save callback advances to the welcome screen.
+    setGoalFlow({ account });
     try {
-      if (enable) await update({ personalization: true });
-      await AsyncStorage.setItem(choiceKey(account), completed).catch(() => {});
-      if (current.current.account === account) {
-        setOffer(null);
-        setAuthPresented(false);
+      const saved = await app.saveWellnessGoals(goals, true);
+      if (current.current === account) {
+        goalDraft.current = null;
+        setGoalFlow(
+          goals.length && saved.length ? { account, goals: saved } : null,
+        );
       }
     } catch {
-      if (current.current.account === account)
-        setOffer({
-          account,
-          status: "choice",
-          error: "Couldn’t update your preference. Try again or skip for now.",
-        });
+      if (current.current === account) setGoalFlow(null);
+      throw new Error(
+        "Couldn’t save your goals. Check your connection and try again.",
+      );
     } finally {
-      savingChoice.current = false;
+      savingGoals.current = false;
     }
   };
 
   const showFirstLaunch = !knownSession && !app.sessionError && !app.appLocked;
-  const currentOffer = offer?.account === candidate ? offer : null;
   const stage =
-    (showFirstLaunch && device === "loading") || (candidate && !currentOffer)
+    showFirstLaunch && device === "loading"
       ? "loading"
       : showFirstLaunch && device === "new"
         ? "walkthrough"
-        : currentOffer
-          ? "personalize"
-          : "app";
+        : currentFlow?.goals
+          ? "goal-welcome"
+          : account &&
+              (currentFlow || app.user?.wellnessOnboarding === "pending")
+            ? "goals"
+            : "app";
   return {
     stage,
     authPage,
     finishing,
     walkthroughError,
     finishWalkthrough,
-    offer: currentOffer,
-    finishPersonalization,
+    finishGoals,
+    draftGoals:
+      goalDraft.current?.account === account
+        ? goalDraft.current?.goals
+        : undefined,
+    rememberGoals: (goals: WellnessGoal[]) => {
+      if (account) goalDraft.current = { account, goals };
+    },
+    welcomeGoals: currentFlow?.goals,
+    finishWelcome: () => setGoalFlow(null),
   };
 }

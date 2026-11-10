@@ -168,11 +168,20 @@ test("insights respect dated weekday changes, paused days, archived history and 
     { habitId: "flex", scheduled: 4, completed: 3, percentage: 75 },
   ]);
   assert.equal(summary.completedActions, 7);
+  assert.equal(summary.daysWithCompletion, 5);
+  assert.deepEqual(summary.fixed, { scheduled: 3, completed: 3 });
+  assert.deepEqual(summary.flexible, { scheduled: 4, completed: 3 });
   assert.equal(summary.currentStreak, 3);
   assert.equal(summary.bestStreak, 3);
   assert.deepEqual(
     summary.days.find(({ day }) => day === "2026-10-27"),
-    { day: "2026-10-27", completed: 1, scheduled: 0 },
+    {
+      day: "2026-10-27",
+      completed: 1,
+      scheduled: 0,
+      fixedCompleted: 0,
+      closedMissed: 0,
+    },
   );
   const october = habitInsights(
     [fixed, flex],
@@ -205,7 +214,50 @@ test("a local day in progress does not break a streak when the viewer travels", 
     day: "2026-11-02",
     completed: 0,
     scheduled: 0,
+    fixedCompleted: 0,
+    closedMissed: 0,
   });
+  assert.equal(insights.days[1].closedMissed, 0);
+});
+
+test("calendar distinguishes completed days, fixed misses and flexible progress", () => {
+  const daily = habit("daily", [revision("2026-11-02")]);
+  const flexible = habit("flex", [
+    revision("2026-11-02", {
+      schedule: { type: "weekly", daysPerWeek: 2 },
+    }),
+  ]);
+  const novemberSecond = log("daily", "2026-11-02");
+  const summary = habitInsights(
+    [daily, flexible],
+    [
+      novemberSecond,
+      novemberSecond,
+      log("flex", "2026-11-02"),
+      log("flex", "2026-11-03"),
+      log("daily", "2026-11-05"),
+    ],
+    "2026-11-02",
+    "2026-11-08",
+    "2026-11-04",
+  );
+  assert.equal(summary.completedActions, 3);
+  assert.equal(summary.daysWithCompletion, 2);
+  assert.deepEqual(summary.fixed, { scheduled: 3, completed: 1 });
+  assert.deepEqual(summary.flexible, { scheduled: 2, completed: 2 });
+  assert.deepEqual(
+    summary.days.map(({ day, completed, fixedCompleted, closedMissed }) => [
+      day,
+      completed,
+      fixedCompleted,
+      closedMissed,
+    ]),
+    [
+      ["2026-11-02", 2, 1, 0],
+      ["2026-11-03", 1, 0, 1],
+      ["2026-11-04", 0, 0, 0],
+    ],
+  );
 });
 
 test("habit records and exports stay owner-scoped and concurrent completions award once", async () => {
@@ -304,6 +356,7 @@ test("habit records and exports stay owner-scoped and concurrent completions awa
       habits: [],
       habitProgress: [],
       habitGarden: [],
+      gardenIntentions: [],
     });
     await request(app)
       .delete("/api/habits/stretch")

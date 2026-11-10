@@ -26,7 +26,7 @@ import {
   isGlassEffectAPIAvailable,
   isLiquidGlassAvailable,
 } from "expo-glass-effect";
-import { useTheme } from "./theme";
+import { lightGlass, useTheme } from "./theme";
 import { AppText, Icon } from "./ui";
 import {
   clampTabCenter,
@@ -34,6 +34,7 @@ import {
   measuredTabStops,
   nearestTab,
   type TabFrame,
+  type TabSelectionIntent,
   type TabStop,
 } from "./navigation-motion";
 
@@ -63,25 +64,25 @@ const rowPadding = 5;
 const spotlightSize = 36;
 const android = Platform.OS === "android";
 const useNativeDriver = Platform.OS !== "web";
-const destinationNames = destinations.map(({ name }) => name);
 const verticalReleaseSlop = 20;
+type TabDestinationItem = (typeof destinations)[number];
 
 const TabDestination = React.memo(function TabDestination({
   destination,
   selected,
   ink,
-  labelScale,
-  rippleColor,
+  labelInk,
+  compactLabel,
   reducedMotion,
   onMeasure,
   onPressStart,
   onSelect,
 }: {
-  destination: (typeof destinations)[number];
+  destination: TabDestinationItem;
   selected: boolean;
   ink: string;
-  labelScale?: number;
-  rippleColor: string;
+  labelInk: string;
+  compactLabel: boolean;
   reducedMotion: boolean;
   onMeasure: (name: string, frame: TabFrame) => void;
   onPressStart: () => void;
@@ -90,6 +91,7 @@ const TabDestination = React.memo(function TabDestination({
   const [iconOpacity] = useState(() => new Animated.Value(1));
   const wasSelected = useRef(selected);
   const webTouch = useRef<{ x: number; y: number } | null>(null);
+  const webTouchClickUntil = useRef(0);
   useLayoutEffect(() => {
     const animate = selected && !wasSelected.current && !reducedMotion;
     wasSelected.current = selected;
@@ -111,6 +113,7 @@ const TabDestination = React.memo(function TabDestination({
         Platform.OS === "web"
           ? ({ nativeEvent }) => {
               const touch = nativeEvent.touches[0];
+              webTouchClickUntil.current = 0;
               webTouch.current =
                 nativeEvent.touches.length === 1
                   ? { x: touch.pageX, y: touch.pageY }
@@ -139,19 +142,21 @@ const TabDestination = React.memo(function TabDestination({
                 Math.hypot(touch.pageX - start.x, touch.pageY - start.y) < 8
               ) {
                 event.preventDefault();
+                // The same touch may still produce a click after the tab changes.
+                webTouchClickUntil.current = Date.now() + 250;
                 onSelect(destination.name);
               }
             }
           : undefined
       }
-      onPress={({ nativeEvent }) =>
-        onSelect(
-          destination.name,
+      onPress={({ nativeEvent }) => {
+        const nonPointer =
           Platform.OS === "web" &&
-            (nativeEvent == null ||
-              ("detail" in nativeEvent && nativeEvent.detail === 0)),
-        )
-      }
+          (nativeEvent == null ||
+            ("detail" in nativeEvent && nativeEvent.detail === 0));
+        if (!nonPointer && Date.now() < webTouchClickUntil.current) return;
+        onSelect(destination.name, nonPointer);
+      }}
       onLayout={({ nativeEvent }) =>
         onMeasure(destination.name, nativeEvent.layout)
       }
@@ -159,11 +164,7 @@ const TabDestination = React.memo(function TabDestination({
       accessibilityState={{ selected }}
       aria-selected={selected}
       accessibilityLabel={destination.title}
-      android_ripple={android ? { color: rippleColor } : undefined}
-      style={({ pressed }) => [
-        styles.tab,
-        !android && pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
     >
       <Animated.View style={[styles.iconFrame, { opacity: iconOpacity }]}>
         <Icon
@@ -174,11 +175,15 @@ const TabDestination = React.memo(function TabDestination({
       </Animated.View>
       <AppText
         variant="caption"
-        color={ink}
-        numberOfLines={android ? 1 : undefined}
-        adjustsFontSizeToFit={android}
-        maxFontSizeMultiplier={labelScale}
+        color={labelInk}
         style={styles.label}
+        {...(android && {
+          numberOfLines: 1,
+          adjustsFontSizeToFit: true,
+          minimumFontScale: 0.75,
+          // Android can clip the final glyph before its one-line fit takes effect.
+          maxFontSizeMultiplier: compactLabel ? 1.15 : undefined,
+        })}
       >
         {destination.title}
       </AppText>
@@ -189,23 +194,90 @@ const TabDestination = React.memo(function TabDestination({
 export const TabBar = React.memo(function TabBar({
   activeTab,
   route,
+  hidden = false,
   reducedMotion,
   onSelect,
   onHeight,
 }: {
   activeTab: string;
   route: string;
+  hidden?: boolean;
   reducedMotion: boolean;
-  onSelect: (name: string) => void;
+  onSelect: (name: string, intent: TabSelectionIntent) => void;
   onHeight: (height: number) => void;
 }) {
+  const { resolved } = useTheme();
+  const { bottom, left = 0, right = 0 } = useSafeAreaInsets();
+  const twilight =
+    resolved === "dark" && (route === "today" || route === "explore");
+  const bottomInset = Math.max(bottom, 10);
+  const radius = android ? 28 : 36;
+  return (
+    <View
+      pointerEvents={hidden ? "none" : "box-none"}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
+      onLayout={(event) => onHeight(Math.ceil(event.nativeEvent.layout.height))}
+      style={{
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        paddingLeft: 14 + left,
+        paddingRight: 14 + right,
+        paddingTop: 8,
+        paddingBottom: bottomInset,
+        opacity: hidden ? 0 : 1,
+      }}
+    >
+      <View
+        style={{
+          borderRadius: radius,
+          boxShadow:
+            resolved === "dark"
+              ? "0 6px 24px rgba(0,0,0,0.5)"
+              : "0 6px 24px rgba(48,30,20,0.12)",
+        }}
+      >
+        <TabRail
+          destinations={destinations}
+          activeTab={activeTab}
+          route={route}
+          reducedMotion={reducedMotion}
+          onSelect={onSelect}
+          twilight={twilight}
+        />
+      </View>
+    </View>
+  );
+});
+
+export const TabRail = React.memo(function TabRail({
+  destinations,
+  activeTab,
+  route,
+  reducedMotion,
+  onSelect,
+  twilight = false,
+  accessibilityLabel,
+  activeLabelColor,
+  waitForSelection = false,
+}: {
+  destinations: readonly TabDestinationItem[];
+  activeTab: string;
+  route: string;
+  reducedMotion: boolean;
+  onSelect: (name: string, intent: TabSelectionIntent) => void;
+  twilight?: boolean;
+  accessibilityLabel?: string;
+  activeLabelColor?: string;
+  waitForSelection?: boolean;
+}) {
   const { colors, resolved } = useTheme();
-  const insets = useSafeAreaInsets();
-  const onToday = route === "today";
-  const onExplore = route === "explore";
-  const twilight = resolved === "dark" && onToday;
-  const twilightExplore = resolved === "dark" && onExplore;
-  const bottomInset = Math.max(insets.bottom, 10);
+  const destinationNames = useMemo(
+    () => destinations.map(({ name }) => name),
+    [destinations],
+  );
   const [rowWidth, setRowWidth] = useState(0);
   const [frames, setFrames] = useState(() => new Map<string, TabFrame>());
   const row = useRef<React.ComponentRef<typeof View>>(null);
@@ -236,15 +308,23 @@ export const TabBar = React.memo(function TabBar({
   }, []);
   const stops = useMemo(
     () => measuredTabStops(destinationNames, frames, rowWidth, spotlightSize),
-    [frames, rowWidth],
+    [destinationNames, frames, rowWidth],
   );
-  // Fit the longest 11sp Inter tab label with breathing room at large text sizes.
-  const androidLabelScale = android
-    ? Math.max(1, ((rowWidth - rowPadding * 2) / destinations.length - 6) / 44)
-    : undefined;
   const [spotlightX] = useState(() => new Animated.Value(0));
-  const gestureState = useRef({ activeTab, onSelect, reducedMotion, stops });
-  gestureState.current = { activeTab, onSelect, reducedMotion, stops };
+  const gestureState = useRef({
+    activeTab,
+    onSelect,
+    reducedMotion,
+    stops,
+    waitForSelection,
+  });
+  gestureState.current = {
+    activeTab,
+    onSelect,
+    reducedMotion,
+    stops,
+    waitForSelection,
+  };
   const laidOutStops = useRef<readonly TabStop[] | null>(null);
   const previousRoute = useRef(route);
   const goal = useRef<number | null>(null);
@@ -297,10 +377,12 @@ export const TabBar = React.memo(function TabBar({
         (!nonPointer && Date.now() < suppressPressUntil.current)
       )
         return;
-      const { activeTab, onSelect } = gestureState.current;
-      if (name === activeTab) return;
-      settle(name);
-      onSelect(name);
+      const { activeTab, onSelect, waitForSelection } = gestureState.current;
+      if (name === activeTab) onSelect(name, "reselect");
+      else {
+        if (!waitForSelection) settle(name);
+        onSelect(name, "switch");
+      }
     },
     [settle],
   );
@@ -318,9 +400,10 @@ export const TabBar = React.memo(function TabBar({
       if (!drag.current) return;
       drag.current = null;
       if (Platform.OS === "web") suppressPressUntil.current = Date.now() + 100;
-      const { activeTab, onSelect } = gestureState.current;
-      settle(destination ?? activeTab);
-      if (destination && destination !== activeTab) onSelect(destination);
+      const { activeTab, onSelect, waitForSelection } = gestureState.current;
+      settle(waitForSelection ? activeTab : (destination ?? activeTab));
+      if (destination && destination !== activeTab)
+        onSelect(destination, "switch");
     };
     return PanResponder.create({
       onStartShouldSetPanResponderCapture: (event) => {
@@ -404,11 +487,16 @@ export const TabBar = React.memo(function TabBar({
     !reduceTransparency &&
     isGlassEffectAPIAvailable() &&
     isLiquidGlassAvailable();
+  const light = resolved === "light";
+  const inactiveInk = light ? lightGlass.ink : colors.muted;
+  const compactLabels =
+    android && destinations.length === 5 && rowWidth > 0 && rowWidth < 320;
   const items = (
     <View
       ref={row}
       collapsable={false}
       accessibilityRole="tablist"
+      accessibilityLabel={accessibilityLabel}
       onLayout={measureRow}
       {...railGesture.panHandlers}
       style={styles.items}
@@ -434,9 +522,13 @@ export const TabBar = React.memo(function TabBar({
             key={destination.name}
             destination={destination}
             selected={selected}
-            ink={selected ? colors.tabActiveText : colors.muted}
-            labelScale={androidLabelScale}
-            rippleColor={resolved === "dark" ? "#FFFFFF24" : "#49326120"}
+            ink={selected ? colors.tabActiveText : inactiveInk}
+            labelInk={
+              selected
+                ? (activeLabelColor ?? colors.tabActiveText)
+                : inactiveInk
+            }
+            compactLabel={compactLabels}
             reducedMotion={reducedMotion}
             onMeasure={measureTab}
             onPressStart={clearPressSuppression}
@@ -448,90 +540,71 @@ export const TabBar = React.memo(function TabBar({
   );
   const radius = android ? 28 : 36;
   const shape = { borderRadius: radius, overflow: "hidden" as const };
-  return (
+  const edge = light && {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: lightGlass.edge,
+  };
+  const lightVeil = light && (
     <View
-      pointerEvents="box-none"
-      onLayout={(event) => onHeight(Math.ceil(event.nativeEvent.layout.height))}
-      style={{
-        position: "absolute",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        paddingHorizontal: 14,
-        paddingTop: 8,
-        paddingBottom: bottomInset,
-      }}
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, { backgroundColor: lightGlass.veil }]}
+    />
+  );
+  return glass ? (
+    <GlassView
+      glassEffectStyle="regular"
+      colorScheme={resolved}
+      tintColor={light ? lightGlass.tint : undefined}
+      style={light ? [shape, edge] : shape}
     >
-      {onToday && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.bottomSafeArea,
-            {
-              height: bottomInset + 16,
-              backgroundColor: twilight ? "#14111D" : colors.bg,
-            },
-          ]}
-        />
-      )}
-      <View
-        style={{
-          borderRadius: radius,
-          boxShadow:
-            resolved === "dark"
-              ? "0 6px 24px rgba(0,0,0,0.5)"
-              : "0 6px 24px rgba(48,30,20,0.12)",
-        }}
-      >
-        {glass ? (
-          <GlassView
-            glassEffectStyle="regular"
-            colorScheme={resolved}
-            style={shape}
-          >
-            {items}
-          </GlassView>
-        ) : Platform.OS === "ios" && !reduceTransparency ? (
-          <BlurView
-            intensity={85}
-            tint={
-              resolved === "dark"
-                ? "systemChromeMaterialDark"
-                : "systemChromeMaterialLight"
-            }
-            style={[
-              shape,
-              {
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: colors.border,
-              },
-            ]}
-          >
-            {items}
-          </BlurView>
-        ) : (
-          <View
-            style={[
-              shape,
-              {
-                backgroundColor:
-                  twilight || twilightExplore ? "#211D2B" : colors.surface,
-                borderWidth: 1,
-                borderColor:
-                  twilight || twilightExplore ? "#3E344B" : colors.border,
-              },
-            ]}
-          >
-            {items}
-          </View>
-        )}
-      </View>
+      {lightVeil}
+      {items}
+    </GlassView>
+  ) : Platform.OS === "ios" && !reduceTransparency ? (
+    <BlurView
+      intensity={light ? 68 : 85}
+      tint={
+        resolved === "dark"
+          ? "systemChromeMaterialDark"
+          : "systemChromeMaterialLight"
+      }
+      style={[
+        shape,
+        {
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: light ? lightGlass.edge : colors.border,
+        },
+      ]}
+    >
+      {lightVeil}
+      {items}
+    </BlurView>
+  ) : (
+    <View
+      style={[
+        shape,
+        {
+          backgroundColor:
+            light && Platform.OS !== "ios"
+              ? lightGlass.fallback
+              : twilight && resolved === "dark"
+                ? "#211D2B"
+                : colors.surface,
+          borderWidth: 1,
+          borderColor: light
+            ? lightGlass.edge
+            : twilight && resolved === "dark"
+              ? "#3E344B"
+              : colors.border,
+        },
+      ]}
+    >
+      {items}
     </View>
   );
 });
 
 const styles = StyleSheet.create({
-  bottomSafeArea: { position: "absolute", left: 0, right: 0, bottom: 0 },
   items: {
     flexDirection: "row",
     padding: rowPadding,
@@ -552,7 +625,7 @@ const styles = StyleSheet.create({
     minHeight: 52,
     alignItems: "center",
     paddingBottom: 3,
-    borderRadius: 24,
+    backgroundColor: "transparent",
   },
   pressed: { opacity: 0.65 },
   label: {

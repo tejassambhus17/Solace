@@ -72,6 +72,7 @@ export type HabitProgress = {
   updatedAt: string;
   // The day earns at most one lifetime garden credit, even after correction.
   earned: boolean;
+  gardenCreditFromSession?: true;
   linkedSessionIds?: string[];
 };
 
@@ -176,10 +177,22 @@ export function habitInsights(
     completedByHabit.set(log.habitId, dates);
   }
 
-  type CalendarDay = { day: string; completed: number; scheduled: number };
+  type CalendarDay = {
+    day: string;
+    completed: number;
+    scheduled: number;
+    fixedCompleted: number;
+    closedMissed: number;
+  };
   const dayStats = new Map<string, CalendarDay>();
   for (let day = start; day <= rangeEnd; day = addHabitDays(day, 1)) {
-    dayStats.set(day, { day, completed: 0, scheduled: 0 });
+    dayStats.set(day, {
+      day,
+      completed: 0,
+      scheduled: 0,
+      fixedCompleted: 0,
+      closedMissed: 0,
+    });
   }
   const fixedDays = new Map<
     string,
@@ -236,6 +249,8 @@ export function habitInsights(
           scheduled++;
           completed += done;
           row.scheduled++;
+          row.fixedCompleted += done;
+          if (!done && day < habitToday) row.closedMissed++;
         }
       }
     }
@@ -271,6 +286,14 @@ export function habitInsights(
     (total, habit) => total + habit.completed,
     0,
   );
+  const days = [...dayStats.values()];
+  const fixed = { scheduled: 0, completed: 0 };
+  let daysWithCompletion = 0;
+  for (const day of days) {
+    fixed.scheduled += day.scheduled;
+    fixed.completed += day.fixedCompleted;
+    if (day.completed) daysWithCompletion++;
+  }
   return {
     scheduled,
     completed,
@@ -278,7 +301,13 @@ export function habitInsights(
     percentage: percentage(completed, scheduled),
     currentStreak,
     bestStreak,
-    days: [...dayStats.values()],
+    daysWithCompletion,
+    fixed,
+    flexible: {
+      scheduled: scheduled - fixed.scheduled,
+      completed: completed - fixed.completed,
+    },
+    days,
     habits: habitStats,
   };
 }

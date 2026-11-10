@@ -25,6 +25,7 @@ const MAX_PENDING = 10;
 const journalDraftFields = [
   "id",
   "createdAt",
+  "day",
   "title",
   "text",
   "mood",

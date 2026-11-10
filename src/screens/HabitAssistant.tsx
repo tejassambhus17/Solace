@@ -233,7 +233,12 @@ export function HabitAssistant({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={[
           styles.backdrop,
-          { backgroundColor: colors.overlay, paddingTop: insets.top + 12 },
+          {
+            backgroundColor: colors.overlay,
+            paddingTop: insets.top + spacing.row,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
         ]}
       >
         <Pressable
@@ -244,10 +249,28 @@ export function HabitAssistant({
         />
         <View
           accessibilityViewIsModal
-          style={[styles.sheet, { backgroundColor: colors.surface }]}
+          style={[
+            styles.sheet,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
         >
+          <Row style={styles.header}>
+            <AppText
+              accessibilityRole="header"
+              variant="heading"
+              style={styles.heading}
+            >
+              Plan a habit with Solace
+            </AppText>
+            <IconButton
+              label="Close habit assistant"
+              name="close-outline"
+              onPress={close}
+            />
+          </Row>
           <ScrollView
             ref={scroll}
+            style={styles.body}
             keyboardShouldPersistTaps="handled"
             bounces={false}
             onContentSizeChange={() => {
@@ -260,20 +283,6 @@ export function HabitAssistant({
               { paddingBottom: Math.max(insets.bottom, spacing.section) },
             ]}
           >
-            <Row style={styles.header}>
-              <AppText
-                accessibilityRole="header"
-                variant="heading"
-                style={styles.heading}
-              >
-                Plan a habit with Solace
-              </AppText>
-              <IconButton
-                label="Close habit assistant"
-                name="close-outline"
-                onPress={close}
-              />
-            </Row>
             <AppText color={colors.muted}>
               Start with an idea, then decide what feels right for you.
             </AppText>
@@ -441,16 +450,20 @@ const styles = StyleSheet.create({
   sheet: {
     width: "100%",
     maxWidth: 560,
-    maxHeight: "93%",
+    maxHeight: "100%",
+    borderWidth: StyleSheet.hairlineWidth,
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     overflow: "hidden",
   },
-  content: { gap: spacing.row, padding: spacing.section },
+  body: { flexGrow: 0, flexShrink: 1 },
+  content: { gap: spacing.row, paddingHorizontal: spacing.section },
   header: {
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.compact,
+    gap: spacing.row,
+    paddingHorizontal: spacing.section,
+    paddingVertical: spacing.compact,
+    flexShrink: 0,
   },
   heading: { flex: 1 },
   group: { gap: spacing.compact },

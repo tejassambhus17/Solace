@@ -1,5 +1,6 @@
 export type TabFrame = { x: number; width: number };
 export type TabStop = { name: string; center: number };
+export type TabSelectionIntent = "switch" | "reselect";
 
 export function measuredTabStops(
   names: readonly string[],

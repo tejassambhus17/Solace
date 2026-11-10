@@ -1,4 +1,6 @@
-import { localDay, recordDay } from "./content";
+import type { Habit, HabitProgress } from "../server/src/habit-contract";
+import { ASSESSMENTS, localDay, recordDay } from "./content";
+import { journalWriting } from "./journal-record";
 import { isRecordId } from "./routes";
 import {
   activeSeconds,
@@ -315,26 +317,81 @@ export function journeyAnalytics(
 
 type JourneyAnalytics = ReturnType<typeof journeyAnalytics>;
 
-export function latestJourneyActivity(analytics: JourneyAnalytics) {
-  let latest: (DayEntry & { day: string }) | undefined;
+export type LatestJourneyActivity =
+  | (DayEntry & { day: string })
+  | {
+      collection: "habitProgress";
+      record: HabitProgress;
+      habit: Habit;
+      day: string;
+    };
+
+function canShowLatestActivity({ collection, record }: DayEntry) {
+  if (!isRecordId(record.id)) return false;
+  switch (collection) {
+    case "checkins":
+      return true;
+    case "sessions":
+      return (
+        record.completed === true &&
+        (record.type !== "resource" || isRecordId(record.resourceId))
+      );
+    case "reflections":
+      return record.kind === "journal" || !!journalWriting(record);
+    case "assessments":
+      return ASSESSMENTS.some(
+        ({ id }) => id === (record.assessmentType || record.type),
+      );
+  }
+}
+
+export function latestJourneyActivity(
+  analytics: JourneyAnalytics,
+  range: { startDay: string | null; endDay: string },
+  habits: readonly Habit[],
+  habitProgress: readonly HabitProgress[],
+  now: Date,
+): LatestJourneyActivity | undefined {
+  let latest: LatestJourneyActivity | undefined;
   let latestTime = -Infinity;
+  const inRange = (day: string) =>
+    (!range.startDay || day >= range.startDay) &&
+    day <= range.endDay &&
+    day <= analytics.today;
+  const isMoreRecent = (day: string, time: number) =>
+    !latest || day > latest.day || (day === latest.day && time > latestTime);
+
   for (const [day, activity] of analytics.days) {
-    if (latest && day < latest.day) continue;
+    if (!inRange(day) || (latest && day < latest.day)) continue;
     for (const entry of activity.entries) {
-      const { collection, record } = entry;
-      if (
-        !isRecordId(record.id) ||
-        (collection !== "checkins" &&
-          !(collection === "reflections" && record.kind === "journal") &&
-          !(collection === "sessions" && isCompletedMoment(record)))
-      )
-        continue;
-      const timestamp = Date.parse(record.createdAt);
+      if (!canShowLatestActivity(entry)) continue;
+      const timestamp = Date.parse(entry.record.createdAt);
       const time = Number.isFinite(timestamp) ? timestamp : -Infinity;
-      if (!latest || day > latest.day || time > latestTime) {
+      if (isMoreRecent(day, time)) {
         latest = { ...entry, day };
         latestTime = time;
       }
+    }
+  }
+
+  const habitsById = new Map(habits.map((habit) => [habit.id, habit]));
+  for (const record of habitProgress) {
+    if (record.complete !== true || !isRecordId(record.habitId)) continue;
+    const { day } = record;
+    const habit = habitsById.get(record.habitId);
+    if (
+      !habit ||
+      !inRange(day) ||
+      !parseDay(day) ||
+      // The backend adds the log day to the habit ID, which may exceed 100 characters.
+      (!isRecordId(record.id) && record.id !== `${habit.id}-${day}`)
+    )
+      continue;
+    const time = Date.parse(record.updatedAt || record.createdAt);
+    if (!Number.isFinite(time) || time > now.valueOf()) continue;
+    if (isMoreRecent(day, time)) {
+      latest = { collection: "habitProgress", record, habit, day };
+      latestTime = time;
     }
   }
   return latest;

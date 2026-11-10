@@ -327,6 +327,8 @@ test("browser callback requires state, preserves the native return boundary, and
   const account = results.find((response) => response.status === 200)!.body;
   assert.equal(account.user.email, "first@example.test");
   assert.equal(account.user.password, undefined);
+  assert.equal(account.user.wellnessOnboarding, "pending");
+  assert.deepEqual(account.user.wellnessGoals, []);
   assert.equal(f.store.all("SELECT id FROM users").length, 1);
   await f.api
     .get("/api/auth/me")
@@ -541,6 +543,13 @@ test("Google subject and session persist in SQLite across API restarts", async (
     const flow = await f.start();
     await f.callback(flow).expect(303);
     account = (await f.redeem(flow).expect(200)).body;
+    const completed = await f.api
+      .patch("/api/auth/wellness-goals")
+      .auth(account.token, { type: "bearer" })
+      .send({ goals: ["calm", "sleep"], completeOnboarding: true })
+      .expect(200);
+    account.user = completed.body.user;
+    assert.equal(account.user.wellnessOnboarding, "completed");
   } finally {
     f.store.close();
   }

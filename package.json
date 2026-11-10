@@ -32,6 +32,8 @@
     "export:web:preview": "node scripts/runtime.cjs expo export --platform web --dev --output-dir dist/web",
     "ios": "node scripts/runtime.cjs expo run:ios",
     "test:voice": "node scripts/runtime.cjs voice",
+    "test:companion-actions": "node scripts/runtime.cjs companion-actions",
+    "test:ambient-mixer": "node scripts/runtime.cjs ambient-mixer",
     "test:progress": "node scripts/runtime.cjs progress",
     "test:moments": "node scripts/runtime.cjs moments",
     "test:navigation": "node scripts/runtime.cjs navigation",
@@ -65,7 +67,8 @@
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.11.1",
-    "react-native-web": "^0.21.4"
+    "react-native-web": "^0.21.4",
+    "react-native-webrtc": "155.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.3.0",

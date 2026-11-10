@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   AppState as NativeAppState,
   BackHandler,
@@ -8,16 +14,32 @@ import {
   StyleSheet,
   TextInput,
   View,
+  useWindowDimensions,
   type LayoutChangeEvent,
 } from "react-native";
 import { AmbientSound } from "../AmbientSound";
+import { playHaptic } from "../haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp, type Item } from "../store";
+import { PracticeCompletion } from "./PracticeFollowUp";
+import { practiceOrigins } from "../practice-follow-up";
+import { SceneIntro } from "../NestedDesign";
 import { useTheme } from "../theme";
 import { isRecordId, routes } from "../routes";
 import { getTechnique, type Technique } from "../techniques";
-import { AppText, Button, Card, Icon, Row, Screen } from "../ui";
+import {
+  AppText,
+  Button,
+  Card,
+  Icon,
+  IconButton,
+  Input,
+  NestedState,
+  Row,
+  Screen,
+} from "../ui";
 import { Companion, useReducedMotion } from "../Companion";
+import { spacing } from "../layout";
 import { ENVIRONMENTS, EnvironmentScene } from "../Environment";
 import { localDay } from "../content";
 import {
@@ -35,8 +57,13 @@ import {
   type MomentEnvironment,
 } from "../moments";
 import type { SolaceMoment } from "../../server/src/moment-contract";
+import {
+  planTaskActivity,
+  type WellnessPlan,
+} from "../../server/src/wellness-plans";
 import { RecommendationExplanation } from "./RecommendationExplanation";
 import { GuidedBreathingPlayer } from "./GuidedBreathingPlayer";
+import { EnvironmentPicker } from "./MomentEnvironmentPicker";
 import { useBreathingMotion } from "../breathing-motion";
 
 const errorText = (error: unknown) =>
@@ -45,6 +72,10 @@ const errorText = (error: unknown) =>
     : "We couldn't complete that. Please try again.";
 const now = () =>
   typeof performance !== "undefined" ? performance.now() : Date.now();
+const momentArtwork = {
+  light: require("../../assets/redesign-explore-scene-light.jpg"),
+  dark: require("../../assets/today-twilight-lotus.jpg"),
+};
 
 function Notice({
   children,
@@ -66,78 +97,20 @@ function Notice({
   );
 }
 
-function EnvironmentPicker({
-  value,
-  onChange,
-  disabled = false,
-}: {
-  value: MomentEnvironment;
-  onChange: (environment: MomentEnvironment) => void;
-  disabled?: boolean;
-}) {
-  const { colors } = useTheme();
-  return (
-    <View style={{ flexDirection: "row", gap: 9 }}>
-      {ENVIRONMENTS.map((environment) => (
-        <Pressable
-          key={environment.id}
-          accessibilityRole="radio"
-          accessibilityLabel={environment.title}
-          accessibilityState={{
-            selected: value === environment.id,
-            checked: value === environment.id,
-            disabled,
-          }}
-          aria-checked={value === environment.id}
-          disabled={disabled}
-          onPress={() => onChange(environment.id)}
-          style={({ pressed }) => ({
-            flex: 1,
-            minWidth: 0,
-            opacity: pressed ? 0.75 : disabled ? 0.55 : 1,
-          })}
-        >
-          <EnvironmentScene
-            environment={environment.id}
-            style={{ minHeight: 65, height: 65, borderRadius: 14 }}
-          />
-          <Row
-            style={{
-              gap: 4,
-              marginTop: 8,
-              justifyContent: "center",
-              minHeight: 24,
-            }}
-          >
-            {value === environment.id && (
-              <Icon name="checkmark-circle" size={14} color={colors.primary} />
-            )}
-            <AppText
-              variant="caption"
-              style={{ fontSize: 12 }}
-              color={value === environment.id ? colors.text : colors.muted}
-            >
-              {environment.short}
-            </AppText>
-          </Row>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 function EnvironmentOptions({
   value,
   onChange,
   disabled = false,
+  stacked = false,
   children,
 }: {
   value: MomentEnvironment;
   onChange: (environment: MomentEnvironment) => void;
   disabled?: boolean;
+  stacked?: boolean;
   children?: React.ReactNode;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const [open, setOpen] = useState(false);
   const environment = ENVIRONMENTS.find((item) => item.id === value)!;
   return (
@@ -156,7 +129,11 @@ function EnvironmentOptions({
         style={{ minHeight: 58, justifyContent: "center" }}
       >
         <Row>
-          <Icon name="leaf-outline" size={19} color={colors.primary} />
+          <Icon
+            name="leaf-outline"
+            size={19}
+            color={resolved === "dark" ? colors.primary : colors.accent}
+          />
           <View style={{ flex: 1 }}>
             <AppText variant="caption" color={colors.muted}>
               Space for this Moment
@@ -176,6 +153,7 @@ function EnvironmentOptions({
             value={value}
             onChange={onChange}
             disabled={disabled}
+            stacked={stacked}
           />
           {children}
         </View>
@@ -186,16 +164,16 @@ function EnvironmentOptions({
 
 export function MomentsScreen() {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const preference = app.data.preferences?.find(
     (item) => item.id === "wellness",
   );
   const [environment, setEnvironment] = useState<MomentEnvironment>(
-    ["forest", "ocean", "twilight"].includes(preference?.environment)
-      ? preference!.environment
-      : "forest",
+    ENVIRONMENTS.find(({ id }) => id === preference?.environment)?.id ??
+      "forest",
   );
   const [feeling, setFeeling] = useState(
     String(
@@ -215,14 +193,12 @@ export function MomentsScreen() {
   const generation = useRef(0);
   const generationLock = useRef(false);
   const preferenceLock = useRef(false);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
+  useLayoutEffect(
+    () => () => {
       generation.current += 1;
-    };
-  }, []);
+    },
+    [],
+  );
   useEffect(() => {
     if (
       result?.usedMemoryIds.length &&
@@ -264,18 +240,17 @@ export function MomentsScreen() {
         feeling.trim(),
         environment,
       );
-      if (!mounted.current || version !== generation.current) return;
+      if (version !== generation.current) return;
       if (!response?.support && !isPlayableMoment(response?.activity))
         throw new Error(
           "This Moment couldn't be prepared safely. Your words are kept—please try again.",
         );
       setResult(response);
     } catch (error) {
-      if (mounted.current && version === generation.current)
-        setError(errorText(error));
+      if (version === generation.current) setError(errorText(error));
     } finally {
       generationLock.current = false;
-      if (mounted.current && version === generation.current) setLoading(false);
+      setLoading(false);
     }
   }
   async function saveEnvironment() {
@@ -285,20 +260,15 @@ export function MomentsScreen() {
     setPreferenceStatus(null);
     try {
       await app.save("preferences", {
-        ambientEnabled: false,
-        streaksEnabled: false,
-        ...preference,
         id: "wellness",
         environment,
       });
-      if (mounted.current)
-        setPreferenceStatus({ message: "Your preferred space is saved." });
+      setPreferenceStatus({ message: "Your preferred space is saved." });
     } catch (error) {
-      if (mounted.current)
-        setPreferenceStatus({ message: errorText(error), error: true });
+      setPreferenceStatus({ message: errorText(error), error: true });
     } finally {
       preferenceLock.current = false;
-      if (mounted.current) setSavingPreference(false);
+      setSavingPreference(false);
     }
   }
   function scrollToResult(event: LayoutChangeEvent) {
@@ -308,74 +278,81 @@ export function MomentsScreen() {
     });
   }
   return (
-    <Screen title="Solace Moments" back={app.back} scrollRef={scroll}>
-      <Row style={{ alignItems: "center", marginBottom: 18, gap: 0 }}>
-        <View style={{ flex: 1 }}>
-          <AppText variant="title">A moment,{"\n"}made for you.</AppText>
-          <AppText color={colors.muted} style={{ marginTop: 12 }}>
-            Start with how things feel. Find a little room to breathe, notice or
-            reflect.
-          </AppText>
-        </View>
-        <Companion state={loading ? "thinking" : "idle"} size={98} />
-      </Row>
-      <AppText variant="label" style={{ marginTop: 10, marginBottom: 9 }}>
-        What would feel supportive?
-      </AppText>
-      <TextInput
-        accessibilityLabel="How are you feeling for your Moment?"
-        placeholder="A busy mind, a long day, or simply a little pause…"
-        placeholderTextColor={colors.muted}
-        value={feeling}
-        onChangeText={writeFeeling}
-        multiline
-        maxLength={2000}
-        editable={!loading}
-        style={{
-          backgroundColor: colors.surface,
-          color: colors.text,
-          borderColor: colors.border,
-          borderWidth: 1,
-          borderRadius: 18,
-          padding: 17,
-          minHeight: 112,
-          fontFamily: "Inter_400Regular",
-          fontSize: 15,
-          lineHeight: 23,
-          textAlignVertical: "top",
-        }}
+    <Screen variant="nested" scrollRef={scroll}>
+      <View style={momentStyles.backRow}>
+        <IconButton
+          name="chevron-back"
+          label="Go back"
+          appearance="outlined"
+          size={48}
+          onPress={app.back}
+        />
+      </View>
+      <SceneIntro
+        image={momentArtwork[resolved]}
+        title="Solace Moments"
+        description="Start with how things feel. Find a little room to breathe, notice or reflect."
       />
       <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          gap: 8,
-          marginTop: 11,
-        }}
+        style={[
+          momentStyles.prompt,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
       >
-        {[
-          { label: "Overwhelmed", text: "Feeling overwhelmed" },
-          { label: "Distracted", text: "A little distracted" },
-          { label: "Tired", text: "Ready to rest" },
-        ].map(({ label, text }) => (
-          <Pressable
-            key={text}
-            accessibilityRole="button"
-            disabled={loading}
-            onPress={() => writeFeeling(text)}
-            style={({ pressed }) => ({
-              paddingHorizontal: 12,
-              minHeight: 48,
-              justifyContent: "center",
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: 24,
-              opacity: pressed ? 0.6 : 1,
-            })}
+        <Row style={momentStyles.promptHeader}>
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={momentStyles.flex}
           >
-            <AppText variant="caption">{label}</AppText>
-          </Pressable>
-        ))}
+            What would feel supportive?
+          </AppText>
+          <Companion
+            state={loading ? "thinking" : "idle"}
+            animate={loading}
+            size={46}
+          />
+        </Row>
+        <Input
+          accessibilityLabel="How are you feeling for your Moment?"
+          placeholder="A busy mind, a long day, or simply a little pause…"
+          value={feeling}
+          onChangeText={writeFeeling}
+          multiline
+          maxLength={2000}
+          editable={!loading}
+        />
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: spacing.compact,
+          }}
+        >
+          {[
+            { label: "Overwhelmed", text: "Feeling overwhelmed" },
+            { label: "Distracted", text: "A little distracted" },
+            { label: "Tired", text: "Ready to rest" },
+          ].map(({ label, text }) => (
+            <Pressable
+              key={text}
+              accessibilityRole="button"
+              disabled={loading}
+              onPress={() => writeFeeling(text)}
+              style={({ pressed }) => ({
+                paddingHorizontal: 12,
+                minHeight: 48,
+                justifyContent: "center",
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 24,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <AppText variant="caption">{label}</AppText>
+            </Pressable>
+          ))}
+        </View>
       </View>
       <EnvironmentOptions
         value={environment}
@@ -384,6 +361,7 @@ export function MomentsScreen() {
           setPreferenceStatus(null);
         }}
         disabled={loading || savingPreference}
+        stacked={width < 344 || fontScale >= 1.4}
       >
         <Button
           title={
@@ -433,24 +411,48 @@ export function MomentsScreen() {
         <View
           key={result.activity.id}
           onLayout={scrollToResult}
-          style={{
-            marginTop: 27,
-            paddingTop: 24,
-            borderTopWidth: StyleSheet.hairlineWidth,
-            borderTopColor: colors.border,
-          }}
+          style={[
+            momentStyles.preview,
+            {
+              backgroundColor: colors.lavenderSurface,
+              borderColor: colors.border,
+            },
+          ]}
         >
-          <AppText variant="heading">{result.activity.title}</AppText>
-          <AppText color={colors.muted} style={{ marginTop: 8 }}>
-            {result.activity.description}
+          <AppText variant="title" accessibilityRole="header">
+            {result.activity.title}
           </AppText>
-          <Row style={{ marginTop: 16 }}>
-            <Icon name="time-outline" size={17} />
-            <AppText variant="caption">
+          <AppText color={colors.muted}>{result.activity.description}</AppText>
+          <Row style={momentStyles.previewMeta}>
+            <Icon name="time-outline" size={17} color={colors.lavenderText} />
+            <AppText
+              variant="label"
+              color={colors.lavenderText}
+              style={momentStyles.flex}
+            >
               {Math.round((result.activity.durationSec / 60) * 10) / 10} min ·{" "}
               {ENVIRONMENTS.find((item) => item.id === environment)?.title}
             </AppText>
           </Row>
+          <View style={momentStyles.previewSteps}>
+            {result.activity.steps.map((step, index) => (
+              <View
+                key={index}
+                style={[
+                  momentStyles.previewStep,
+                  { borderColor: colors.border },
+                ]}
+              >
+                <AppText variant="caption" color={colors.lavenderText}>
+                  {index + 1}
+                </AppText>
+                <AppText style={momentStyles.flex}>{step.title}</AppText>
+                <AppText variant="caption" color={colors.muted}>
+                  {momentClockText(step.durationSec)}
+                </AppText>
+              </View>
+            ))}
+          </View>
           <Button
             title="Begin this Moment"
             icon="play-outline"
@@ -459,15 +461,11 @@ export function MomentsScreen() {
                 ...result,
                 conversationId: app.params?.conversationId,
                 activity: { ...result.activity!, environment },
+                useChosenEnvironment: true,
               })
             }
-            style={{ marginTop: 17 }}
           />
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ marginTop: 12 }}
-          >
+          <AppText variant="caption" color={colors.muted}>
             {result.provider === "live"
               ? "AI-created guidance · validated before playback"
               : "Built-in Moment · Live AI is off"}
@@ -515,14 +513,26 @@ export function MomentsScreen() {
 
 export function MomentPlayerScreen() {
   const app = useApp();
-  const technique = getTechnique(app.params.techniqueId);
-  const activity =
-    app.params.techniqueId === undefined
+  const { planId, planTaskId } = app.params;
+  const fromPlan = planId !== undefined || planTaskId !== undefined;
+  const plan =
+    fromPlan && isRecordId(planId) && isRecordId(planTaskId)
+      ? (app.data.plans.find(
+          (item) =>
+            item.id === planId && item.type === "wellness" && item.startedAt,
+        ) as WellnessPlan | undefined)
+      : undefined;
+  const task = plan?.tasks?.find((item) => item.id === planTaskId);
+  const technique = fromPlan ? undefined : getTechnique(app.params.techniqueId);
+  const activity = fromPlan
+    ? task && planTaskActivity(task)
+    : app.params.techniqueId === undefined
       ? app.params.activity
       : technique?.activity;
   const playable = isPlayableMoment(activity);
-  const guidedSource =
-    app.params.source === "explore"
+  const guidedSource = fromPlan
+    ? "Wellness plan"
+    : app.params.source === "explore"
       ? "Explore"
       : app.params.source === "today"
         ? "Today"
@@ -530,7 +540,9 @@ export function MomentPlayerScreen() {
           ? "Solace chat"
           : app.params.source === "journal"
             ? "My Journal"
-            : undefined;
+            : app.params.source === "journey"
+              ? "Journey"
+              : undefined;
   useEffect(() => {
     if (playable) return;
     const subscription = BackHandler.addEventListener(
@@ -544,22 +556,26 @@ export function MomentPlayerScreen() {
   }, [playable, app.back]);
   if (!playable)
     return (
-      <Screen title="Solace Moment" back={app.back}>
-        <AppText variant="title">Let's make a new Moment.</AppText>
-        <Notice>
-          This activity couldn't be opened. Your saved Journey is unchanged.
-        </Notice>
-        {app.params.techniqueId === undefined ? (
-          <Button
-            title="Find a Moment"
-            onPress={() => app.navigate("moments")}
-          />
-        ) : (
-          <Button
-            title="Browse techniques"
-            onPress={() => app.navigate(routes.techniques)}
-          />
-        )}
+      <Screen variant="nested" title="Solace Moment" back={app.back}>
+        <NestedState
+          title="Let's make a new Moment."
+          description="This activity couldn't be opened. Your saved Journey is unchanged."
+          icon="flower-outline"
+        >
+          {fromPlan ? (
+            <Button title="Back to plan" onPress={app.back} />
+          ) : app.params.techniqueId === undefined ? (
+            <Button
+              title="Find a Moment"
+              onPress={() => app.navigate("moments")}
+            />
+          ) : (
+            <Button
+              title="Browse techniques"
+              onPress={() => app.navigate(routes.techniques)}
+            />
+          )}
+        </NestedState>
       </Screen>
     );
   return (
@@ -577,6 +593,18 @@ export function MomentPlayerScreen() {
       }
       guidedSource={guidedSource}
       returnToBuilder={app.params.timedPractice === true}
+      startOnArrival={
+        app.params.startOnArrival === true &&
+        (app.params.source === "chat" ||
+          (app.params.source === "today" &&
+            isRecordId(app.params.originCheckinId)))
+      }
+      originCheckinId={app.params.originCheckinId}
+      originActionId={app.params.originActionId}
+      useChosenEnvironment={app.params.useChosenEnvironment === true}
+      planStep={
+        plan?.id && task ? { planId: plan.id, planTaskId: task.id } : undefined
+      }
     />
   );
 }
@@ -588,24 +616,48 @@ function PlayableMoment({
   provider,
   guidedSource,
   returnToBuilder,
+  startOnArrival,
+  originCheckinId,
+  originActionId,
+  useChosenEnvironment,
+  planStep,
 }: {
   activity: SolaceMoment;
   technique?: Technique;
   conversationId?: string;
   provider: "live" | "offline";
-  guidedSource?: "Explore" | "Today" | "Solace chat" | "My Journal";
+  guidedSource?:
+    | "Explore"
+    | "Today"
+    | "Solace chat"
+    | "My Journal"
+    | "Wellness plan"
+    | "Journey";
   returnToBuilder: boolean;
+  startOnArrival: boolean;
+  originCheckinId?: unknown;
+  originActionId?: unknown;
+  useChosenEnvironment: boolean;
+  planStep?: { planId: string; planTaskId: string };
 }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
   const guidedBreathing = !!technique && activity.type === "breathing";
-  const [environment, setEnvironment] = useState<MomentEnvironment>(
-    guidedBreathing ? "twilight" : activity.environment,
+  const preference = app.data.preferences.find(({ id }) => id === "wellness");
+  const [environmentOverride, setEnvironment] = useState<MomentEnvironment>();
+  const [preferredSound] = useState(() =>
+    useChosenEnvironment
+      ? undefined
+      : ENVIRONMENTS.find(({ id }) => id === preference?.environment)?.id,
   );
-  const [sound, setSound] = useState(false);
+  const environment =
+    environmentOverride ??
+    (guidedBreathing ? "twilight" : activity.environment);
+  const soundEnvironment = environmentOverride ?? preferredSound ?? environment;
+  const [sound, setSound] = useState(preference?.ambientEnabled === true);
   const [running, setRunning] = useState(false);
   const [started, setStarted] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -614,6 +666,7 @@ function PlayableMoment({
   const [exitConfirmation, setExitConfirmation] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [note, setNote] = useState("");
+  const [showExtraFeedback, setShowExtraFeedback] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedSession, setSavedSession] = useState<Item | null>(null);
   const [error, setError] = useState("");
@@ -621,7 +674,9 @@ function PlayableMoment({
   const clock = useRef(emptyClock());
   const resumeAfterExit = useRef(false);
   const finishedAt = useRef<{ createdAt: string; day: string } | null>(null);
+  const startedAt = useRef<string | undefined>(undefined);
   const saveLock = useRef(false);
+  const autoSaveAttempted = useRef(false);
   const saveSnapshot = useRef<Item | null>(null);
   const [sessionId] = useState(newMomentSessionId);
   const selfPaced = technique?.selfPaced ?? false;
@@ -680,13 +735,25 @@ function PlayableMoment({
     if (finishedAt.current) return;
     setExitConfirmation(false);
     setNotice("");
+    startedAt.current ||= new Date().toISOString();
     clock.current = resumeMoment(clock.current, now());
     setStarted(true);
     setRunning(true);
   }
+  const arrivalConsumed = useRef(false);
+  useEffect(() => {
+    if (!startOnArrival || arrivalConsumed.current) return;
+    arrivalConsumed.current = true;
+    if (
+      !NativeAppState.currentState ||
+      NativeAppState.currentState === "active"
+    )
+      resume();
+  }, [startOnArrival]);
   function restart() {
     if (finishedAt.current) return;
     clock.current = emptyClock();
+    startedAt.current = undefined;
     setStarted(false);
     setRunning(false);
     setElapsedMs(0);
@@ -704,7 +771,12 @@ function PlayableMoment({
       dismissExit();
       return;
     }
-    if (!started || savedSession) {
+    const hasUnsubmittedFeedback =
+      savedSession &&
+      showExtraFeedback &&
+      ((feedback !== "" && feedback !== savedSession.feedback) ||
+        note.trim() !== (savedSession.note ?? ""));
+    if (!started || (savedSession && !hasUnsubmittedFeedback)) {
       app.back();
       return;
     }
@@ -744,6 +816,19 @@ function PlayableMoment({
     });
     return () => subscription.remove();
   }, [pause]);
+  const pauseOnHide = useRef(pause);
+  pauseOnHide.current = pause;
+  useLayoutEffect(
+    () => () => {
+      // A notification or tab switch can hide the retained player without an
+      // AppState event. Freeze the active clock as soon as Activity hides it.
+      if (clock.current.runningSince !== null)
+        pauseOnHide.current(
+          "Paused while you were away. Continue whenever you're ready.",
+        );
+    },
+    [],
+  );
   const leaveRef = useRef(leave);
   leaveRef.current = leave;
   useEffect(() => {
@@ -763,6 +848,7 @@ function PlayableMoment({
     setError("");
     saveSnapshot.current ||= {
       id: sessionId,
+      practiceId: technique?.id ?? activity.id,
       kind: "generated",
       type: activity.type,
       title: activity.title,
@@ -772,17 +858,53 @@ function PlayableMoment({
       durationSec: completedSeconds,
       plannedDurationSec: activity.durationSec,
       completed: true,
-      feedback: feedback || "skipped",
-      note: note.trim(),
+      outcome: "completed",
+      feedback: "skipped",
       source: guidedSource ?? "Solace Moments",
       ...(conversationId ? { sourceConversationId: conversationId } : {}),
+      ...practiceOrigins(
+        { originCheckinId, originActionId },
+        app.data.checkins,
+      ),
+      ...planStep,
       ...finishedAt.current,
+      startedAt: startedAt.current,
+      endedAt: finishedAt.current.createdAt,
     };
     try {
       const saved = await app.save("sessions", saveSnapshot.current);
       setSavedSession(saved);
+      if (note.trim()) setShowExtraFeedback(true);
+      void playHaptic("confirmation");
     } catch (error) {
       setError(errorText(error));
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+    }
+  }
+  const saveCompletion = useRef(save);
+  saveCompletion.current = save;
+  useEffect(() => {
+    if (!finished || autoSaveAttempted.current) return;
+    autoSaveAttempted.current = true;
+    void saveCompletion.current();
+  }, [finished]);
+  async function saveExtraFeedback() {
+    if (saveLock.current || !savedSession?.id) return;
+    saveLock.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await app.save("sessions", {
+        id: savedSession.id,
+        feedback: feedback || "skipped",
+        note: note.trim(),
+      });
+      setSavedSession(updated);
+      setShowExtraFeedback(false);
+    } catch (cause) {
+      setError(errorText(cause));
     } finally {
       saveLock.current = false;
       setSaving(false);
@@ -797,6 +919,8 @@ function PlayableMoment({
         breathingMotion={breathingMotion}
         elapsedMs={elapsedMs}
         environment={environment}
+        soundEnvironment={soundEnvironment}
+        onEnvironmentChange={setEnvironment}
         running={running}
         started={started}
         sound={sound}
@@ -814,80 +938,71 @@ function PlayableMoment({
               }
             : undefined
         }
-      >
-        <EnvironmentOptions value={environment} onChange={setEnvironment}>
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={{ marginTop: 8 }}
-          >
-            {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
-          </AppText>
-        </EnvironmentOptions>
-      </GuidedBreathingPlayer>
+      />
     );
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Screen
-        title={
-          finished
-            ? "A moment for you"
-            : technique
-              ? "Guided practice"
-              : "Solace Moment"
-        }
-        back={leave}
-        scrollRef={scroll}
-      >
-        <AppText variant="title">
-          {finished
-            ? savedSession
-              ? "A little care, saved."
-              : "You made room for you."
-            : activity.title}
-        </AppText>
-        <AppText
-          color={colors.muted}
-          style={{ marginTop: 10, marginBottom: 21 }}
-        >
-          {finished
-            ? savedSession
-              ? "Your completed Moment is in Journey. There is no next task to earn."
-              : "Your Moment is complete. Save it to your Journey, with feedback if you'd like."
-            : activity.description}
-        </AppText>
-        {technique && savedSession && (
-          <TechniqueSaveStatus
-            activeSeconds={savedSession.durationSec ?? completedSeconds}
-            saved
+      <Screen variant="nested" scrollRef={scroll}>
+        <View style={momentStyles.backRow}>
+          <IconButton
+            name="chevron-back"
+            label="Go back"
+            appearance="outlined"
+            size={48}
+            onPress={leave}
           />
+        </View>
+        {finished ? (
+          !savedSession && (
+            <SceneIntro
+              image={momentArtwork[resolved]}
+              title="You made room for you."
+              description="Your Moment is complete. We’re saving it to your Journey."
+              meta={`${momentClockText(completedSeconds)} active time`}
+            />
+          )
+        ) : (
+          <View
+            style={[
+              momentStyles.playerScene,
+              {
+                backgroundColor:
+                  resolved === "dark" ? colors.lavenderSurface : colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <EnvironmentScene
+              environment={environment}
+              active={running}
+              style={momentStyles.environment}
+              scenic
+            >
+              <Companion
+                state={rhythm ? "breathing" : "idle"}
+                animate={running || (!technique && !started)}
+                breathing={activity.breathing}
+                breathingMotion={breathingMotion}
+                phase={
+                  running && rhythm
+                    ? `${rhythm.phase}, ${rhythm.remaining}`
+                    : undefined
+                }
+                size={130}
+              />
+            </EnvironmentScene>
+            <View style={momentStyles.playerTitle}>
+              <AppText variant="title" accessibilityRole="header">
+                {activity.title}
+              </AppText>
+              <AppText color={colors.muted}>{activity.description}</AppText>
+            </View>
+          </View>
         )}
-        <EnvironmentScene
-          environment={environment}
-          active={running}
-          style={{
-            minHeight: 200,
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <Companion
-            state={finished ? "happy" : rhythm ? "breathing" : "idle"}
-            animate={running || finished || (!technique && !started)}
-            breathing={activity.breathing}
-            breathingMotion={breathingMotion}
-            phase={
-              running && rhythm
-                ? `${rhythm.phase}, ${rhythm.remaining}`
-                : undefined
-            }
-            size={158}
-          />
-        </EnvironmentScene>
         {!finished && (
           <>
-            <View style={{ marginVertical: 18 }}>
-              <Row style={{ justifyContent: "space-between" }}>
+            <View style={momentStyles.progress}>
+              <Row style={momentStyles.progressLabels}>
                 <AppText variant="caption" color={colors.muted}>
                   {started
                     ? running
@@ -930,39 +1045,48 @@ function PlayableMoment({
                   style={{
                     width: `${Math.min(100, 100 * (selfPaced ? progressNow / progressMax : elapsedMs / (activity.durationSec * 1000)))}%`,
                     height: "100%",
-                    backgroundColor: colors.primary,
+                    backgroundColor: colors.lavenderText,
                   }}
                 />
               </View>
             </View>
-            <AppText variant="heading" accessibilityLiveRegion="polite">
-              {rhythm && running ? rhythm.phase : position.step.title}
-            </AppText>
-            <AppText style={{ marginTop: 9 }}>
-              {position.step.instruction}
-            </AppText>
-            {rhythm && running && (
-              <AppText
-                variant="title"
-                style={{
-                  textAlign: "center",
-                  marginTop: 9,
-                  fontVariant: ["tabular-nums"],
-                }}
-              >
-                {rhythm.remaining}
-              </AppText>
-            )}
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={{ marginTop: 10 }}
+            <View
+              style={[
+                momentStyles.instruction,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
             >
-              Step {position.index + 1} of {activity.steps.length}
-              {activity.type === "breathing"
-                ? " · Breathe naturally whenever you prefer."
-                : " · Take only what feels comfortable."}
-            </AppText>
+              <AppText variant="caption" color={colors.lavenderText}>
+                Step {position.index + 1} of {activity.steps.length}
+              </AppText>
+              <AppText variant="heading" accessibilityLiveRegion="polite">
+                {rhythm && running ? rhythm.phase : position.step.title}
+              </AppText>
+              <AppText style={{ marginTop: 9 }}>
+                {position.step.instruction}
+              </AppText>
+              {rhythm && running && (
+                <AppText
+                  variant="title"
+                  style={{
+                    textAlign: "center",
+                    marginTop: 9,
+                    fontVariant: ["tabular-nums"],
+                  }}
+                >
+                  {rhythm.remaining}
+                </AppText>
+              )}
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={{ marginTop: 10 }}
+              >
+                {activity.type === "breathing"
+                  ? "Breathe naturally whenever you prefer."
+                  : "Take only what feels comfortable."}
+              </AppText>
+            </View>
             {!!activity.reflectionPrompts.length && (
               <View style={{ marginTop: 24 }}>
                 <AppText variant="label">A thought to sit with</AppText>
@@ -1018,7 +1142,10 @@ function PlayableMoment({
                 color={colors.muted}
                 style={{ marginTop: 8 }}
               >
-                {ENVIRONMENTS.find((item) => item.id === environment)?.sound}
+                {
+                  ENVIRONMENTS.find((item) => item.id === soundEnvironment)
+                    ?.sound
+                }
               </AppText>
             </EnvironmentOptions>
             {!!technique && started && !exitConfirmation && (
@@ -1047,8 +1174,30 @@ function PlayableMoment({
           </>
         )}
         {finished && !savedSession && (
+          <View style={{ marginTop: 20 }}>
+            <TechniqueSaveStatus
+              activeSeconds={completedSeconds}
+              saving={saving}
+              hasError={!!error}
+            />
+            {!!error && (
+              <>
+                <Notice error>
+                  Your active time is still here. Retry to save the same Moment.
+                </Notice>
+                <Button title="Retry saving Moment" onPress={save} />
+              </>
+            )}
+          </View>
+        )}
+        {savedSession && (
+          <View style={{ marginTop: 16 }}>
+            <PracticeCompletion session={savedSession} />
+          </View>
+        )}
+        {savedSession && showExtraFeedback && (
           <View style={{ marginTop: 23 }}>
-            <AppText variant="heading">How was this pause?</AppText>
+            <AppText variant="heading">Optional practice feedback</AppText>
             <AppText
               variant="caption"
               color={colors.muted}
@@ -1071,10 +1220,10 @@ function PlayableMoment({
                   accessibilityLabel={value}
                   accessibilityState={{
                     checked: feedback === value,
-                    disabled: saving || !!saveSnapshot.current,
+                    disabled: saving,
                   }}
                   aria-checked={feedback === value}
-                  disabled={saving || !!saveSnapshot.current}
+                  disabled={saving}
                   onPress={() => setFeedback(feedback === value ? "" : value)}
                   style={{
                     minHeight: 48,
@@ -1108,58 +1257,32 @@ function PlayableMoment({
                   ? "Optional reflection response"
                   : "Optional note about your Moment"
               }
-              readOnly={saving || !!saveSnapshot.current}
+              readOnly={saving}
               canDiscard={reflectionPractice}
             />
-            {!!technique && (
-              <View style={{ marginTop: 18 }}>
-                <TechniqueSaveStatus
-                  activeSeconds={completedSeconds}
-                  saving={saving}
-                  hasError={!!error}
-                />
-              </View>
-            )}
             <Button
-              title={
-                saving && technique
-                  ? "Saving to Journey…"
-                  : error
-                    ? "Retry saving Moment"
-                    : "Save Moment to Journey"
-              }
-              onPress={save}
+              title={error ? "Retry feedback" : "Save feedback"}
+              onPress={saveExtraFeedback}
               loading={saving}
-              style={{ marginTop: technique ? 0 : 18 }}
+              style={{ marginTop: 18 }}
             />
             {!!error && (
               <Notice error>
-                {technique
-                  ? "Your active time and feedback are still here. Try again to confirm the same entry."
-                  : `${error} Your completed Moment and feedback are still here. Retry saves the same entry.`}
+                Your feedback is still here. Try again to confirm it.
               </Notice>
             )}
           </View>
         )}
         {savedSession && (
-          <View style={{ marginTop: 23 }}>
-            <Row style={{ justifyContent: "center", marginBottom: 19 }}>
-              <Icon
-                name={technique ? "leaf-outline" : "checkmark-circle"}
-                color={colors.sageText}
-              />
-              <AppText variant="caption">
-                {!technique &&
-                  `${momentClockText(savedSession.durationSec ?? completedSeconds)} recorded · `}
-                {ENVIRONMENTS.find((item) => item.id === environment)?.short}
-              </AppText>
-            </Row>
+          <View style={{ marginTop: 10 }}>
             {!!conversationId && (
               <Button
                 title="Continue your conversation"
                 variant="secondary"
                 onPress={() =>
-                  app.navigate(routes.companion, { id: conversationId })
+                  isRecordId(originActionId)
+                    ? app.back()
+                    : app.navigate(routes.companion, { id: conversationId })
                 }
                 style={{ marginBottom: 12 }}
               />
@@ -1167,7 +1290,15 @@ function PlayableMoment({
             <Button
               title="See your Journey"
               onPress={() => app.navigate(routes.journey)}
+              style={{ marginTop: 12 }}
             />
+            {!showExtraFeedback && (
+              <Button
+                title="Add optional practice feedback"
+                variant="ghost"
+                onPress={() => setShowExtraFeedback(true)}
+              />
+            )}
             {reflectionPractice && (
               <Button
                 title="Write in My Journal"
@@ -1181,7 +1312,7 @@ function PlayableMoment({
                 style={{ marginTop: 12 }}
               />
             )}
-            {saveSnapshot.current?.feedback === "Helped" && (
+            {savedSession.feedback === "Helped" && (
               <Button
                 title="Remember what helped"
                 variant="secondary"
@@ -1197,11 +1328,17 @@ function PlayableMoment({
             )}
             <Button
               title={
-                returnToBuilder ? "Return to Timed Practice" : "Return to Today"
+                planStep
+                  ? "Return to plan"
+                  : returnToBuilder
+                    ? "Return to Timed Practice"
+                    : "Return to Today"
               }
               variant="ghost"
               onPress={
-                returnToBuilder ? app.back : () => app.navigate(routes.today)
+                planStep || returnToBuilder
+                  ? app.back
+                  : () => app.navigate(routes.today)
               }
               style={{ marginTop: 8 }}
             />
@@ -1229,7 +1366,9 @@ function PlayableMoment({
               style={{ marginTop: 8, marginBottom: 15 }}
             >
               {finished
-                ? "This completed Moment hasn't been saved. Leave it here, or go back and save it."
+                ? savedSession
+                  ? "Your completed Moment is in Journey. Any unsaved feedback stays here if you keep going."
+                  : "This completed Moment hasn't been saved. Leave it here, or go back and save it."
                 : "Your pause is stopped. Leaving won't record this as a completed Moment."}
             </AppText>
             <Button
@@ -1258,9 +1397,11 @@ function PlayableMoment({
           >
             {provider === "live"
               ? "AI-created wellness guidance. You remain in control."
-              : guidedSource
-                ? `Guided practice from ${guidedSource}.`
-                : "Built-in guided Moment · Live AI is off."}{" "}
+              : planStep
+                ? "A guided practice from your wellness plan."
+                : guidedSource
+                  ? `Guided practice from ${guidedSource}.`
+                  : "Built-in guided Moment · Live AI is off."}{" "}
             This is an optional wellness activity, not medical care.
           </AppText>
         )}
@@ -1294,7 +1435,7 @@ function PlayableMoment({
             onPress={() => (running ? pause() : resume())}
           />
           <AmbientSound
-            environment={environment}
+            environment={soundEnvironment}
             running={running}
             enabled={sound}
             onToggle={() => setSound(!sound)}
@@ -1394,3 +1535,48 @@ function MomentNote({
     </>
   );
 }
+
+const momentStyles = StyleSheet.create({
+  backRow: { alignSelf: "flex-start", marginBottom: spacing.row },
+  flex: { flex: 1, minWidth: 0 },
+  prompt: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: spacing.row,
+    gap: spacing.row,
+  },
+  promptHeader: { justifyContent: "space-between" },
+  preview: {
+    marginTop: spacing.section,
+    padding: spacing.card,
+    gap: spacing.row,
+    borderWidth: 1,
+    borderRadius: 20,
+  },
+  previewMeta: { paddingTop: 4 },
+  previewSteps: { marginBottom: spacing.compact },
+  previewStep: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+    paddingVertical: spacing.compact,
+    minHeight: 40,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  playerScene: { borderWidth: 1, borderRadius: 22, overflow: "hidden" },
+  environment: {
+    minHeight: 148,
+    borderRadius: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playerTitle: { padding: spacing.card, gap: 5 },
+  progress: { marginVertical: spacing.card },
+  progressLabels: { justifyContent: "space-between", flexWrap: "wrap" },
+  instruction: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: spacing.card,
+    gap: spacing.compact,
+  },
+});

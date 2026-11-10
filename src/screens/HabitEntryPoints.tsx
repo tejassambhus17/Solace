@@ -167,23 +167,21 @@ function TodayHabit({
   );
 }
 
-export function TodayHabits({
-  surfaceStyle,
-}: {
-  surfaceStyle?: StyleProp<ViewStyle>;
-}) {
-  const app = useApp();
-  const { colors } = useTheme();
-  const eligible = app.data.habits.flatMap((habit) => {
+export function getTodayHabitsPreview(
+  habits: readonly Habit[],
+  progress: readonly HabitProgress[],
+  now: Date,
+) {
+  const eligible = habits.flatMap((habit) => {
     if (habit.status !== "active") return [];
-    const day = habitDay(habit.timeZone);
+    const day = habitDay(habit.timeZone, now);
     return isHabitScheduled(habit, day) ? [{ habit, day }] : [];
   });
   const currentDays = new Map(
     eligible.map(({ habit, day }) => [habit.id, day]),
   );
   const logs = new Map(
-    app.data.habitProgress
+    progress
       .filter((log) => currentDays.get(log.habitId) === log.day)
       .map((log) => [log.habitId, log]),
   );
@@ -197,6 +195,21 @@ export function TodayHabits({
       habitRevisionOn(habit, day)?.schedule.type === "weekly" &&
       logs.get(habit.id)?.complete,
   ).length;
+  return { eligible, logs, fixed, done, flexible, flexibleDone };
+}
+
+export function TodayHabits({
+  surfaceStyle,
+  daily,
+}: {
+  surfaceStyle?: StyleProp<ViewStyle>;
+  daily?: ReturnType<typeof getTodayHabitsPreview>;
+}) {
+  const app = useApp();
+  const { colors } = useTheme();
+  const { eligible, logs, fixed, done, flexible, flexibleDone } =
+    daily ??
+    getTodayHabitsPreview(app.data.habits, app.data.habitProgress, new Date());
   const preview = eligible.slice(0, 3);
   const hasHabits = app.data.habits.length > 0;
   const summary = !hasHabits
@@ -334,7 +347,15 @@ export function HabitJourneyEntry({
         gardenStatus,
       ].join(" ")}
       accessibilityHint="Opens Habit Insights"
-      onPress={() => app.navigate(routes.habitInsights)}
+      onPress={() =>
+        app.navigate(routes.habits, {
+          section: "insights",
+          insightsHabitId: undefined,
+          insightsPeriod: period === "week" ? "week" : "month",
+          insightsStartDay: startDay ?? undefined,
+          insightsEndDay: startDay ? endDay : undefined,
+        })
+      }
       style={({ pressed }) => [
         style,
         styles.journeyCard,
@@ -458,7 +479,6 @@ const styles = StyleSheet.create({
   },
   journeyGardenArt: { width: 24, height: 20 },
   preview: {
-    marginTop: spacing.section,
     borderRadius: 18,
     borderWidth: 1,
     padding: 0,

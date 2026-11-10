@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   BackHandler,
   Keyboard,
   Linking,
@@ -69,13 +70,27 @@ import {
 import { MilestoneCelebration } from "./src/MilestoneCelebration";
 import { widgetDestination } from "./src/widget-links";
 import WellnessScreen from "./src/screens/Wellness";
+import { WellnessPlansScreen } from "./src/screens/WellnessPlans";
 import ProfileScreen from "./src/screens/Profile";
+import { AmbientSoundPreferences } from "./src/screens/AmbientSoundPreferences";
 import { TabBar } from "./src/Navigation";
 import { NavigationDetail, useIosEdgeBack } from "./src/NavigationDetail";
+import type { TabSelectionIntent } from "./src/navigation-motion";
+import {
+  TabResetGuardContext,
+  type ExitGuard,
+  type ExitReason,
+} from "./src/navigation-reset";
 import { useReducedMotion } from "./src/Companion";
 import { useOnboarding } from "./src/onboarding-state";
+import { PracticeInsightsScreen } from "./src/screens/PracticeInsights";
 import { OnboardingScreen } from "./src/screens/Onboarding";
-import { OnboardingPersonalization } from "./src/screens/OnboardingPersonalization";
+import {
+  WellnessGoalsScreen,
+  WellnessGoalsWelcome,
+} from "./src/screens/WellnessGoals";
+import { readWellnessGoals } from "./server/src/wellness-goals";
+import { firstWellnessRecommendation } from "./src/wellness-recommendations";
 import { GoogleLinkProvider } from "./src/google-auth";
 import {
   subscribeNotificationNavigation,
@@ -107,7 +122,6 @@ const wellnessScreens = new Set([
   "resources",
   "resource",
   "sleep",
-  "plan",
   "affirmation",
   "challenge",
   "grounding",
@@ -237,16 +251,18 @@ function Shell() {
     if (pendingLink.techniqueId)
       navigate(routes.technique, { id: pendingLink.techniqueId });
   }, [canOpenLink, pendingLink]);
+  const awaitingUnlock = app.appLocked && app.appUnlock.phase !== "fallback";
+  const privacyCovered = app.privacyCovered || awaitingUnlock;
   return (
     <View style={{ flex: 1 }}>
       <View
         style={{ flex: 1 }}
-        accessibilityElementsHidden={app.privacyCovered}
+        accessibilityElementsHidden={privacyCovered}
         importantForAccessibility={
-          app.privacyCovered ? "no-hide-descendants" : "auto"
+          privacyCovered ? "no-hide-descendants" : "auto"
         }
       >
-        {app.appLocked ? (
+        {awaitingUnlock ? null : app.appLocked ? (
           <DeviceUnlockScreen scope="app" />
         ) : (
           <AccountShell
@@ -256,7 +272,7 @@ function Shell() {
           />
         )}
       </View>
-      {app.privacyCovered && <DevicePrivacyCover />}
+      {privacyCovered && <DevicePrivacyCover />}
     </View>
   );
 }
@@ -279,13 +295,83 @@ function AccountShell({
   navigate.current = app.navigate;
   const habits = useRef(app.data.habits);
   habits.current = app.data.habits;
-  const back = useRef(app.back);
-  back.current = app.back;
-  const tabAction = useRef(app.setTab);
-  tabAction.current = app.setTab;
-  const selectTab = useCallback((tab: string) => tabAction.current(tab), []);
+  const tabAction = useRef(app);
+  tabAction.current = app;
+  const resetGuards = useRef(new Map<number, ExitGuard>());
+  const registerResetGuard = useCallback(
+    (routeKey: number, guard: ExitGuard) => {
+      resetGuards.current.set(routeKey, guard);
+      return () => {
+        resetGuards.current.delete(routeKey);
+      };
+    },
+    [],
+  );
+  const resetPrompt = useRef<object | null>(null);
+  const leave = useCallback((action: () => void, reason: ExitReason) => {
+    const { routeKey } = tabAction.current;
+    const guard = resetGuards.current.get(routeKey);
+    if (guard === "saving" || resetPrompt.current) return;
+    if (!guard) {
+      action();
+      return;
+    }
+    const title = "Discard unsaved changes?";
+    const message =
+      reason === "tab"
+        ? "Returning to the tab home will discard your unsaved changes."
+        : "Going back will discard your unsaved changes.";
+    if (Platform.OS === "web") {
+      if (globalThis.confirm(`${title}\n\n${message}`)) action();
+      return;
+    }
+    const prompt = {};
+    resetPrompt.current = prompt;
+    const dismiss = () => {
+      if (resetPrompt.current === prompt) resetPrompt.current = null;
+    };
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: "Keep editing", style: "cancel", onPress: dismiss },
+        {
+          text: "Discard changes",
+          style: "destructive",
+          onPress: () => {
+            if (resetPrompt.current !== prompt) return;
+            dismiss();
+            if (tabAction.current.routeKey === routeKey) action();
+          },
+        },
+      ],
+      { cancelable: true, onDismiss: dismiss },
+    );
+  }, []);
+  const navigationGuard = useMemo(
+    () => ({ register: registerResetGuard, leave }),
+    [leave, registerResetGuard],
+  );
+  const goBack = useCallback(
+    () => leave(tabAction.current.back, "back"),
+    [leave],
+  );
+  const selectTab = useCallback(
+    (tab: string, intent: TabSelectionIntent) => {
+      const { setTab } = tabAction.current;
+      if (intent === "switch") setTab(tab, intent);
+      else leave(() => setTab(tab, intent), "tab");
+    },
+    [leave],
+  );
   const [chatPositions] = useState(() => new Map<string, number>());
   const [visitedRoots] = useState(() => new Set<RetainedRoot>());
+  const detailCache = useRef(
+    new Map<
+      typeof app.activeTab,
+      { app: typeof app; content: React.ReactElement }
+    >(),
+  );
   const journalLocked = app.journalLocked && app.journalRouteProtected;
   const activeRoot =
     !journalLocked && Object.hasOwn(retainedRoots, app.route)
@@ -307,18 +393,33 @@ function AccountShell({
     );
     const hide = Keyboard.addListener(
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      () => setKeyboardOpen(false),
+      () => {
+        // Keep the rail hidden while the iOS Companion composer is moving.
+        if (
+          Platform.OS !== "ios" ||
+          tabAction.current.route !== routes.companion
+        )
+          setKeyboardOpen(false);
+      },
     );
+    const didHide =
+      Platform.OS === "ios"
+        ? Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false))
+        : undefined;
     return () => {
       show.remove();
       hide.remove();
+      didHide?.remove();
     };
   }, []);
   const showNavigation =
     authenticated &&
     !replayingIntro &&
     !keyboardOpen &&
+    app.route !== routes.wellnessGoals &&
     !immersiveRoutes.has(app.route);
+  const keepChatRail =
+    authenticated && keyboardOpen && app.route === routes.companion;
   const canUseBack =
     authenticated &&
     !replayingIntro &&
@@ -326,7 +427,7 @@ function AccountShell({
     !immersiveRoutes.has(app.route);
   const edgeBack = useIosEdgeBack(
     canUseBack && !keyboardOpen && !app.privacyCovered && !journalLocked
-      ? app.back
+      ? goBack
       : undefined,
   );
   useEffect(() => {
@@ -359,11 +460,11 @@ function AccountShell({
   useEffect(() => {
     if (!canUseBack) return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
-      back.current();
+      goBack();
       return true;
     });
     return () => handler.remove();
-  }, [canUseBack]);
+  }, [canUseBack, goBack]);
   useEffect(() => {
     if (Platform.OS !== "web")
       SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
@@ -404,15 +505,32 @@ function AccountShell({
     );
   else if (!app.user || app.sessionExpired)
     content = <AuthScreen initialPage={onboarding.authPage} />;
-  else if (onboarding.offer)
+  else if (onboarding.stage === "goals")
     content = (
-      <OnboardingPersonalization
-        onChoose={onboarding.finishPersonalization}
-        saving={onboarding.offer.status === "saving"}
-        error={onboarding.offer.error}
+      <WellnessGoalsScreen
+        key={app.user.id}
+        mode="onboarding"
+        initialGoals={
+          onboarding.draftGoals ?? readWellnessGoals(app.user.wellnessGoals)
+        }
+        onSave={onboarding.finishGoals}
+        onSelectionChange={onboarding.rememberGoals}
       />
     );
-  else if (replayingIntro)
+  else if (onboarding.stage === "goal-welcome") {
+    const recommendation = firstWellnessRecommendation(onboarding.welcomeGoals);
+    content = (
+      <WellnessGoalsWelcome
+        recommendation={recommendation}
+        onStart={() => {
+          if (recommendation.via) app.navigate(recommendation.via);
+          app.navigate(recommendation.route, recommendation.params);
+          onboarding.finishWelcome();
+        }}
+        onDone={onboarding.finishWelcome}
+      />
+    );
+  } else if (replayingIntro)
     content = <OnboardingScreen onFinish={app.back} onBack={app.back} />;
   else if (journalLocked) content = <DeviceUnlockScreen scope="journal" />;
   else if (activeRoot) content = null;
@@ -434,8 +552,12 @@ function AccountShell({
     content = <WellnessToolsScreen />;
   else if (app.route === routes.timedPractice)
     content = <TimedPracticeScreen />;
-  else if (app.route === routes.exploreCatalog)
-    content = <ExploreScreen catalogOnly />;
+  else if (
+    app.route === routes.wellnessPlan ||
+    app.route === routes.guidedPrograms ||
+    app.route === routes.guidedProgram
+  )
+    content = <WellnessPlansScreen name={app.route} />;
   else if (habitRoutes.has(app.route))
     content = <HabitsScreen name={app.route} />;
   else if (app.route === routes.voice) content = <VoiceTalkScreen />;
@@ -443,18 +565,34 @@ function AccountShell({
   else if (app.route === routes.history) content = <HistoryScreen />;
   else if (app.route === "journey-activity")
     content = <JourneyActivityScreen />;
+  else if (app.route === routes.practiceInsights)
+    content = <PracticeInsightsScreen />;
   else if (app.route === routes.journeyCheckin)
     content = <JourneyCheckinScreen />;
   else if (app.route === "journey-milestones")
     content = <JourneyMilestonesScreen />;
   else if (app.route === "journey-goal") content = <JourneyGoalScreen />;
   else if (app.route === "moments") content = <MomentsScreen />;
+  else if (app.route === routes.wellnessGoals)
+    content = (
+      <WellnessGoalsScreen
+        key={app.user.id}
+        mode="edit"
+        initialGoals={readWellnessGoals(app.user.wellnessGoals)}
+        onBack={goBack}
+        onSave={async (goals) => {
+          await app.saveWellnessGoals(goals);
+        }}
+      />
+    );
   else if (app.route === routes.momentPlayer)
     content = (
       <MomentPlayerScreen
         key={app.params.techniqueId ?? app.params.activity?.id ?? "player"}
       />
     );
+  else if (app.route === routes.ambientSoundPreferences)
+    content = <AmbientSoundPreferences />;
   else if (profileScreens.has(app.route))
     content = <ProfileScreen name={app.route} />;
   else if (wellnessScreens.has(app.route))
@@ -465,6 +603,77 @@ function AccountShell({
       />
     );
   else content = <TodayScreen />;
+  const presentingDetail =
+    !!content && authenticated && !journalLocked && !replayingIntro;
+  const detailKey = app.habitHub?.key ?? app.routeKey;
+  const presentedContent = (
+    <ExperienceTheme
+      useBaseCanvas={
+        app.route === routes.journalEditor ||
+        app.route === routes.techniques ||
+        app.route === routes.technique ||
+        app.route === routes.momentPlayer ||
+        app.route === routes.wellnessTools ||
+        app.route === routes.timedPractice ||
+        habitRoutes.has(app.route)
+      }
+      enabled={
+        authenticated &&
+        (cinematicRoutes.has(app.route) ||
+          habitRoutes.has(app.route) ||
+          (app.route === routes.momentPlayer && !!app.params.techniqueId))
+      }
+    >
+      {presentingDetail ? (
+        <NavigationDetail
+          key={detailKey}
+          reducedMotion={reducedMotion}
+          guardArrivalTouches={
+            app.activeTab === routes.explore &&
+            (exploreCardArrivalRoutes.has(app.route) ||
+              wellnessToolArrivalRoutes.has(app.route))
+          }
+          stationary={
+            switchingTabs ||
+            app.route === routes.journalEditor ||
+            app.route === routes.habitCreate ||
+            app.route === routes.habitEdit ||
+            immersiveRoutes.has(app.route)
+          }
+        >
+          {content}
+        </NavigationDetail>
+      ) : (
+        content
+      )}
+    </ExperienceTheme>
+  );
+  const liveDetail =
+    presentingDetail && !immersiveRoutes.has(app.route)
+      ? { app, content: presentedContent }
+      : null;
+  const details = authenticated
+    ? [...detailCache.current.values()].filter(
+        ({ app: saved }) =>
+          saved.activeTab !== app.activeTab &&
+          !(app.journalLocked && saved.journalRouteProtected),
+      )
+    : [];
+  if (liveDetail) details.push(liveDetail);
+  useLayoutEffect(() => {
+    // Keep one committed detail per tab. Activity suspends its effects while
+    // hidden and keeps its form state and native scroll view mounted.
+    const cache = detailCache.current;
+    if (!authenticated) {
+      cache.clear();
+      return;
+    }
+    if (app.journalLocked)
+      for (const [tab, detail] of cache)
+        if (detail.app.journalRouteProtected) cache.delete(tab);
+    if (liveDetail) cache.set(app.activeTab, liveDetail);
+    else cache.delete(app.activeTab);
+  }, [app.activeTab, app.journalLocked, authenticated, liveDetail]);
   return (
     <View
       style={{
@@ -506,72 +715,70 @@ function AccountShell({
               A little space for you.
             </AppText>
             <ActivityIndicator
-              color={colors.primary}
+              color={resolved === "dark" ? colors.primary : colors.accent}
               style={{ marginTop: 24 }}
             />
           </View>
         ) : (
-          <NavigationInset.Provider
-            value={showNavigation ? navigationHeight : 0}
-          >
-            <View style={{ flex: 1 }} {...edgeBack}>
-              {authenticated &&
-                Array.from(visitedRoots, (route) => (
-                  <RetainedScreen
-                    key={route}
-                    route={route}
-                    app={activeRoot === route ? app : null}
-                    scrollMemory={chatPositions}
-                  />
-                ))}
-              <ExperienceTheme
-                enabled={
-                  authenticated &&
-                  (cinematicRoutes.has(app.route) ||
-                    (app.route === routes.momentPlayer &&
-                      !!app.params.techniqueId))
-                }
-              >
-                {content &&
-                authenticated &&
-                !journalLocked &&
-                !replayingIntro ? (
-                  <NavigationDetail
-                    key={`${app.route}:${app.params.id ?? ""}`}
-                    reducedMotion={reducedMotion}
-                    guardArrivalTouches={
-                      app.activeTab === routes.explore &&
-                      (exploreCardArrivalRoutes.has(app.route) ||
-                        wellnessToolArrivalRoutes.has(app.route))
-                    }
-                    stationary={
-                      switchingTabs ||
-                      app.route === routes.journalEditor ||
-                      app.route === routes.habitCreate ||
-                      app.route === routes.habitEdit ||
-                      immersiveRoutes.has(app.route)
-                    }
+          <TabResetGuardContext.Provider value={navigationGuard}>
+            <NavigationInset.Provider
+              value={
+                showNavigation || (Platform.OS === "ios" && keepChatRail)
+                  ? navigationHeight
+                  : 0
+              }
+            >
+              <View style={{ flex: 1 }} {...edgeBack}>
+                {authenticated &&
+                  Array.from(visitedRoots, (route) => (
+                    <RetainedScreen
+                      key={route}
+                      route={route}
+                      app={activeRoot === route ? app : null}
+                      scrollMemory={chatPositions}
+                    />
+                  ))}
+                {details.map((detail) => (
+                  <Activity
+                    key={detail.app.habitHub?.key ?? detail.app.routeKey}
+                    mode={detail === liveDetail ? "visible" : "hidden"}
                   >
-                    {content}
-                  </NavigationDetail>
-                ) : (
-                  content
-                )}
-              </ExperienceTheme>
-            </View>
-            {authenticated && <MilestoneCelebration allowed={showNavigation} />}
-            {authenticated && (
-              <Activity mode={showNavigation ? "visible" : "hidden"}>
-                <TabBar
-                  activeTab={app.activeTab}
-                  route={app.route}
-                  reducedMotion={reducedMotion}
-                  onSelect={selectTab}
-                  onHeight={setNavigationHeight}
+                    <AppRouteScope value={detail.app}>
+                      {detail.content}
+                    </AppRouteScope>
+                  </Activity>
+                ))}
+                {!liveDetail && presentedContent}
+              </View>
+              {authenticated && (
+                <MilestoneCelebration
+                  allowed={
+                    showNavigation &&
+                    app.route !== "checkin" &&
+                    app.route !== "feedback" &&
+                    !(
+                      app.route === routes.companion &&
+                      app.params.originCheckinId
+                    )
+                  }
                 />
-              </Activity>
-            )}
-          </NavigationInset.Provider>
+              )}
+              {authenticated && (
+                <Activity
+                  mode={showNavigation || keepChatRail ? "visible" : "hidden"}
+                >
+                  <TabBar
+                    activeTab={app.activeTab}
+                    route={app.route}
+                    hidden={!showNavigation}
+                    reducedMotion={reducedMotion}
+                    onSelect={selectTab}
+                    onHeight={setNavigationHeight}
+                  />
+                </Activity>
+              )}
+            </NavigationInset.Provider>
+          </TabResetGuardContext.Provider>
         )}
       </View>
     </View>
@@ -579,7 +786,7 @@ function AccountShell({
 }
 
 function FontGate() {
-  const { colors, resolved } = useTheme();
+  const { colors, ready, resolved } = useTheme();
   const [loaded, error] = useFonts({
     Inter_400Regular,
     Inter_600SemiBold,
@@ -587,7 +794,7 @@ function FontGate() {
   });
   return (
     <AppProvider>
-      {loaded || error ? (
+      {ready && (loaded || error) ? (
         <GoogleLinkProvider>
           <Shell />
         </GoogleLinkProvider>
@@ -605,7 +812,10 @@ function FontGate() {
           <Text style={{ fontSize: 28, color: colors.text, marginTop: 10 }}>
             Solace
           </Text>
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+          <ActivityIndicator
+            color={resolved === "dark" ? colors.primary : colors.accent}
+            style={{ marginTop: 20 }}
+          />
         </View>
       )}
     </AppProvider>

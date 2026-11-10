@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import {
   addHabitDays,
   habitDay,
@@ -13,8 +13,6 @@ import {
 } from "../../server/src/habit-contract";
 import {
   displayHabitDay,
-  gardenLabels,
-  GardenScene,
   goalLabel,
   habitCategoryLabels,
   HabitChoice,
@@ -27,36 +25,33 @@ import {
   progressFor,
   reminderLabel,
   scheduleLabel,
-  starterHabits,
   useHabitClock,
 } from "../habits-ui";
 import { routes } from "../routes";
+import { spacing } from "../layout";
+import { EditorialSection } from "../NestedDesign";
+import { useTabResetGuard } from "../navigation-reset";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
 import {
   AppText,
+  BotanicalBackdrop,
   Button,
   Card,
-  coverImageStyle,
   Icon,
   Input,
+  NestedState,
+  Row,
   Screen,
 } from "../ui";
 import { HabitReminderEditor, HabitsEditor } from "./HabitsEditor";
-import { HabitGardenScreen, HabitInsightsScreen } from "./HabitsInsights";
+import { HabitsHub } from "./HabitsHub";
 
 const statusLabels: Record<HabitStatus, string> = {
   active: "Active",
   paused: "Paused",
   archived: "Archived",
 };
-const emptyArtwork = {
-  light: require("../../assets/redesign-today-scene-light.jpg"),
-  dark: require("../../assets/redesign-today-scene-dark.jpg"),
-};
-const botanical = require("../../assets/botanical-compact.png");
-const displayLimit = 12;
-
 type Occurrence = { habit: Habit; day: string; log?: HabitProgress };
 
 function errorText(cause: unknown, fallback: string) {
@@ -109,477 +104,6 @@ function useLogProgress({ habit, day, log }: Occurrence) {
   return { write, pending, error, notice };
 }
 
-function Heading({ title, subtitle }: { title: string; subtitle: string }) {
-  const { colors } = useTheme();
-  return (
-    <View style={styles.heading}>
-      <AppText variant="title" accessibilityRole="header">
-        {title}
-      </AppText>
-      <AppText color={colors.muted}>{subtitle}</AppText>
-    </View>
-  );
-}
-
-function TodayHabitRow({ occurrence }: { occurrence: Occurrence }) {
-  const app = useApp();
-  const { colors } = useTheme();
-  const { habit, day, log } = occurrence;
-  const { write, pending, error } = useLogProgress(occurrence);
-  const goal = habitRevisionOn(habit, day)?.goal ?? habit.goal;
-  const binary = goal.type === "completion";
-  const complete = log?.complete === true;
-  const time = habit.reminderTime ? reminderLabel(habit.reminderTime) : "";
-  const progress = occurrenceLabel(habit, day, log);
-  const isEditable = habit.status === "active" || !!log;
-  const increment = goal.type === "duration" ? "Add 1 min" : "Add one";
-  const action = complete && binary ? "Undo" : binary ? "Complete" : increment;
-  const canLog = isEditable && (!complete || binary);
-  return (
-    <Card style={styles.habitRow}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`View ${habit.name}`}
-        onPress={() => app.navigate(routes.habitDetails, { id: habit.id })}
-        style={({ pressed }) => [
-          styles.habitIdentity,
-          pressed && styles.pressed,
-        ]}
-      >
-        <HabitIconBadge icon={habit.icon} color={habit.color} />
-        <View style={styles.fill}>
-          <AppText variant="label">{habit.name}</AppText>
-          {!!habit.description && (
-            <AppText variant="caption" color={colors.muted} numberOfLines={2}>
-              {habit.description}
-            </AppText>
-          )}
-          <AppText
-            variant="caption"
-            color={complete ? colors.sageText : colors.muted}
-          >
-            {progress}
-            {time ? ` · ${time}` : ""}
-          </AppText>
-        </View>
-        <Icon name="chevron-forward" color={colors.muted} size={17} />
-      </Pressable>
-      {!binary && (
-        <HabitMeter
-          value={log?.amount ?? 0}
-          total={log?.target ?? habitTarget(goal)}
-          label={`Progress for ${habit.name}`}
-        />
-      )}
-      {canLog && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${action} ${habit.name}`}
-          accessibilityState={{ disabled: pending, busy: pending }}
-          disabled={pending}
-          onPress={() =>
-            void write(
-              complete && binary ? 0 : binary ? 1 : (log?.amount ?? 0) + 1,
-            )
-          }
-          style={({ pressed }) => [
-            styles.inlineAction,
-            {
-              backgroundColor: complete ? colors.surface2 : colors.sageSurface,
-              opacity: pending || pressed ? 0.72 : 1,
-            },
-          ]}
-        >
-          <Icon
-            name={
-              complete ? "arrow-undo-outline" : binary ? "checkmark" : "add"
-            }
-            color={complete ? colors.muted : colors.sageText}
-            size={17}
-          />
-          <AppText
-            variant="caption"
-            color={complete ? colors.text : colors.sageText}
-          >
-            {pending ? "Saving…" : action}
-          </AppText>
-        </Pressable>
-      )}
-      {!!error && (
-        <AppText
-          variant="caption"
-          accessibilityRole="alert"
-          color={colors.danger}
-        >
-          {error}
-        </AppText>
-      )}
-    </Card>
-  );
-}
-
-function HabitDashboard() {
-  const app = useApp();
-  const { colors, resolved } = useTheme();
-  const { habits, habitProgress, habitGarden } = app.data;
-  const now = useHabitClock(habits);
-  const today = habitToday(undefined, now);
-  const [showAll, setShowAll] = useState(false);
-  const garden = habitGarden[0];
-  const indexedProgress = useMemo(
-    () =>
-      new Map(
-        habitProgress.map((item) => [`${item.habitId}:${item.day}`, item]),
-      ),
-    [habitProgress],
-  );
-  const occurrences: Occurrence[] = habits.flatMap((habit) => {
-    const day = habitToday(habit, now);
-    if (!isHabitScheduled(habit, day)) return [];
-    const log = indexedProgress.get(`${habit.id}:${day}`);
-    return habit.status === "active" || log ? [{ habit, day, log }] : [];
-  });
-  const fixed = occurrences.filter(
-    ({ habit, day }) => habitRevisionOn(habit, day)?.schedule.type !== "weekly",
-  );
-  const flexible = occurrences.filter(
-    ({ habit, day }) => habitRevisionOn(habit, day)?.schedule.type === "weekly",
-  );
-  const done = fixed.filter(({ log }) => log?.complete).length;
-  const flexDone = flexible.filter(({ log }) => log?.complete).length;
-  const ordered = [...fixed].sort(
-    (a, b) =>
-      Number(!!a.log?.complete) - Number(!!b.log?.complete) ||
-      (a.habit.reminderTime ?? "99:99").localeCompare(
-        b.habit.reminderTime ?? "99:99",
-      ),
-  );
-  const upcoming = useMemo(() => {
-    const active = habits.filter(({ status }) => status === "active");
-    for (let offset = 0; offset < 8; offset++) {
-      const entries = active.flatMap((habit) => {
-        const day = addHabitDays(habitToday(habit, now), offset);
-        const revision = habitRevisionOn(habit, day);
-        if (
-          !isHabitScheduled(habit, day) ||
-          revision?.schedule.type === "weekly" ||
-          indexedProgress.get(`${habit.id}:${day}`)?.complete
-        )
-          return [];
-        return [{ habit, day, offset }];
-      });
-      if (entries.length)
-        return entries.sort((a, b) =>
-          (a.habit.reminderTime ?? "99:99").localeCompare(
-            b.habit.reminderTime ?? "99:99",
-          ),
-        )[0];
-    }
-  }, [habits, indexedProgress, now]);
-  return (
-    <Screen title="Solace Habits" back={app.back}>
-      <View style={styles.page}>
-        <View style={styles.dashboardHeading}>
-          <Image
-            accessible={false}
-            pointerEvents="none"
-            source={botanical}
-            resizeMode="contain"
-            fadeDuration={0}
-            style={[
-              styles.botanical,
-              { opacity: resolved === "dark" ? 0.55 : 0.33 },
-            ]}
-          />
-          <Heading
-            title="Your habits"
-            subtitle="Small steps, beautiful progress."
-          />
-        </View>
-        {!habits.length ? (
-          <View style={styles.section}>
-            <Card style={styles.emptyHero}>
-              <View style={styles.emptyArt}>
-                <Image
-                  accessible={false}
-                  source={emptyArtwork[resolved]}
-                  resizeMode="cover"
-                  fadeDuration={0}
-                  style={coverImageStyle}
-                />
-              </View>
-              <View style={styles.section}>
-                <AppText variant="heading">Begin with one small habit</AppText>
-                <AppText color={colors.muted}>
-                  A tiny action can make space for something that matters to
-                  you. Pick something easy to return to.
-                </AppText>
-                <Button
-                  title="Create your first habit"
-                  icon="add"
-                  onPress={() => app.navigate(routes.habitCreate)}
-                />
-              </View>
-            </Card>
-            <AppText variant="label">Try a starter</AppText>
-            <View style={styles.choices}>
-              {[starterHabits[0], starterHabits[1], starterHabits[4]].map(
-                (item) => (
-                  <HabitChoice
-                    key={item.name}
-                    label={item.name}
-                    selected={false}
-                    onPress={() =>
-                      app.navigate(routes.habitCreate, { suggestion: item })
-                    }
-                  />
-                ),
-              )}
-            </View>
-          </View>
-        ) : (
-          <>
-            <Card style={styles.section}>
-              <AppText variant="heading">Today's progress</AppText>
-              <AppText variant="title">
-                {fixed.length
-                  ? `${done} of ${fixed.length} completed`
-                  : "0 scheduled today"}
-              </AppText>
-              {fixed.length > 0 && (
-                <>
-                  <HabitMeter
-                    value={done}
-                    total={fixed.length}
-                    label="Scheduled habit progress today"
-                  />
-                  <AppText variant="caption" color={colors.muted}>
-                    {Math.round((done * 100) / fixed.length)}% of scheduled
-                    habits
-                  </AppText>
-                </>
-              )}
-              <AppText color={colors.muted}>
-                {fixed.length === 0
-                  ? "You have no fixed habits scheduled today."
-                  : done === fixed.length
-                    ? "You made time for each habit today. Take a moment to notice that."
-                    : done
-                      ? "Every step is worth noticing."
-                      : "Begin wherever it feels easy today."}
-              </AppText>
-              {flexDone > 0 && (
-                <AppText variant="caption" color={colors.lavenderText}>
-                  {flexDone} flexible {flexDone === 1 ? "habit" : "habits"}{" "}
-                  completed today
-                </AppText>
-              )}
-            </Card>
-            <Button
-              title="Add habit"
-              icon="add"
-              onPress={() => app.navigate(routes.habitCreate)}
-            />
-            <View style={styles.section}>
-              <AppText variant="heading">Today's habits</AppText>
-              {ordered.length ? (
-                ordered
-                  .slice(0, showAll ? ordered.length : displayLimit)
-                  .map((item) => (
-                    <TodayHabitRow
-                      key={`${item.habit.id}-${item.day}`}
-                      occurrence={item}
-                    />
-                  ))
-              ) : (
-                <AppText color={colors.muted}>
-                  Nothing fixed on the calendar. You can rest or choose a
-                  flexible habit.
-                </AppText>
-              )}
-              {ordered.length > displayLimit && !showAll && (
-                <Button
-                  title="Show all scheduled today"
-                  variant="ghost"
-                  onPress={() => setShowAll(true)}
-                />
-              )}
-            </View>
-            {flexible.length > 0 && (
-              <View style={styles.section}>
-                <AppText variant="heading">Flexible this week</AppText>
-                <AppText variant="caption" color={colors.muted}>
-                  These are available today. You choose which days count toward
-                  your weekly goals.
-                </AppText>
-                {flexible
-                  .slice(0, showAll ? flexible.length : displayLimit)
-                  .map((item) => (
-                    <TodayHabitRow
-                      key={`${item.habit.id}-${item.day}`}
-                      occurrence={item}
-                    />
-                  ))}
-                {flexible.length > displayLimit && !showAll && (
-                  <Button
-                    title="Show all flexible habits"
-                    variant="ghost"
-                    onPress={() => setShowAll(true)}
-                  />
-                )}
-              </View>
-            )}
-            <View style={styles.section}>
-              <AppText variant="heading">Coming up</AppText>
-              {upcoming ? (
-                <HabitLink
-                  title={upcoming.habit.name}
-                  detail={`${upcoming.offset === 0 ? "Today" : upcoming.offset === 1 ? "Tomorrow" : displayHabitDay(upcoming.day, { weekday: "long", day: "numeric", month: "short" })}${upcoming.habit.reminderTime ? ` · ${reminderLabel(upcoming.habit.reminderTime)}` : ""}`}
-                  icon="time-outline"
-                  onPress={() =>
-                    app.navigate(routes.habitDetails, { id: upcoming.habit.id })
-                  }
-                />
-              ) : (
-                <AppText color={colors.muted}>
-                  Nothing else is scheduled this week. There is room to take it
-                  easy.
-                </AppText>
-              )}
-            </View>
-            <View style={styles.section}>
-              <AppText variant="heading">Your week</AppText>
-              <HabitWeekStrip today={today} progress={habitProgress} />
-              <HabitLink
-                title="See habit insights"
-                icon="bar-chart-outline"
-                onPress={() => app.navigate(routes.habitInsights)}
-              />
-            </View>
-          </>
-        )}
-        <View style={styles.section}>
-          <AppText variant="heading">Your Growing Garden</AppText>
-          <GardenScene compact stage={garden?.stage ?? "seed"} />
-          <HabitLink
-            title="Open garden"
-            detail={
-              garden?.earnedTotal
-                ? `${gardenLabels[garden.stage]} · ${garden.earnedTotal} ${garden.earnedTotal === 1 ? "completed habit day" : "completed habit days"} earned`
-                : "Your first completion will grow a sprout."
-            }
-            icon="leaf-outline"
-            onPress={() => app.navigate(routes.habitGarden)}
-          />
-        </View>
-        <HabitLink
-          title="Habit library"
-          detail="Find a starter or manage your habits."
-          icon="grid-outline"
-          onPress={() => app.navigate(routes.habitLibrary)}
-        />
-      </View>
-    </Screen>
-  );
-}
-
-function HabitLibrary() {
-  const app = useApp();
-  const { colors } = useTheme();
-  const [filter, setFilter] = useState<HabitStatus | "all">("all");
-  const [limit, setLimit] = useState(displayLimit);
-  const habits = app.data.habits.filter(
-    (habit) => filter === "all" || habit.status === filter,
-  );
-  return (
-    <Screen title="Habit library" back={app.back}>
-      <View style={styles.page}>
-        <Heading
-          title="Find your rhythm"
-          subtitle="Keep a habit that fits, or begin with a gentle starter."
-        />
-        <Button
-          title="Create a custom habit"
-          icon="add"
-          onPress={() => app.navigate(routes.habitCreate)}
-        />
-        <View style={styles.section}>
-          <AppText variant="heading">Your saved habits</AppText>
-          <View style={styles.choices}>
-            {(["all", "active", "paused", "archived"] as const).map((item) => (
-              <HabitChoice
-                key={item}
-                label={item === "all" ? "All" : statusLabels[item]}
-                selected={filter === item}
-                onPress={() => {
-                  setFilter(item);
-                  setLimit(displayLimit);
-                }}
-              />
-            ))}
-          </View>
-          {!habits.length && (
-            <AppText color={colors.muted}>
-              {filter === "all"
-                ? "The habits you save will appear here."
-                : `You have no ${filter} habits.`}
-            </AppText>
-          )}
-          {habits.slice(0, limit).map((habit) => (
-            <HabitLink
-              key={habit.id}
-              title={habit.name}
-              detail={`${statusLabels[habit.status]} · ${scheduleLabel(habit.schedule)}`}
-              icon="leaf-outline"
-              onPress={() =>
-                app.navigate(routes.habitDetails, { id: habit.id })
-              }
-            />
-          ))}
-          {habits.length > limit && (
-            <Button
-              title="Show more habits"
-              variant="ghost"
-              onPress={() => setLimit((old) => old + displayLimit)}
-            />
-          )}
-        </View>
-        <View style={styles.section}>
-          <AppText variant="heading">Starter ideas</AppText>
-          {starterHabits.map((item) => (
-            <Pressable
-              key={item.name}
-              accessibilityRole="button"
-              accessibilityLabel={`Use starter ${item.name}`}
-              onPress={() =>
-                app.navigate(routes.habitCreate, { suggestion: item })
-              }
-              style={({ pressed }) => [
-                styles.libraryStarter,
-                { borderColor: colors.border },
-                pressed && styles.pressed,
-              ]}
-            >
-              <HabitIconBadge icon={item.icon} color={item.color} />
-              <View style={styles.fill}>
-                <AppText variant="label">{item.name}</AppText>
-                <AppText variant="caption" color={colors.muted}>
-                  {goalLabel(item.goal)} · {scheduleLabel(item.schedule)}
-                </AppText>
-              </View>
-              <Icon
-                name="add-circle-outline"
-                size={20}
-                color={colors.lavenderText}
-              />
-            </Pressable>
-          ))}
-        </View>
-      </View>
-    </Screen>
-  );
-}
-
 function DetailProgress({ occurrence }: { occurrence: Occurrence }) {
   const app = useApp();
   const { colors } = useTheme();
@@ -600,40 +124,58 @@ function DetailProgress({ occurrence }: { occurrence: Occurrence }) {
     (habit.status === "active" &&
       day === today &&
       isHabitScheduled(habit, day));
-  const usedSessions = new Set(
-    app.data.habitProgress.flatMap((item) => item.linkedSessionIds ?? []),
+  useTabResetGuard(
+    pending ||
+      (canLog &&
+        goal.type !== "completion" &&
+        entered.trim() !== String(amount)),
+    pending ? "saving" : "dirty",
   );
-  const sessions =
+  const canLinkSession =
     canLog &&
     day === today &&
     revision?.activity === "breathing" &&
-    goal.type === "duration"
-      ? app.data.sessions.flatMap((item) => {
-          if (
-            typeof item.id !== "string" ||
-            item.completed !== true ||
-            (item.activity?.type ?? item.type) !== "breathing" ||
-            usedSessions.has(item.id)
-          )
-            return [];
-          const duration = Number(item.durationSec ?? item.durationSeconds);
-          const date = new Date(item.createdAt);
-          return duration >= 60 &&
-            Number.isFinite(date.valueOf()) &&
-            habitDay(habit.timeZone, date) === day
-            ? [
-                {
-                  id: item.id,
-                  title: item.title as string | undefined,
-                  minutes: Math.floor(duration / 60),
-                },
-              ]
-            : [];
-        })
-      : [];
+    goal.type === "duration";
+  const { habitProgress, sessions: savedSessions } = app.data;
+  const sessions = useMemo(() => {
+    if (!canLinkSession) return [];
+    const usedSessions = new Set(
+      habitProgress.flatMap((item) => item.linkedSessionIds ?? []),
+    );
+    return savedSessions.flatMap((item) => {
+      if (
+        typeof item.id !== "string" ||
+        item.completed !== true ||
+        (item.activity?.type ?? item.type) !== "breathing" ||
+        usedSessions.has(item.id)
+      )
+        return [];
+      const duration = Number(item.durationSec ?? item.durationSeconds);
+      const date = new Date(item.createdAt);
+      if (
+        duration < 60 ||
+        !Number.isFinite(date.valueOf()) ||
+        habitDay(habit.timeZone, date) !== day ||
+        !Number.isFinite(duration)
+      )
+        return [];
+      return [
+        {
+          id: item.id,
+          title: item.title as string | undefined,
+          minutes: Math.floor(duration / 60),
+        },
+      ];
+    });
+  }, [canLinkSession, day, habit.timeZone, habitProgress, savedSessions]);
   return (
-    <Card style={styles.section}>
-      <AppText variant="heading">
+    <View
+      style={[
+        styles.progressSheet,
+        { backgroundColor: colors.lavenderSurface },
+      ]}
+    >
+      <AppText variant="heading" accessibilityRole="header">
         {day === today
           ? "Today's progress"
           : displayHabitDay(day, {
@@ -757,11 +299,17 @@ function DetailProgress({ occurrence }: { occurrence: Occurrence }) {
           {inputError || error}
         </AppText>
       )}
-    </Card>
+    </View>
   );
 }
 
-function HabitDetails({ habit }: { habit: Habit }) {
+function HabitDetails({
+  habit,
+  embedded,
+}: {
+  habit: Habit;
+  embedded: boolean;
+}) {
   const app = useApp();
   const { colors } = useTheme();
   const now = useHabitClock(habit);
@@ -781,7 +329,6 @@ function HabitDetails({ habit }: { habit: Habit }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const writing = useRef(false);
-  const mounted = useRef(true);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const logs = app.data.habitProgress
     .filter((item) => item.habitId === habit.id)
@@ -792,13 +339,6 @@ function HabitDetails({ habit }: { habit: Habit }) {
     (item) =>
       item.complete && item.day >= week && item.day <= addHabitDays(week, 6),
   ).length;
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
 
   async function manage(action: HabitStatus | "delete") {
     if (writing.current) return;
@@ -816,7 +356,6 @@ function HabitDetails({ habit }: { habit: Habit }) {
         const result = await app.editHabit(habit.id, habit.revision, {
           status: action,
         });
-        if (!mounted.current) return;
         setConfirm(null);
         setMessage(
           result.reminderNotice ||
@@ -828,34 +367,53 @@ function HabitDetails({ habit }: { habit: Habit }) {
         );
       }
     } catch (cause) {
-      if (mounted.current)
-        setError(errorText(cause, "Your changes could not be saved."));
+      setError(errorText(cause, "Your changes could not be saved."));
     } finally {
       writing.current = false;
-      if (mounted.current) setPending(false);
+      setPending(false);
     }
   }
 
   return (
-    <Screen title="Habit details" back={app.back} scrollRef={scroll}>
+    <Screen
+      variant="nested"
+      edgeToEdgeTop={embedded}
+      title={embedded ? undefined : "Habit details"}
+      back={embedded ? undefined : app.back}
+      scrollRef={scroll}
+    >
       <View style={styles.page}>
-        <View style={styles.heading}>
-          <HabitIconBadge icon={habit.icon} color={habit.color} size={59} />
-          <AppText variant="title" accessibilityRole="header">
+        <View style={[styles.heading, { backgroundColor: colors.sageSurface }]}>
+          <BotanicalBackdrop style={styles.coverLeaves} />
+          <Row style={styles.headingStatus}>
+            <HabitIconBadge icon={habit.icon} color={habit.color} size={48} />
+            <AppText
+              variant="label"
+              color={colors.sageText}
+              style={styles.fill}
+            >
+              {habitCategoryLabels[habit.category]} ·{" "}
+              {statusLabels[habit.status]}
+            </AppText>
+          </Row>
+          <AppText
+            variant="display"
+            accessibilityRole="header"
+            style={styles.habitTitle}
+          >
             {habit.name}
-          </AppText>
-          <AppText variant="label" color={colors.lavenderText}>
-            {habitCategoryLabels[habit.category]} · {statusLabels[habit.status]}
           </AppText>
           {!!habit.description && (
             <AppText color={colors.muted}>{habit.description}</AppText>
           )}
-          <AppText>
-            {goalLabel(habit.goal)} · {scheduleLabel(habit.schedule)}
-          </AppText>
-          <AppText variant="caption" color={colors.muted}>
-            Calendar time zone {habit.timeZone}
-          </AppText>
+          <View style={[styles.schedule, { borderColor: colors.border }]}>
+            <AppText variant="label">
+              {goalLabel(habit.goal)} · {scheduleLabel(habit.schedule)}
+            </AppText>
+            <AppText variant="caption" color={colors.muted}>
+              Calendar time zone {habit.timeZone}
+            </AppText>
+          </View>
         </View>
         <DetailProgress key={day} occurrence={{ habit, day, log }} />
         {day !== today && (
@@ -866,7 +424,7 @@ function HabitDetails({ habit }: { habit: Habit }) {
           />
         )}
         <View style={styles.section}>
-          <AppText variant="heading">Your week</AppText>
+          <EditorialSection title="Your week" />
           <HabitWeekStrip today={day} progress={logs} />
           {habit.schedule.type === "weekly" && (
             <AppText variant="caption" color={colors.muted}>
@@ -894,7 +452,7 @@ function HabitDetails({ habit }: { habit: Habit }) {
           )}
         </View>
         <View style={styles.section}>
-          <AppText variant="heading">Completion history</AppText>
+          <EditorialSection title="Completion history" />
           {!logs.length && (
             <AppText color={colors.muted}>
               Your first recorded action will appear here.
@@ -925,7 +483,7 @@ function HabitDetails({ habit }: { habit: Habit }) {
           )}
         </View>
         <View style={styles.section}>
-          <AppText variant="heading">Manage habit</AppText>
+          <EditorialSection title="Manage habit" />
           <HabitLink
             title="Habit reminder"
             detail={
@@ -1015,21 +573,51 @@ function HabitDetails({ habit }: { habit: Habit }) {
   );
 }
 
-function HabitReminderList() {
+function HabitReminderList({ embedded }: { embedded: boolean }) {
   const app = useApp();
   const { colors } = useTheme();
   const habits = app.data.habits.filter(({ status }) => status !== "archived");
   return (
-    <Screen title="Habit reminders" back={app.back}>
+    <Screen
+      variant="nested"
+      edgeToEdgeTop={embedded}
+      title={embedded ? undefined : "Habit reminders"}
+      back={embedded ? undefined : app.back}
+    >
       <View style={styles.page}>
-        <Heading
-          title="Gentle reminders"
-          subtitle="Set a time for the habits you want a nudge for. Notifications use the same device settings as your other Solace reminders."
-        />
-        {!habits.length && (
-          <AppText color={colors.muted}>
-            Create a habit first to set a reminder.
-          </AppText>
+        {habits.length ? (
+          <View
+            style={[
+              styles.reminderLead,
+              { backgroundColor: colors.lavenderSurface },
+            ]}
+          >
+            <BotanicalBackdrop style={styles.coverLeaves} />
+            <Icon
+              name="notifications-outline"
+              size={27}
+              color={colors.lavenderText}
+            />
+            <AppText variant="title" accessibilityRole="header">
+              Daily nudges
+            </AppText>
+            <AppText color={colors.muted}>
+              Choose which habits you want a reminder for. Delivery uses your
+              device notification settings.
+            </AppText>
+          </View>
+        ) : (
+          <NestedState
+            title="No habits to remind you about"
+            icon="notifications-outline"
+            description="Create a habit, then set a quiet reminder for the days you want a nudge."
+          >
+            <Button
+              title="View your habits"
+              variant="secondary"
+              onPress={() => app.navigate(routes.habits)}
+            />
+          </NestedState>
         )}
         {habits.map((habit) => (
           <HabitLink
@@ -1048,99 +636,105 @@ function HabitReminderList() {
             }
           />
         ))}
-        <Button
-          title="View your habits"
-          variant="secondary"
-          onPress={() => app.navigate(routes.habits)}
-        />
+        {!!habits.length && (
+          <Button
+            title="View your habits"
+            variant="secondary"
+            onPress={() => app.navigate(routes.habits)}
+          />
+        )}
       </View>
     </Screen>
   );
 }
 
 export function HabitsScreen({ name }: { name: string }) {
+  const { habitHub, routeKey } = useApp();
+  if (name === routes.habits) return <HabitsHub />;
+  const drillDown = (
+    <HabitDrillDown key={routeKey} name={name} embedded={!!habitHub} />
+  );
+  return habitHub ? <HabitsHub drillDown={drillDown} /> : drillDown;
+}
+
+function HabitDrillDown({
+  name,
+  embedded,
+}: {
+  name: string;
+  embedded: boolean;
+}) {
   const app = useApp();
   const habit = app.data.habits.find(({ id }) => id === app.params.id);
   if (name === routes.habitCreate)
-    return <HabitsEditor suggestion={app.params.suggestion} />;
-  if (name === routes.habitLibrary) return <HabitLibrary />;
-  if (name === routes.habitInsights && (habit || app.params.id == null))
-    return <HabitInsightsScreen key={habit?.id ?? "all"} habit={habit} />;
-  if (name === routes.habitGarden) return <HabitGardenScreen />;
-  if (name === routes.habits) return <HabitDashboard />;
+    return (
+      <HabitsEditor suggestion={app.params.suggestion} embedded={embedded} />
+    );
   if (name === routes.habitReminders && app.params.id == null)
-    return <HabitReminderList />;
+    return <HabitReminderList embedded={embedded} />;
   if (habit) {
     if (name === routes.habitEdit)
       return (
         <HabitsEditor
           key={habit.id}
           habit={habit}
+          embedded={embedded}
           suggestion={app.params.suggestion}
           suggestionRevision={app.params.suggestionRevision}
         />
       );
     if (name === routes.habitDetails)
-      return <HabitDetails key={habit.id} habit={habit} />;
+      return <HabitDetails key={habit.id} habit={habit} embedded={embedded} />;
     if (name === routes.habitReminders)
-      return <HabitReminderEditor key={habit.id} habit={habit} />;
+      return (
+        <HabitReminderEditor key={habit.id} habit={habit} embedded={embedded} />
+      );
   }
   return (
-    <Screen title="Habit unavailable" back={app.back}>
-      <View style={styles.section}>
-        <AppText>
-          This habit may have been removed. Your current habits are still
-          available.
-        </AppText>
+    <Screen
+      variant="nested"
+      edgeToEdgeTop={embedded}
+      title={embedded ? undefined : "Habit details"}
+      back={embedded ? undefined : app.back}
+    >
+      <NestedState
+        title="Habit unavailable"
+        icon="leaf-outline"
+        description="This habit may have been removed. Your current habits are still available."
+      >
         <Button
           title="View your habits"
           onPress={() => app.navigate(routes.habits)}
         />
-      </View>
+      </NestedState>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { gap: 24 },
+  page: { gap: spacing.section },
   section: { gap: 10 },
-  heading: { gap: 8 },
-  dashboardHeading: { minHeight: 80, justifyContent: "center" },
-  botanical: {
-    position: "absolute",
-    width: 112,
-    height: 86,
-    right: -8,
-    top: -16,
+  progressSheet: { gap: spacing.row, padding: spacing.card, borderRadius: 16 },
+  heading: {
+    gap: spacing.row,
+    padding: spacing.card,
+    borderRadius: 18,
+    overflow: "hidden",
   },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  fill: { flex: 1, gap: 4 },
-  emptyHero: { padding: 12, gap: 13 },
-  emptyArt: { overflow: "hidden", borderRadius: 14, height: 134 },
-  habitRow: { padding: 12, gap: 10 },
-  habitIdentity: {
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: 48,
-    gap: 9,
+  headingStatus: { gap: spacing.compact },
+  habitTitle: { fontSize: 39, lineHeight: 45 },
+  fill: { flex: 1, minWidth: 0 },
+  coverLeaves: { width: 190, height: 190, top: -42, right: -28, opacity: 0.3 },
+  schedule: {
+    gap: 3,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: spacing.row,
   },
-  inlineAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    borderRadius: 13,
-    minHeight: 44,
-    alignSelf: "flex-start",
-    paddingHorizontal: 11,
-  },
-  libraryStarter: {
-    minHeight: 60,
-    paddingVertical: 8,
-    gap: 11,
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  reminderLead: {
+    gap: spacing.compact,
+    padding: spacing.card,
+    borderRadius: 16,
+    overflow: "hidden",
   },
   pressed: { opacity: 0.72 },
 });

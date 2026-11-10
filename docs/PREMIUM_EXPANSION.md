@@ -1,5 +1,7 @@
 # Solace premium feature verification
 
+This page records the original expansion checks. Current AI configuration and evidence are in the [OpenAI migration report](OPENAI_MIGRATION.md).
+
 ## Milestone 1 · AI, Moments and the companion
 
 Chat now accepts an allowlisted structured practice choice and opens the existing Moment player directly. Legacy saved actions remain supported. The account-owned conversation link, idempotent completion, feedback and Journey records use the existing APIs. Companion motion uses distinct state cues, real optional recording input, reduced motion and foreground checks. Idle motion ends after two cycles.
@@ -8,7 +10,7 @@ Type checking passed. The targeted API and practice suites passed 34 checks, inc
 
 ## Milestone 2 · Voice and Daily Pause
 
-Voice Talk preserves explicit recording and review, then sends the turn to the same saved chat as text. A microphone level drives the recording indicator where Expo supplies metering. Playback can be muted or interrupted. Cancellation aborts the upload and disconnects the provider request. Configured OpenAI transcription stays preferred. Gemini handles supported audio when Gemini is the only configured provider.
+Voice Talk preserves explicit recording and review, then sends the turn to the same saved chat as text. A microphone level drives the recording indicator where Expo supplies metering. Playback can be muted or interrupted. Cancellation aborts the upload and disconnects the provider request.
 
 Daily Pause uses the existing wellness preference record to save the day's skip, replacement and supported duration, plus an ongoing on/off setting. It uses actual saved progress and can use the current check-in, time, and approved preferences and feedback. The dedicated tests passed against an HTTP API and a reopened SQLite database. The configured Gemini model also transcribed synthetic audio without printing the transcript or credentials.
 
@@ -56,7 +58,7 @@ Publish only a dated affirmation, next enabled reminder time and coarse daily co
 | Milestone celebrations | Fully implemented and end-to-end verified | Browser real unlock, earned date, dismissal and no replay after reload. |
 | iOS widget | Blocked | App-side link routing is implemented. WidgetKit target, shared data and installation require eligible Xcode signing. |
 
-The expansion uses existing chat, Moment, weekly insight, preference and record endpoints. The transcription endpoint also supports configured Gemini and can cancel provider work on disconnect. The existing SQLite JSON records accept ritual settings and a separate favorite mix, and the weekly writer guards against a second record for the same account and week. No table migration or new external runtime dependency is required.
+The expansion uses existing chat, Moment, weekly insight, preference and record endpoints. Transcription can cancel provider work on disconnect. The existing SQLite JSON records accept ritual settings and a separate favorite mix, and the weekly writer guards against a second record for the same account and week.
 
 The main interface changes are in `Core`, `Companion`, `Moments`, `VoiceTalk`, `VoiceControlsImpl`, `Discover`, `DailyRitualOptions`, `Journey`, `WeeklyStory`, `Wellness`, `RecommendationExplanation`, `AmbientMixerImpl` and `MilestoneCelebration`. `App.tsx` and `widget-links.ts` handle the new routes and the signed-out link handoff.
 

@@ -9,7 +9,9 @@ export const routes = {
   journalEntry: "journal-entry",
   journalReflect: "journal-reflect",
   explore: "explore",
-  exploreCatalog: "explore-catalog",
+  wellnessPlan: "plan",
+  guidedPrograms: "guided-programs",
+  guidedProgram: "guided-program",
   wellnessTools: "wellness-tools",
   timedPractice: "timed-practice",
   techniques: "techniques",
@@ -25,11 +27,14 @@ export const routes = {
   momentPlayer: "moment-player",
   breathing: "breathing",
   journey: "journey",
+  practiceInsights: "practice-insights",
   journeyCheckin: "journey-checkin",
   sessionDetail: "session-detail",
   reflectionDetail: "reflection-detail",
   profile: "profile",
+  ambientSoundPreferences: "ambient-sound-preferences",
   onboarding: "onboarding-replay",
+  wellnessGoals: "wellness-goals",
   memory: "memory",
   support: "support",
 } as const;
@@ -44,6 +49,42 @@ export const habitRoutes = new Set<string>([
   routes.habitGarden,
   routes.habitReminders,
 ]);
+
+export const habitSections = [
+  "today",
+  "my-habits",
+  "insights",
+  "garden",
+] as const;
+export type HabitSection = (typeof habitSections)[number];
+
+export function habitSection(value: unknown): HabitSection {
+  return habitSections.find((section) => section === value) ?? "today";
+}
+
+export function habitHubParams(name: string, params: Record<string, unknown>) {
+  if (name === routes.habitLibrary) return { ...params, section: "my-habits" };
+  if (name === routes.habitGarden) return { ...params, section: "garden" };
+  if (name === routes.habitInsights) {
+    const { id, ...range } = params;
+    return {
+      ...range,
+      section: "insights",
+      insightsHabitId: isRecordId(id) ? id : undefined,
+    };
+  }
+  if (name === routes.habits)
+    return { ...params, section: habitSection(params.section) };
+}
+
+export function isHabitDrillDown(name: string) {
+  return (
+    name === routes.habitCreate ||
+    name === routes.habitEdit ||
+    name === routes.habitDetails ||
+    name === routes.habitReminders
+  );
+}
 
 export type SolaceMode = "companion" | "journal";
 

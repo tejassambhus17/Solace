@@ -1,9 +1,10 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing, useScreenGutter } from "../layout";
+import { useGuardedBack } from "../navigation-reset";
 import { artGradient, useTheme } from "../theme";
-import { AppText, Icon, coverImageStyle } from "../ui";
+import { AppText, IconButton, coverImageStyle } from "../ui";
 
 const landscapes = {
   light: require("../../assets/profile-mountains-light.jpg"),
@@ -23,6 +24,7 @@ export function ExploreFeatureHeader({
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
   const gutter = useScreenGutter();
+  const goBack = useGuardedBack(onBack);
   return (
     <View
       style={[
@@ -60,20 +62,13 @@ export function ExploreFeatureHeader({
           { top: top - 29, opacity: resolved === "dark" ? 0.44 : 0.73 },
         ]}
       />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Back"
-        onPress={onBack}
-        style={({ pressed }) => [
-          styles.back,
-          {
-            backgroundColor: pressed ? colors.surface2 : colors.surface,
-            borderColor: colors.border,
-          },
-        ]}
-      >
-        <Icon name="arrow-back" size={21} />
-      </Pressable>
+      <IconButton
+        appearance="outlined"
+        name="chevron-back"
+        label="Back"
+        onPress={goBack}
+        size={48}
+      />
       <AppText variant="title" accessibilityRole="header" style={styles.title}>
         {title}
       </AppText>
@@ -85,7 +80,7 @@ export function ExploreFeatureHeader({
 }
 
 const styles = StyleSheet.create({
-  header: { overflow: "hidden", paddingBottom: spacing.section + spacing.row },
+  header: { overflow: "hidden", paddingBottom: spacing.section },
   landscape: {
     position: "absolute",
     left: 0,
@@ -99,14 +94,6 @@ const styles = StyleSheet.create({
     width: 161,
     height: 110,
     transform: [{ rotate: "-8deg" }],
-  },
-  back: {
-    width: 48,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 24,
-    borderWidth: 1,
   },
   title: { marginTop: spacing.compact, fontSize: 35, lineHeight: 43 },
   subtitle: { marginTop: 4, maxWidth: 295 },

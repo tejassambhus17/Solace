@@ -12,7 +12,7 @@ $env:EXPO_PUBLIC_API_URL=$ApiUrl
 $env:GRADLE_USER_HOME=Join-Path (Get-Location) 'work\gradle'
 $env:PATH=(Join-Path $env:JAVA_HOME 'bin')+';'+$env:PATH
 if(Test-Path -LiteralPath '.solace-runtime.json'){$taskRuntime=Get-Content .solace-runtime.json -Raw|ConvertFrom-Json;$env:PATH=(Split-Path -Parent $taskRuntime.node)+';'+$env:PATH}
-& node scripts/runtime.cjs expo prebuild --platform android --no-install
+& node scripts/runtime.cjs expo prebuild --platform android --no-install --no-clean
 if($LASTEXITCODE -ne 0){throw 'Expo Android prebuild failed.'}
 & node scripts/patch-native.cjs
 if($LASTEXITCODE -ne 0){throw 'Native compatibility patch failed. Review the pinned versions.'}

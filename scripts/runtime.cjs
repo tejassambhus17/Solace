@@ -59,6 +59,12 @@ async function main() {
     moments: { args: ["--test", file("test-moments.cjs"), ...rest] },
     navigation: { args: ["--test", file("test-navigation.cjs"), ...rest] },
     voice: { args: ["--test", file("test-voice.cjs"), ...rest] },
+    "companion-actions": {
+      args: ["--test", file("test-companion-actions.cjs"), ...rest],
+    },
+    "ambient-mixer": {
+      args: ["--test", file("test-ambient-mixer.cjs"), ...rest],
+    },
     progress: { args: ["--test", file("test-progress.cjs"), ...rest] },
     insights: { args: ["--test", file("test-insights.mjs"), ...rest] },
     routine: { args: ["--test", file("test-routine.mjs"), ...rest] },

@@ -26,6 +26,11 @@ function load(file, dependencies = {}) {
 }
 const content = load("src/content.ts");
 const progress = load("src/progress.ts", { "./content": content });
+const { practiceInsights } = load("src/practice-insights.ts", {
+  "../server/src/practice-recheck": load("server/src/practice-recheck.ts"),
+  "./progress": progress,
+  "./routes": load("src/routes.ts"),
+});
 const {
   adjacentCalendarDay,
   journeySummary,
@@ -44,6 +49,7 @@ const {
   nextMilestoneCelebration,
 } = load("src/journey-analytics.ts", {
   "./content": content,
+  "./journal-record": load("src/journal-record.ts"),
   "./progress": progress,
   "./routes": load("src/routes.ts"),
 });
@@ -53,54 +59,285 @@ const { journeyGoalProgress } = load("src/journey-goals.ts", {
   "./journey-analytics": { journeyRange },
   "./progress": progress,
 });
+const { buildTodayProgress } = load("src/today-progress.ts");
+
+test("practice insights use only recorded responses after distinct completed practices", () => {
+  const createdAt = "2026-11-09T10:00:00.000Z";
+  const now = new Date("2026-11-09T15:00:00.000Z");
+  const completed = {
+    createdAt,
+    type: "breathing",
+    completed: true,
+    durationSec: 60,
+    originCheckinId: "owned",
+  };
+  const first = {
+    ...completed,
+    id: "first",
+    emotionalRecheck: { response: "more-settled" },
+  };
+  const second = {
+    ...completed,
+    id: "second",
+    emotionalRecheck: { response: "about-the-same" },
+  };
+  const third = {
+    ...completed,
+    id: "third",
+    emotionalRecheck: { response: "less-settled" },
+  };
+  const insufficient = practiceInsights({ sessions: [first, second] }, now);
+  assert.equal(insufficient.enough, false);
+  const result = practiceInsights(
+    {
+      sessions: [
+        first,
+        second,
+        third,
+        first,
+        { ...third, id: "early", completed: false },
+        { ...third, id: "resource", type: "resource" },
+        { ...third, id: "offline", localOnly: true },
+        { ...completed, id: "legacy", feedback: "Helped" },
+      ],
+      checkins: [{ id: "owned", mood: "Stressed", createdAt }],
+    },
+    now,
+  );
+  assert.equal(result.enough, true);
+  assert.equal(result.records.length, 4);
+  assert.equal(result.records[0].origin.mood, "Stressed");
+  assert.deepEqual(result.counts, {
+    "more-settled": 1,
+    "about-the-same": 1,
+    "less-settled": 1,
+  });
+  assert.match(result.observation, /1 of 3 recent rechecks/);
+});
+
+test("practice insights skip unrelated reflection and assessment histories", () => {
+  const now = new Date("2026-11-09T15:00:00.000Z");
+  const result = practiceInsights(
+    {
+      sessions: [],
+      checkins: [],
+      get reflections() {
+        assert.fail("Practice insights do not read reflections.");
+      },
+      get assessments() {
+        assert.fail("Practice insights do not read assessments.");
+      },
+    },
+    now,
+  );
+  assert.deepEqual(result.records, []);
+});
+
+const routineProgress = (
+  completedCount,
+  enabled = true,
+  practiceSkipped = false,
+) => ({
+  settings: { enabled },
+  steps: [{ id: "checkin" }, { id: "practice" }, { id: "reflection" }],
+  practiceSkipped,
+  completedCount,
+});
+
+test("Today progress weights real Daily Pause and habit units by their totals", () => {
+  const habits = { completed: 4, scheduled: 5 };
+  assert.deepEqual(buildTodayProgress(routineProgress(1), habits), {
+    dailyPause: { completed: 1, scheduled: 3 },
+    habits,
+    completed: 5,
+    scheduled: 8,
+    percentage: 63,
+  });
+});
+
+test("Today progress leaves an intentionally skipped practice out of the denominator", () => {
+  const result = buildTodayProgress(routineProgress(2, true, true), {
+    completed: 0,
+    scheduled: 0,
+  });
+  assert.equal(result.dailyPause.scheduled, 2);
+  assert.equal(result.percentage, 100);
+});
+
+test("Today progress omits disabled sections and distinguishes zero progress from no schedule", () => {
+  assert.equal(
+    buildTodayProgress(routineProgress(3, false), {
+      completed: 1,
+      scheduled: 2,
+    }).percentage,
+    50,
+  );
+  assert.equal(
+    buildTodayProgress(routineProgress(0), { completed: 0, scheduled: 0 })
+      .percentage,
+    0,
+  );
+  assert.equal(
+    buildTodayProgress(routineProgress(0, false), {
+      completed: 0,
+      scheduled: 0,
+    }).percentage,
+    null,
+  );
+});
+
 const now = () => new Date(2026, 10, 5, 12);
 const item = (id, day, extra = {}) => ({ id, day, ...extra });
 
-test("latest Journey activity opens an eligible exact record across collections", () => {
+function latestInPeriod(
+  analytics,
+  period = "all",
+  selectedDay = analytics.today,
+  habits = [],
+  habitProgress = [],
+) {
+  return latestJourneyActivity(
+    analytics,
+    journeyReport(analytics, period, selectedDay),
+    habits,
+    habitProgress,
+    now(),
+  );
+}
+
+test("latest Journey activity selects saved activity across supported collections", () => {
   const day = "2026-11-05";
   const time = (hour) => new Date(2026, 10, 5, hour).toISOString();
   const checkin = item("calm", day, { createdAt: time(6) });
   const journal = item("entry", day, {
     kind: "journal",
+    title: "Private journal entry",
     createdAt: time(7),
     localOnly: true,
   });
-  const practice = item("moment", day, { completed: true, createdAt: time(8) });
-  const noise = {
+  const practice = item("practice", day, {
+    type: "breathing",
+    completed: true,
+    createdAt: time(8),
+  });
+  const reflection = item("weekly", day, {
+    text: "A saved reflection.",
+    createdAt: time(9),
+  });
+  const assessment = item("assessment", day, {
+    assessmentType: "anxiety",
+    createdAt: time(10),
+  });
+  const guide = item("resource", day, {
+    type: "resource",
+    resourceId: "sleep-guide",
+    completed: true,
+    createdAt: time(11),
+  });
+  const data = {
     checkins: [
       item("future", "2026-11-06"),
-      item("bad/id", day, { createdAt: time(9) }),
+      item("later-today", day, { createdAt: time(13) }),
+      item("bad/id", day, { createdAt: time(11) }),
     ],
     sessions: [
-      item("abandoned", day, { completed: false, createdAt: time(9) }),
-      item("guide", day, {
+      item("abandoned", day, { completed: false, createdAt: time(11) }),
+      item("guide-without-resource", day, {
         type: "resource",
         completed: true,
-        createdAt: time(10),
+        createdAt: time(11),
       }),
     ],
-    reflections: [item("weekly", day, { createdAt: time(9) })],
-    assessments: [item("assessment", day, { createdAt: time(10) })],
+    reflections: [item("blank-reflection", day, { createdAt: time(11) })],
+    assessments: [
+      item("unknown-assessment", day, {
+        assessmentType: "unsupported",
+        createdAt: time(11),
+      }),
+    ],
   };
-  assert.equal(
-    latestJourneyActivity(journeyAnalytics(noise, now())),
-    undefined,
-  );
-  noise.checkins.push(checkin);
-  assert.equal(
-    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
-    "calm",
-  );
-  noise.reflections.push(journal);
-  assert.equal(
-    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
-    "entry",
-  );
-  noise.sessions.push(practice);
-  assert.equal(
-    latestJourneyActivity(journeyAnalytics(noise, now())).record.id,
-    "moment",
-  );
+  const latest = () => latestInPeriod(journeyAnalytics(data, now()));
+  assert.equal(latest(), undefined);
+  for (const [collection, record] of [
+    ["checkins", checkin],
+    ["reflections", journal],
+    ["sessions", practice],
+    ["reflections", reflection],
+    ["assessments", assessment],
+    ["sessions", guide],
+  ]) {
+    data[collection].push(record);
+    assert.deepEqual(latest(), {
+      key: `${collection}:${record.id}`,
+      collection,
+      record,
+      day,
+    });
+  }
+  data.sessions.pop();
+  const legacyAssessment = item("legacy-assessment", day, {
+    type: "self-love",
+    createdAt: time(11),
+  });
+  data.assessments.push(legacyAssessment);
+  assert.equal(latest().record, legacyAssessment);
+});
+
+test("latest Journey activity follows the selected period and leaves empty periods empty", () => {
+  const october = item("october", "2026-10-28");
+  const november = item("november", "2026-11-01");
+  const analytics = journeyAnalytics({ checkins: [october, november] }, now());
+  assert.equal(latestInPeriod(analytics, "week"), undefined);
+  assert.equal(latestInPeriod(analytics, "month").record, november);
+  assert.equal(latestInPeriod(analytics, "week", october.day).record, november);
+  assert.equal(latestInPeriod(analytics, "month", october.day).record, october);
+  assert.equal(latestInPeriod(analytics, "all", october.day).record, november);
+  assert.equal(latestInPeriod(analytics, "month", "2026-09-20"), undefined);
+});
+
+test("latest Journey activity uses the saved habit completion day and update time", () => {
+  const day = "2026-11-05";
+  const time = (hour) => new Date(2026, 10, 5, hour).toISOString();
+  const habit = { id: "water", name: "Drink water" };
+  const longIdHabit = { id: "a".repeat(100), name: "Read for ten minutes" };
+  const checkin = item("calm", day, { createdAt: time(8) });
+  const analytics = journeyAnalytics({ checkins: [checkin] }, now());
+  const completion = item(`${habit.id}-${day}`, day, {
+    habitId: habit.id,
+    complete: true,
+    createdAt: time(7),
+    updatedAt: time(9),
+  });
+  const habits = [habit, longIdHabit];
+  const progress = [
+    { ...completion, complete: false, updatedAt: time(11) },
+    { ...completion, id: "bad/id", updatedAt: time(11) },
+    { ...completion, habitId: "deleted", updatedAt: time(11) },
+    { ...completion, day: "2026-11-06", updatedAt: time(11) },
+    { ...completion, day: "2026-11-00", updatedAt: time(11) },
+    { ...completion, updatedAt: time(13) },
+  ];
+  const latest = (period = "week", selectedDay = day) =>
+    latestInPeriod(analytics, period, selectedDay, habits, progress);
+  assert.equal(latest().record, checkin);
+
+  progress.push(completion);
+  assert.deepEqual(latest(), {
+    collection: "habitProgress",
+    record: completion,
+    habit,
+    day,
+  });
+  assert.equal(latest("month", "2026-10-30"), undefined);
+
+  const latestCompletion = {
+    ...completion,
+    id: `${longIdHabit.id}-${day}`,
+    habitId: longIdHabit.id,
+    updatedAt: time(10),
+  };
+  progress.push(latestCompletion);
+  assert.equal(latest().record, latestCompletion);
 });
 
 test("milestone celebrations use saved records and survive re-reading the account marker", () => {

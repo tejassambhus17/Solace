@@ -1,26 +1,26 @@
 import React, { useRef, useState } from "react";
 import { Platform, StyleSheet, Switch, View } from "react-native";
+import { checkinRecommendation } from "../checkin-recommendation";
 import { spacing } from "../layout";
-import { routes } from "../routes";
+import { isRecordId, routes } from "../routes";
 import { useApp, type Item } from "../store";
-import { getTechnique } from "../techniques";
+import { techniqueArtwork } from "../technique-artwork";
 import { useTheme } from "../theme";
-import { AppText, Button, Card, MoodPetal, moodPetals, Row } from "../ui";
+import { AppText, Button, Card, moodPetals, Row } from "../ui";
+import { SolaceRecommendationCard } from "./SolaceRecommendationCard";
 
 export function CheckinNextStep({ checkin }: { checkin: Item }) {
   const app = useApp();
   const { colors } = useTheme();
   const [reviewing, setReviewing] = useState(false);
   const [includeNote, setIncludeNote] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const opening = useRef(false);
+  const openingChat = useRef(false);
   const petal = moodPetals.find(({ mood }) => mood === checkin.mood);
-  const grounding = checkin.mood === "Low";
-  const technique = getTechnique(grounding ? "grounding" : "breathing");
-  const reason = grounding
-    ? "A self-paced reset gives you one thing to notice at a time."
-    : checkin.mood === "Stressed"
-      ? "A gentle, longer exhale gives you one simple rhythm to follow when things feel tense."
-      : "An easy breathing rhythm gives you a few quiet minutes to settle into the day.";
+  const [recommendation] = useState(() =>
+    checkinRecommendation(checkin.mood, app.data, app.user),
+  );
 
   const note = typeof checkin.note === "string" ? checkin.note.trim() : "";
   const moodMessage = petal
@@ -35,10 +35,15 @@ export function CheckinNextStep({ checkin }: { checkin: Item }) {
   const pending = Boolean(app.chatPending.new);
 
   function openCompanion(addCheckin: boolean) {
-    if (opening.current || (addCheckin && (tooLong || pending))) return;
-    opening.current = true;
+    if (openingChat.current || (addCheckin && (tooLong || pending))) return;
+    openingChat.current = true;
     if (addCheckin) app.setChatDraft("new", next);
-    app.navigate(routes.companion);
+    app.navigate(
+      routes.companion,
+      addCheckin && isRecordId(checkin.id)
+        ? { originCheckinId: checkin.id }
+        : {},
+    );
   }
 
   if (reviewing) {
@@ -108,6 +113,7 @@ export function CheckinNextStep({ checkin }: { checkin: Item }) {
           title="Back to next steps"
           variant="ghost"
           onPress={() => {
+            openingChat.current = false;
             setIncludeNote(false);
             setReviewing(false);
           }}
@@ -118,50 +124,40 @@ export function CheckinNextStep({ checkin }: { checkin: Item }) {
 
   return (
     <View style={styles.actions}>
-      {technique && (
-        <Card style={styles.card}>
-          <Row>
-            <View style={styles.flex}>
-              <AppText variant="caption" color={colors.muted}>
-                {technique.selfPaced && "About "}
-                {technique.activity.durationSec / 60} min ·{" "}
-                {technique.selfPaced ? "At your pace" : technique.label}
-              </AppText>
-              <AppText accessibilityRole="header" variant="heading">
-                {technique.title}
-              </AppText>
-            </View>
-            {petal && (
-              <View
-                style={[
-                  styles.petal,
-                  { backgroundColor: colors.lavenderSurface },
-                ]}
-              >
-                <MoodPetal source={petal.image} style={styles.petalImage} />
-              </View>
-            )}
-          </Row>
-          <AppText color={colors.muted}>{reason}</AppText>
-          <Button
-            title="Try a short reset"
-            icon="play-outline"
-            onPress={() => {
-              if (opening.current) return;
-              opening.current = true;
-              app.navigate(routes.momentPlayer, {
-                techniqueId: technique.id,
-                source: "today",
-              });
-            }}
-          />
-        </Card>
+      {recommendation && !dismissed && (
+        <SolaceRecommendationCard
+          title={recommendation.title}
+          description={recommendation.description}
+          durationSec={recommendation.durationSec}
+          selfPaced={recommendation.selfPaced}
+          artwork={techniqueArtwork[recommendation.artwork]}
+          reason={recommendation.reason}
+          startLabel={recommendation.startLabel}
+          onStart={() => {
+            if (opening.current) return;
+            opening.current = true;
+            setDismissed(true);
+            app.navigate(recommendation.route, {
+              ...recommendation.params,
+              source: "today",
+              ...(isRecordId(checkin.id) && { originCheckinId: checkin.id }),
+              startOnArrival: true,
+            });
+          }}
+          onDismiss={() => setDismissed(true)}
+        />
       )}
       <Button
-        title="Talk about this"
+        title="Talk with Solace"
         variant="secondary"
         icon="chatbubble-ellipses-outline"
         onPress={() => setReviewing(true)}
+      />
+      <Button
+        title="Write a reflection"
+        variant="secondary"
+        icon="pencil-outline"
+        onPress={() => app.navigate("reflection")}
       />
       <Button
         title="Back to Today"
@@ -178,12 +174,4 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   noteRow: { minHeight: 48 },
   preview: { padding: spacing.row, borderRadius: 14 },
-  petal: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  petalImage: { width: 42, height: 42 },
 });

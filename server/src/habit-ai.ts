@@ -408,7 +408,7 @@ export function registerHabitAi(
             },
             {
               signal: controller.signal,
-              canFallback: contextIsCurrent,
+              canRetry: contextIsCurrent,
               maxTokens: 500,
             },
           );

@@ -7,7 +7,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DaylightHeroBlend, DaylightScenicFade } from "../DaylightScenicFade";
 import { spacing, useScreenGutter } from "../layout";
+import { MainTabHeader, useMainTabHeaderInsets } from "../SolaceBrandHeader";
 import { useApp } from "../store";
 import { artGradient, useTheme } from "../theme";
 import {
@@ -15,7 +17,6 @@ import {
   BotanicalBackdrop,
   coverImageStyle,
   Icon,
-  LotusMark,
   Row,
   Screen,
 } from "../ui";
@@ -41,6 +42,7 @@ export function SolaceHome() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
+  const headerInsets = useMainTabHeaderInsets();
   const { height } = useWindowDimensions();
   const [focused, setFocused] = useState<string | null>(null);
   const gutter = useScreenGutter();
@@ -50,15 +52,19 @@ export function SolaceHome() {
     ? require("../../assets/today-twilight-lotus.jpg")
     : require("../../assets/redesign-today-scene-light.jpg");
   return (
-    <Screen edgeToEdgeTop heroStatusBar="light" style={styles.screen}>
+    <Screen
+      edgeToEdgeTop
+      heroStatusBar={dark ? "light" : "dark"}
+      style={styles.screen}
+    >
       <View
         style={[
           styles.hero,
+          !dark && [styles.lightHero, { backgroundColor: colors.bg }],
+          headerInsets,
           {
             marginHorizontal: -gutter,
-            minHeight: (compact ? 194 : 264) + top,
-            paddingTop: top + 15,
-            paddingHorizontal: gutter,
+            minHeight: (compact ? 194 : dark ? 264 : 240) + top,
           },
         ]}
       >
@@ -68,26 +74,24 @@ export function SolaceHome() {
           resizeMode="cover"
           style={coverImageStyle}
         />
+        {dark ? (
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              artGradient(
+                `linear-gradient(180deg, #17142BBA 0%, #17142B50 40%, #17142B28 62%, ${colors.bg} 100%)`,
+              ),
+            ]}
+          />
+        ) : (
+          <DaylightHeroBlend color={colors.bg} />
+        )}
         <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            artGradient(
-              dark
-                ? `linear-gradient(180deg, #17142BBA 0%, #17142B50 40%, #17142B28 62%, ${colors.bg} 100%)`
-                : `linear-gradient(180deg, #27382AB5 0%, #27382A00 30%, ${colors.bg}D8 58%, ${colors.bg} 100%)`,
-            ),
-          ]}
-        />
-        <View
-          style={styles.brand}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
-          <LotusMark size={27} />
-          <AppText variant="heading" color="#FFF4EF" style={styles.brandName}>
-            Solace
-          </AppText>
+          <MainTabHeader color={dark ? "#FFF4EF" : colors.text} />
         </View>
         <View style={styles.intro}>
           <AppText
@@ -106,7 +110,7 @@ export function SolaceHome() {
           </AppText>
         </View>
       </View>
-      <View style={styles.choices}>
+      <View style={[styles.choices, !dark && styles.lightChoices]}>
         {choices.map((choice) => (
           <Pressable
             key={choice.mode}
@@ -119,31 +123,50 @@ export function SolaceHome() {
             style={({ pressed }) => [
               styles.card,
               compact && styles.compactCard,
+              !dark && styles.lightCard,
               {
                 backgroundColor: colors.surface,
                 borderColor:
                   focused === choice.mode
                     ? colors.lavenderText
-                    : colors.heroBorder,
+                    : dark
+                      ? colors.heroBorder
+                      : `${colors.lavenderText}55`,
                 opacity: pressed ? 0.84 : 1,
               },
             ]}
           >
-            <View pointerEvents="none" style={styles.cardArt}>
+            <View
+              pointerEvents="none"
+              style={
+                dark
+                  ? styles.cardArt
+                  : [styles.lightCardArt, compact && styles.compactLightArt]
+              }
+            >
               <Image
                 source={choice[resolved]}
                 accessible={false}
                 resizeMode="cover"
-                style={coverImageStyle}
+                resizeMethod={dark ? undefined : "scale"}
+                style={
+                  !dark && choice.mode === "journal"
+                    ? styles.lightJournalArt
+                    : coverImageStyle
+                }
               />
-              <View
-                style={[
-                  StyleSheet.absoluteFill,
-                  artGradient(
-                    `linear-gradient(180deg, ${colors.surface}00 24%, ${colors.surface}62 49%, ${colors.surface}F2 73%, ${colors.surface} 100%)`,
-                  ),
-                ]}
-              />
+              {dark ? (
+                <View
+                  style={[
+                    StyleSheet.absoluteFill,
+                    artGradient(
+                      `linear-gradient(180deg, ${colors.surface}00 24%, ${colors.surface}62 49%, ${colors.surface}F2 73%, ${colors.surface} 100%)`,
+                    ),
+                  ]}
+                />
+              ) : (
+                <DaylightScenicFade color={colors.surface} height={18} />
+              )}
             </View>
             <Row style={styles.cardContent}>
               <View style={styles.cardText}>
@@ -158,14 +181,14 @@ export function SolaceHome() {
                 style={[
                   styles.arrow,
                   {
-                    backgroundColor: dark ? colors.peach : colors.peachSurface,
+                    backgroundColor: colors.lavenderAction,
                   },
                 ]}
               >
                 <Icon
                   name="arrow-forward"
                   size={21}
-                  color={dark ? colors.primaryText : colors.peachText}
+                  color={colors.lavenderActionText}
                 />
               </View>
             </Row>
@@ -201,12 +224,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 14,
   },
-  brand: { flexDirection: "row", alignItems: "center", gap: 6 },
-  brandName: { fontSize: 24, lineHeight: 28 },
+  lightHero: { paddingBottom: spacing.section },
   intro: { gap: 4, maxWidth: 210 },
   title: { fontSize: 46, lineHeight: 49 },
   subtitle: { fontSize: 16, lineHeight: 22, maxWidth: 180 },
   choices: { gap: spacing.row, paddingBottom: 8 },
+  lightChoices: { marginTop: spacing.compact },
   card: {
     overflow: "hidden",
     borderRadius: 22,
@@ -216,6 +239,16 @@ const styles = StyleSheet.create({
     minHeight: 194,
   },
   compactCard: { paddingTop: 60, minHeight: 152 },
+  lightCard: { paddingTop: 0, minHeight: 0 },
+  lightCardArt: { height: 122, overflow: "hidden" },
+  lightJournalArt: {
+    position: "absolute",
+    top: -16,
+    left: 0,
+    width: "100%",
+    aspectRatio: 1,
+  },
+  compactLightArt: { height: 98 },
   ornament: { height: 52, overflow: "hidden" },
   cardArt: { position: "absolute", top: 0, left: 0, right: 0, bottom: 34 },
   cardContent: { padding: 15, gap: 10, alignItems: "flex-end" },

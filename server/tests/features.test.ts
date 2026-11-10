@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { Store } from "../src/database.js";
 import { createApp } from "../src/app.js";
@@ -15,6 +16,7 @@ import {
 } from "../src/weekly.js";
 import { isUrgent, type AIConfig } from "../src/ai.js";
 import { AUDIO_MAX_BYTES } from "../src/voice.js";
+import { openAIEvents, openAIResponse } from "./openai-fixture.js";
 const offline: AIConfig = {
   mode: "offline",
   model: "test",
@@ -26,31 +28,15 @@ const live: AIConfig = {
   apiKey: "test-only-provider-sentinel",
   transcriptionModel: "test-transcription-model",
 };
-const gemini: AIConfig = {
-  ...offline,
-  mode: "live",
-  gemini: { apiKey: "gemini-test-sentinel", model: "gemini-3.1-flash-lite" },
-};
-
-function geminiResponse(text: string) {
-  return Response.json({
-    candidates: [
-      {
-        finishReason: "STOP",
-        content: {
-          parts: [{ thought: true, text: "private reasoning" }, { text }],
-        },
-      },
-    ],
-  });
+function chatOutput(reply: string) {
+  return openAIResponse(
+    JSON.stringify({ reply, practice: "none", basis: "general" }),
+    true,
+  );
 }
 
-test("Gemini is primary, receives bounded chat turns and respects consent changes", async () => {
-  const { app, store, create } = await fixture({
-    ...gemini,
-    apiKey: live.apiKey,
-    openAIFallback: true,
-  });
+test("OpenAI streams bounded chat turns and respects consent changes", async () => {
+  const { app, store, create } = await fixture(live);
   try {
     const { token } = await create();
     const firstText = "My synthetic project is called Violet Kestrel.";
@@ -65,29 +51,29 @@ test("Gemini is primary, receives bounded chat turns and respects consent change
     await withFetch(
       async (url, init) => {
         calls++;
+        assert.equal(url, "https://api.openai.com/v1/responses");
         assert.equal(
-          url,
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+          new Headers(init?.headers).get("authorization"),
+          `Bearer ${live.apiKey}`,
         );
-        const headers = new Headers(init?.headers);
-        assert.equal(headers.get("x-goog-api-key"), "gemini-test-sentinel");
-        assert.equal(headers.has("authorization"), false);
         assert.equal(init?.redirect, "error");
         const body = JSON.parse(String(init?.body));
         assert.equal(body.store, false);
-        const instructions = body.systemInstruction.parts[0].text;
+        assert.equal(body.stream, true);
+        assert.equal(body.text.format.type, "json_schema");
+        assert.equal(body.text.format.strict, true);
         if (calls === 2) {
-          assert.match(instructions, /I prefer grounding sessions/);
-          assert.deepEqual(body.contents, [
-            { role: "user", parts: [{ text: firstText }] },
-            { role: "model", parts: [{ text: "I can help with that." }] },
-            { role: "user", parts: [{ text: followUp }] },
+          assert.match(body.instructions, /I prefer grounding sessions/);
+          assert.deepEqual(body.input, [
+            { role: "user", content: firstText },
+            { role: "assistant", content: "I can help with that." },
+            { role: "user", content: followUp },
           ]);
         } else {
-          assert.doesNotMatch(instructions, /I prefer grounding sessions/);
-          assert.equal(body.contents.length, 1);
+          assert.doesNotMatch(body.instructions, /I prefer grounding sessions/);
+          assert.equal(body.input.length, 1);
         }
-        return geminiResponse("I can help with that.");
+        return chatOutput("I can help with that.");
       },
       async () => {
         const first = (await chat(firstText).expect(200)).body;
@@ -96,7 +82,16 @@ test("Gemini is primary, receives bounded chat turns and respects consent change
         await remember(app, token, preference);
         const next = (await chat(followUp, first.conversation.id).expect(200))
           .body;
+        assert.equal(next.conversation.id, first.conversation.id);
         assert.equal(next.conversation.messages.length, 4);
+        assert.deepEqual(
+          next.conversation.messages
+            .slice(0, 2)
+            .map((message: { id: string }) => message.id),
+          first.conversation.messages.map(
+            (message: { id: string }) => message.id,
+          ),
+        );
         await request(app)
           .patch("/api/auth/me")
           .auth(token, { type: "bearer" })
@@ -117,8 +112,8 @@ test("Gemini is primary, receives bounded chat turns and respects consent change
   }
 });
 
-test("Gemini uses schema-constrained Moments and receives only counts for weekly questions", async () => {
-  const { app, store, create } = await fixture(gemini);
+test("OpenAI uses schema-constrained Moments and receives only counts for weekly questions", async () => {
+  const { app, store, create } = await fixture(live);
   try {
     const { token } = await create();
     const memory = await remember(app, token);
@@ -131,25 +126,21 @@ test("Gemini uses schema-constrained Moments and receives only counts for weekly
       async (_url, init) => {
         const body = JSON.parse(String(init?.body));
         assert.equal(body.store, false);
-        assert.equal(
-          body.generationConfig.responseMimeType,
-          "application/json",
-        );
-        const schema = body.generationConfig.responseJsonSchema;
-        assert.equal(schema.additionalProperties, false);
-        const input = JSON.parse(body.contents[0].parts[0].text);
-        if (schema.properties.invitation) {
+        assert.equal(body.text.format.type, "json_schema");
+        assert.equal(body.text.format.strict, true);
+        assert.equal(body.text.format.schema.additionalProperties, false);
+        const input = JSON.parse(body.input);
+        if (body.text.format.name === "solace_weekly_invitation") {
           assert.equal(input.reflections, 1);
           assert.equal(input.days, undefined);
           assert.doesNotMatch(String(init?.body), /private-writing-sentinel/);
-          return geminiResponse(
-            JSON.stringify({
-              invitation: "What would you like to carry forward?",
-            }),
-          );
+          return providerResponse({
+            invitation: "What would you like to carry forward?",
+          });
         }
+        assert.equal(body.text.format.name, "solace_moment");
         assert.equal(input.approvedPreference, memory.text);
-        return geminiResponse(JSON.stringify(input.template));
+        return providerResponse(input.template);
       },
       async () => {
         const moment = (
@@ -171,85 +162,263 @@ test("Gemini uses schema-constrained Moments and receives only counts for weekly
       .get("/api/capabilities")
       .auth(token, { type: "bearer" })
       .expect(200);
-    assert.deepEqual(capabilities.body, {
-      aiProvider: "live",
-      voiceTranscription: true,
-    });
+    assert.equal(capabilities.body.aiProvider, "live");
+    assert.equal(capabilities.body.voiceTranscription, true);
   } finally {
     store.close();
   }
 });
 
-test("Gemini quota errors are recoverable and only opt-in transient failures reach OpenAI", async () => {
-  const { app, store, create } = await fixture(gemini);
+test("OpenAI streamed failures expose no provider details and never save a partial conversation", async () => {
+  const { app, store, create } = await fixture(live);
   try {
     const { token } = await create();
-    const config = { ...gemini, apiKey: live.apiKey };
-    const chat = (ai: AIConfig) =>
-      request(createApp({ store, ai, rateLimits: false }))
+    const chat = () =>
+      request(app)
         .post("/api/chat")
         .auth(token, { type: "bearer" })
         .send({ text: "A synthetic question" });
-    let mode: "quota" | "refusal" | "truncated" | "network" | "revoked" =
-      "quota";
-    let fallbackCalls = 0;
-    await withFetch(
-      async (url) => {
-        if (String(url).includes("generativelanguage.googleapis.com")) {
-          if (mode === "network") throw new TypeError("test network failure");
-          if (mode === "revoked")
-            await request(app)
-              .patch("/api/auth/me")
-              .auth(token, { type: "bearer" })
-              .send({ personalization: false })
-              .expect(200);
-          if (mode === "refusal")
-            return Response.json({ promptFeedback: { blockReason: "SAFETY" } });
-          if (mode === "truncated")
-            return Response.json({
-              candidates: [
-                {
-                  finishReason: "MAX_TOKENS",
-                  content: { parts: [{ text: "partial" }] },
-                },
-              ],
-            });
-          return Response.json(
+    const delta = {
+      type: "response.output_text.delta",
+      delta: "upstream-private-delta",
+    };
+    const complete = await chatOutput("A complete reply.").text();
+    const partial = openAIEvents(delta);
+    const cases = [
+      [
+        429,
+        async () =>
+          Response.json(
             { error: { message: "upstream-secret-sentinel" } },
             { status: 429 },
+          ),
+      ],
+      [
+        502,
+        async () => {
+          throw new TypeError("upstream-secret-sentinel");
+        },
+      ],
+      [
+        502,
+        async () =>
+          openAIEvents({
+            type: "response.completed",
+            response: {
+              status: "completed",
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  status: "completed",
+                  content: [
+                    { type: "refusal", refusal: "upstream-secret-sentinel" },
+                  ],
+                },
+              ],
+            },
+          }),
+      ],
+      [
+        502,
+        async () =>
+          openAIEvents(delta, {
+            type: "response.incomplete",
+            response: { status: "incomplete", output: [] },
+          }),
+      ],
+      [502, async () => partial.clone()],
+    ] as const;
+    let calls = 0;
+    for (const [status, response] of cases) {
+      await withFetch(
+        async (url) => {
+          assert.equal(url, "https://api.openai.com/v1/responses");
+          calls++;
+          return response();
+        },
+        async () => {
+          const failure = (await chat().expect(status)).body;
+          assert.equal(
+            failure.code,
+            status === 429 ? "AI_RATE_LIMITED" : "AI_UNAVAILABLE",
           );
-        }
-        assert.equal(url, "https://api.openai.com/v1/responses");
-        fallbackCalls++;
-        return Response.json({ output_text: "I can help with that." });
-      },
+          assert.doesNotMatch(JSON.stringify(failure), /upstream-/);
+        },
+      );
+    }
+    assert.equal(calls, cases.length);
+    assert.deepEqual(
+      (
+        await request(app)
+          .get("/api/records/conversations")
+          .auth(token, { type: "bearer" })
+          .expect(200)
+      ).body.records,
+      [],
+    );
+    await withFetch(
+      async () =>
+        new Response((await partial.text()) + complete, {
+          headers: { "Content-Type": "text/event-stream" },
+        }),
       async () => {
-        const rateLimited = (await chat(config).expect(429)).body;
-        assert.equal(rateLimited.code, "AI_RATE_LIMITED");
-        assert.doesNotMatch(
-          JSON.stringify(rateLimited),
-          /upstream-secret-sentinel/,
-        );
-        const optIn = { ...config, openAIFallback: true };
-        mode = "refusal";
-        await chat(optIn).expect(502);
-        mode = "truncated";
-        await chat(optIn).expect(502);
-        assert.equal(fallbackCalls, 0);
-        mode = "quota";
-        assert.equal((await chat(optIn).expect(200)).body.provider, "live");
-        mode = "network";
-        assert.equal((await chat(optIn).expect(200)).body.provider, "live");
-        await remember(app, token);
-        mode = "revoked";
-        await chat(optIn).expect(429);
-        assert.equal(fallbackCalls, 2);
+        const result = (await chat().expect(200)).body;
+        assert.equal(result.reply, "A complete reply.");
+        assert.doesNotMatch(JSON.stringify(result), /upstream-private-delta/);
       },
     );
   } finally {
     store.close();
   }
 });
+
+test("the shared AI limit is owner-scoped and leaves urgent support and chat receipts available", async () => {
+  const { store, create } = await fixture(live);
+  try {
+    const owner = await create();
+    const other = await create("ai-budget-other@example.test");
+    const app = createApp({ store, ai: live });
+    const post = (token: string, path: string, body: object) =>
+      request(app).post(path).auth(token, { type: "bearer" }).send(body);
+    const first = { text: "A synthetic question.", requestId: randomUUID() };
+    let calls = 0;
+    await withFetch(
+      async (_url, init) => {
+        calls++;
+        const body = JSON.parse(String(init?.body));
+        return body.stream
+          ? chatOutput("A complete reply.")
+          : providerResponse(JSON.parse(body.input).template);
+      },
+      async () => {
+        const created = (
+          await post(owner.token, "/api/chat", first).expect(200)
+        ).body;
+        for (let count = 1; count < 24; count++) {
+          await post(owner.token, "/api/moments/generate", {
+            feeling: "A quiet moment.",
+          }).expect(200);
+        }
+        assert.equal(calls, 24);
+        const limited = await post(owner.token, "/api/chat", {
+          text: "A new question.",
+        }).expect(429);
+        assert.equal(limited.body.code, "AI_RATE_LIMITED");
+        assert.ok(Number(limited.headers["retry-after"]) > 0);
+        await post(owner.token, "/api/plans/preview", {}).expect(429);
+        const replay = (await post(owner.token, "/api/chat", first).expect(200))
+          .body;
+        assert.equal(replay.conversation.id, created.conversation.id);
+        assert.equal(
+          (
+            await post(owner.token, "/api/chat", {
+              text: "I can't keep myself safe.",
+            }).expect(200)
+          ).body.safety,
+          true,
+        );
+        const text = "I want to die.";
+        const record = (
+          await post(owner.token, "/api/records/reflections", {
+            kind: "journal",
+            text,
+          }).expect(201)
+        ).body.record;
+        const urgent = await post(
+          owner.token,
+          `/api/journal/${record.id}/reflect`,
+          {
+            start: 0,
+            end: text.length,
+            revision: record.updatedAt,
+            action: "reflect",
+          },
+        ).expect(200);
+        assert.equal(urgent.body.support, true);
+        assert.equal(calls, 24);
+        await post(other.token, "/api/chat", first).expect(200);
+        assert.equal(calls, 25);
+      },
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test(
+  "closing a Moment preview aborts provider work and permits retry",
+  { timeout: 5000 },
+  async () => {
+    const { app, store, create } = await fixture(live);
+    const { token } = await create();
+    const server = app.listen(0, "127.0.0.1");
+    const clientFetch = globalThis.fetch;
+    const controller = new AbortController();
+    try {
+      await once(server, "listening");
+      const address = server.address();
+      assert.ok(address && typeof address !== "string");
+      const url = `http://127.0.0.1:${address.port}/api/moments/generate`;
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      };
+      const body = JSON.stringify({ feeling: "A synthetic quiet moment." });
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      let calls = 0;
+      await withFetch(
+        async (_url, init) => {
+          if (++calls > 1)
+            return providerResponse(
+              JSON.parse(JSON.parse(String(init?.body)).input).template,
+            );
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("Provider request aborted"));
+                aborted.resolve();
+              },
+              { once: true },
+            );
+            started.resolve();
+          });
+        },
+        async () => {
+          const cancelled = assert.rejects(
+            clientFetch(url, {
+              method: "POST",
+              headers,
+              body,
+              signal: controller.signal,
+            }),
+            { name: "AbortError" },
+          );
+          await started.promise;
+          controller.abort();
+          await cancelled;
+          await aborted.promise;
+          const retried = await clientFetch(url, {
+            method: "POST",
+            headers,
+            body,
+          });
+          assert.equal(retried.status, 200);
+          assert.equal((await retried.json()).provider, "live");
+          assert.equal(calls, 2);
+        },
+      );
+    } finally {
+      controller.abort();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      store.close();
+    }
+  },
+);
+
 async function fixture(ai: AIConfig = offline) {
   const store = await Store.open(":memory:");
   const app = createApp({ store, ai, rateLimits: false });
@@ -263,22 +432,14 @@ async function fixture(ai: AIConfig = offline) {
   return { store, app, create };
 }
 function providerResponse(value: unknown) {
-  return new Response(
-    JSON.stringify({
-      status: "completed",
-      output: [
-        {
-          type: "message",
-          content: [{ type: "output_text", text: JSON.stringify(value) }],
-        },
-      ],
-    }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
-  );
+  return openAIResponse(JSON.stringify(value));
 }
 async function withFetch<T>(fetcher: typeof fetch, fn: () => Promise<T>) {
   const original = globalThis.fetch;
-  globalThis.fetch = fetcher;
+  globalThis.fetch = (input, options) =>
+    String(input) === "data:,"
+      ? original(input, options)
+      : fetcher(input, options);
   try {
     return await fn();
   } finally {
@@ -1197,10 +1358,7 @@ test("voice forwards only bounded audio as multipart with a server-side model an
         assert.equal(form.get("model"), "test-transcription-model");
         assert.equal((form.get("file") as File).size, 64);
         assert.equal((form.get("file") as File).name, "solace-voice.m4a");
-        return new Response(
-          JSON.stringify({ text: "I would like a quiet moment." }),
-          { status: 200 },
-        );
+        return Response.json({ text: "I would like a quiet moment." });
       }) as typeof fetch,
       async () => {
         const result = await request(app)
@@ -1247,7 +1405,7 @@ test("voice rejects unsupported, empty, oversized and malformed provider audio w
       .expect(413);
     for (const text of ["", "x".repeat(4001)])
       await withFetch(
-        (async () => new Response(JSON.stringify({ text }))) as typeof fetch,
+        (async () => Response.json({ text })) as typeof fetch,
         async () => {
           const result = await request(app)
             .post("/api/voice/transcribe")
@@ -1274,8 +1432,7 @@ test("a late transcription cannot return after logout", async () => {
         started();
         return new Promise<Response>(
           (resolve) =>
-            (release = () =>
-              resolve(new Response(JSON.stringify({ text: "Test words" })))),
+            (release = () => resolve(Response.json({ text: "Test words" }))),
         );
       }) as typeof fetch,
       async () => {
@@ -1380,12 +1537,7 @@ test("a pending personalized chat cannot retain deleted memory or revoked consen
             (resolve) =>
               (release = () =>
                 resolve(
-                  new Response(
-                    JSON.stringify({
-                      output_text:
-                        "A reply based on now-removed personalization.",
-                    }),
-                  ),
+                  chatOutput("A reply based on now-removed personalization."),
                 )),
           );
         }) as typeof fetch,
@@ -1493,19 +1645,11 @@ test("forgetting a memory keeps visible history but resets future AI context and
         const input = JSON.parse(String(init?.body));
         turn++;
         if (turn === 1)
-          return new Response(
-            JSON.stringify({
-              output_text: "I noticed your approved private qa marker.",
-            }),
-          );
+          return chatOutput("I noticed your approved private qa marker.");
         assert.equal(input.input.length, 1);
         assert.equal(input.input[0].content, "Continue after forgetting");
         assert.doesNotMatch(JSON.stringify(input), /private qa marker/);
-        return new Response(
-          JSON.stringify({
-            output_text: "We can begin from what you choose to share now.",
-          }),
-        );
+        return chatOutput("We can begin from what you choose to share now.");
       }) as typeof fetch,
       async () => {
         const first = await request(app)
@@ -1633,11 +1777,7 @@ test("a pending reply cannot restore context reset while personalization was alr
       (async () => {
         started();
         return new Promise<Response>(
-          (resolve) =>
-            (release = () =>
-              resolve(
-                new Response(JSON.stringify({ output_text: "Stale reply" })),
-              )),
+          (resolve) => (release = () => resolve(chatOutput("Stale reply"))),
         );
       }) as typeof fetch,
       async () => {

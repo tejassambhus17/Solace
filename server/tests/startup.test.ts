@@ -31,7 +31,6 @@ function environment(database: string, overrides: Record<string, string> = {}) {
     PORT: "0",
     HOST: "127.0.0.1",
     AI_MODE: "offline",
-    GEMINI_API_KEY: "",
     OPENAI_API_KEY: "",
     TRUST_PROXY_HOPS: "0",
     DATABASE_PATH: database,
@@ -181,24 +180,72 @@ test("startup configuration uses the server directory and rejects unusable mode/
   assert.equal(defaults.port, 3001);
   assert.equal(defaults.ai.mode, "auto");
   assert.equal(defaults.ai.apiKey, undefined);
-  assert.equal(defaults.ai.gemini, undefined);
-  const geminiOnly = readServerConfig(
+  assert.equal(defaults.ai.model, "gpt-6.1-terra");
+  assert.equal(defaults.ai.lightModel, "gpt-6-luna");
+  assert.equal(defaults.ai.transcriptionModel, "gpt-transcribe");
+  assert.equal(defaults.ai.ttsModel, "gpt-4o-mini-tts");
+  assert.equal(defaults.ai.ttsVoice, "marin");
+  assert.deepEqual(defaults.realtime, {
+    enabled: true,
+    model: "gpt-realtime-2.1-mini",
+    voice: "marin",
+    limits: {
+      sessionSeconds: 300,
+      dailySeconds: 900,
+      globalDailySeconds: 3600,
+    },
+  });
+  const voice = readServerConfig(
+    {
+      OPENAI_REALTIME_ENABLED: "false",
+      OPENAI_REALTIME_MODEL: "gpt-realtime-2.1",
+      REALTIME_SESSION_SECONDS: "60",
+    },
+    root,
+  ).realtime;
+  assert.equal(voice.enabled, false);
+  assert.equal(voice.model, "gpt-realtime-2.1");
+  assert.equal(voice.limits.sessionSeconds, 60);
+  assert.throws(
+    () => readServerConfig({ REALTIME_DAILY_SECONDS: "0" }, root),
+    /REALTIME_DAILY_SECONDS/,
+  );
+  const configured = readServerConfig(
     {
       AI_MODE: "live",
-      GEMINI_API_KEY: "test-key",
-      OPENAI_FALLBACK_ENABLED: "true",
+      AI_PROVIDER: "openai",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_CHAT_MODEL: "custom-chat",
+      OPENAI_LIGHT_MODEL: "custom-light",
+      OPENAI_TRANSCRIPTION_MODEL: "custom-transcribe",
+      OPENAI_TTS_MODEL: "custom-tts",
+      OPENAI_TTS_VOICE: "cedar",
+      OPENAI_BASE_URL: "https://eu.api.openai.com/v1/",
     },
     root,
   ).ai;
-  assert.equal(geminiOnly.gemini?.model, "gemini-3.1-flash-lite");
-  assert.equal(geminiOnly.openAIFallback, true);
+  assert.equal(configured.model, "custom-chat");
+  assert.equal(configured.lightModel, "custom-light");
+  assert.equal(configured.transcriptionModel, "custom-transcribe");
+  assert.equal(configured.ttsModel, "custom-tts");
+  assert.equal(configured.ttsVoice, "cedar");
+  assert.equal(configured.baseUrl, "https://eu.api.openai.com/v1/");
+  assert.throws(
+    () => readServerConfig({ AI_PROVIDER: "other" }, root),
+    /AI_PROVIDER/,
+  );
+  assert.throws(
+    () =>
+      readServerConfig({ OPENAI_CHAT_MODEL: "models/not-a-model-id" }, root),
+    /OPENAI_CHAT_MODEL/,
+  );
   assert.throws(
     () =>
       readServerConfig(
-        { GEMINI_API_KEY: "test-key", GEMINI_MODEL: "models/not-a-model-id" },
+        { OPENAI_BASE_URL: "https://proxy.example.test/v1" },
         root,
       ),
-    /GEMINI_MODEL/,
+    /official OpenAI API/,
   );
   assert.equal(
     readServerConfig({ DATABASE_PATH: ":memory:", PORT: "0" }, root)
@@ -220,7 +267,7 @@ test("startup configuration uses the server directory and rejects unusable mode/
   assert.throws(() => readServerConfig({ AI_MODE: "other" }, root), /AI_MODE/);
   assert.throws(
     () => readServerConfig({ AI_MODE: "live", OPENAI_API_KEY: " " }, root),
-    /requires GEMINI_API_KEY or OPENAI_API_KEY/,
+    /requires OPENAI_API_KEY/,
   );
 });
 
@@ -322,6 +369,57 @@ test(
 );
 
 test(
+  "shutdown handles success, storage failure and a stuck HTTP drain without leaking error details",
+  { timeout: 40000 },
+  async () => {
+    const directory = temporary();
+    const preload = join(directory, "shutdown-fixture.mjs");
+    writeFileSync(
+      preload,
+      `import { Server } from "node:http";
+      import { Store } from ${JSON.stringify(pathToFileURL(join(serverRoot, "dist/database.js")).href)};
+      process.on("message", ({ type, scenario }) => {
+        if (type !== "test:shutdown") return;
+        if (scenario === "storage") {
+          Store.prototype.close = () => { throw Error("private-database-path"); };
+        }
+        if (scenario === "stalled") {
+          Server.prototype.close = () => {};
+          const schedule = globalThis.setTimeout;
+          globalThis.setTimeout = (fn, ms, ...args) =>
+            schedule(fn, ms === 35000 ? 30 : ms, ...args);
+        }
+        process.emit("SIGTERM");
+      });`,
+    );
+    try {
+      for (const [scenario, exitCode, diagnostic] of [
+        ["normal", 0, undefined],
+        ["storage", 1, /could not finish a clean shutdown/],
+        ["stalled", 1, /shutdown timed out/],
+      ] as const) {
+        const process = launch(directory, ":memory:", {}, preload);
+        try {
+          await ready(process);
+          const result = failed(process);
+          process.child.send({ type: "test:shutdown", scenario });
+          assert.equal(await result, exitCode);
+          if (diagnostic) assert.match(process.output(), diagnostic);
+          assert.doesNotMatch(
+            process.output(),
+            /private-database-path|UnhandledPromiseRejection/,
+          );
+        } finally {
+          await stopped(process.child);
+        }
+      }
+    } finally {
+      cleanup(directory);
+    }
+  },
+);
+
+test(
   "missing live credentials and invalid port fail before opening the database",
   { timeout: 25000 },
   async () => {
@@ -335,10 +433,7 @@ test(
         const process = launch(directory, database, overrides);
         assert.equal(await failed(process), 1);
         assert.doesNotMatch(process.output(), /API ready on port/);
-        assert.match(
-          process.output(),
-          /requires GEMINI_API_KEY or OPENAI_API_KEY|PORT must be/,
-        );
+        assert.match(process.output(), /requires OPENAI_API_KEY|PORT must be/);
         assert.equal(existsSync(database), false);
       }
     } finally {

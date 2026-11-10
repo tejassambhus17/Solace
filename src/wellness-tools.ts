@@ -138,6 +138,15 @@ const tools = {
     artwork: require("../assets/redesign-explore-reflect.jpg"),
     tone: "peach",
   },
+  reflection: {
+    title: "Quick Reflection",
+    detail: "Write about what’s on your mind with a gentle prompt.",
+    icon: "pencil-outline",
+    categories: ["reflect"],
+    destination: { route: "reflection" },
+    artwork: require("../assets/redesign-explore-reflect.jpg"),
+    tone: "lavender",
+  },
   mood: {
     title: "Mood Check-in",
     detail: "Pause and note how you feel today.",
@@ -190,7 +199,13 @@ export const wellnessToolGroups: readonly {
     title: "Grow & Reflect",
     icon: "leaf-outline",
     filter: "grow",
-    tools: [tools.affirmation, tools.gratitude, tools.mood, tools.assessments],
+    tools: [
+      tools.affirmation,
+      tools.gratitude,
+      tools.reflection,
+      tools.mood,
+      tools.assessments,
+    ],
   },
   {
     title: "Keep the Momentum",
@@ -201,6 +216,5 @@ export const wellnessToolGroups: readonly {
 ];
 
 export const wellnessToolArrivalRoutes = new Set([
-  routes.exploreCatalog,
   ...Object.values(tools).map(({ destination }) => destination.route),
 ]);

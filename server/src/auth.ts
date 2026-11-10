@@ -5,6 +5,10 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { promisify } from "node:util";
+import {
+  readWellnessGoals,
+  type WellnessOnboarding,
+} from "./wellness-goals.js";
 const scrypt = promisify(derive);
 export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -29,7 +33,21 @@ export type UserRow = {
   created_at: string;
   personalization: number;
   avatar: string | null;
+  wellness_goals: string;
+  wellness_onboarding: WellnessOnboarding;
 };
+export function savedWellnessGoals(row: UserRow) {
+  try {
+    return readWellnessGoals(JSON.parse(row.wellness_goals));
+  } catch {
+    return [];
+  }
+}
+export function approvedWellnessGoals(row: UserRow) {
+  return row.personalization
+    ? savedWellnessGoals(row).filter((goal) => goal !== "explore")
+    : [];
+}
 export const publicUser = (row: UserRow) => ({
   id: row.id,
   name: row.name,
@@ -37,4 +55,6 @@ export const publicUser = (row: UserRow) => ({
   createdAt: row.created_at,
   personalization: !!row.personalization,
   avatar: row.avatar ?? null,
+  wellnessGoals: savedWellnessGoals(row),
+  wellnessOnboarding: row.wellness_onboarding,
 });

@@ -15,6 +15,12 @@ type GoogleFlowServices = {
   complete: (proof: GoogleFlowProof, signal: AbortSignal) => Promise<unknown>;
 };
 
+type GoogleFlowStage = "browser" | "return" | "finish";
+
+function googleFlowError(stage: GoogleFlowStage, message: string) {
+  return Object.assign(new Error(message), { stage });
+}
+
 /** The app proof stays in memory. The browser supplies a separate one-time code. */
 export async function runGoogleFlow(
   services: GoogleFlowServices,
@@ -40,21 +46,54 @@ export async function runGoogleFlow(
   ) {
     throw new Error("Google sign-in could not start.");
   }
-  const result = await services.open(url, GOOGLE_RETURN_URL);
-  if (signal.aborted || result.type === "cancel" || result.type === "dismiss")
-    return "cancelled";
-  const handoff = /^solace:\/\/google-auth\?handoff=([A-Za-z0-9_-]{43})$/.exec(
-    result.url ?? "",
-  )?.[1];
-  if (result.type !== "success" || !handoff) {
-    throw new Error("Google sign-in could not return to Solace.");
+  let result: Awaited<ReturnType<GoogleFlowServices["open"]>>;
+  try {
+    result = await services.open(url, GOOGLE_RETURN_URL);
+  } catch {
+    if (signal.aborted) return "cancelled";
+    throw googleFlowError("browser", "Google’s sign-in window could not open.");
   }
-  await services.complete({ id, verifier, handoff }, signal);
+  if (signal.aborted || result?.type === "cancel" || result?.type === "dismiss")
+    return "cancelled";
+  // Native browsers can serialize the root path or an empty fragment.
+  const returnedUrl = result?.url;
+  const match =
+    typeof returnedUrl === "string" &&
+    /^solace:\/\/google-auth\/?\?handoff=([A-Za-z0-9_-]{43})#?$/.exec(
+      returnedUrl,
+    );
+  if (result?.type !== "success" || !match || match[0] !== returnedUrl) {
+    throw googleFlowError(
+      "return",
+      "Google sign-in could not return to Solace.",
+    );
+  }
+  try {
+    await services.complete({ id, verifier, handoff: match[1] }, signal);
+  } catch (error) {
+    if (signal.aborted) return "cancelled";
+    const details = error as {
+      code?: unknown;
+      status?: unknown;
+      connection?: boolean;
+    } | null;
+    if (details?.connection === true) throw error;
+    throw Object.assign(
+      googleFlowError("finish", "Google sign-in could not finish."),
+      { code: details?.code, status: details?.status },
+    );
+  }
   return signal.aborted ? "cancelled" : "complete";
 }
 
 export function googleAuthMessage(error: unknown, linking = false) {
-  const code = (error as { code?: unknown } | null)?.code;
+  const details = error as {
+    code?: unknown;
+    status?: unknown;
+    connection?: unknown;
+    stage?: unknown;
+  } | null;
+  const code = details?.code;
   switch (code) {
     case "GOOGLE_CANCELLED":
       return linking
@@ -74,13 +113,23 @@ export function googleAuthMessage(error: unknown, linking = false) {
     case "GOOGLE_IDENTITY_INVALID":
       return "Couldn’t verify this Google account. Please try again.";
   }
-  const status = (error as { status?: unknown } | null)?.status;
+  const status = details?.status;
   if (status === 429)
     return "There have been too many attempts. Wait a moment and try again.";
   if (linking && status === 401)
     return "Sign in to your Solace account again before linking Google.";
-  if ((error as { connection?: unknown } | null)?.connection === true)
+  if (details?.connection === true)
     return "Couldn’t reach Solace. Check your connection and try again.";
+  switch (details?.stage) {
+    case "browser":
+      return "Google’s sign-in window couldn’t open. Try again.";
+    case "return":
+      return "Google returned without a valid sign-in confirmation. Start again to continue.";
+    case "finish":
+      return linking
+        ? "Google returned to Solace, but linking couldn’t finish. Start again to continue."
+        : "Google returned to Solace, but sign-in couldn’t finish. Start again or continue with email.";
+  }
   return linking
     ? "Google couldn’t be linked. Please try again."
     : "Google sign-in couldn’t finish. Try again or continue with email.";

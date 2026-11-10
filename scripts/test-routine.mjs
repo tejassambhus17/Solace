@@ -20,7 +20,7 @@ function sourceModule(file, dependencies = {}, Clock = Date) {
   new Function("require", "module", "exports", "Date", compiled)(
     (name) => {
       if (name in dependencies) return dependencies[name];
-      if (name.endsWith(".jpg")) return name;
+      if (/\.(jpg|png)$/.test(name)) return name;
       throw Error(`Unexpected dependency: ${name}`);
     },
     module,
@@ -30,17 +30,71 @@ function sourceModule(file, dependencies = {}, Clock = Date) {
   return module.exports;
 }
 const content = sourceModule("../src/content.ts");
-const explore = sourceModule("../src/explore-practices.ts");
+const routes = sourceModule("../src/routes.ts");
+const explore = sourceModule("../src/explore-practices.ts", {
+  "./routes": routes,
+});
 const ritualContract = sourceModule("../server/src/ritual-contract.ts");
+const habitContract = sourceModule("../server/src/habit-contract.ts");
+const wellnessRecommendations = sourceModule(
+  "../src/wellness-recommendations.ts",
+  {
+    "../server/src/wellness-goals": sourceModule(
+      "../server/src/wellness-goals.ts",
+    ),
+    "./explore-practices": explore,
+    "./routes": routes,
+  },
+);
 const routineModule = sourceModule("../src/routine.ts", {
   "./content": content,
   "./explore-practices": explore,
   "./progress": sourceModule("../src/progress.ts", { "./content": content }),
+  "./wellness-recommendations": wellnessRecommendations,
   "../server/src/ritual-contract": ritualContract,
 });
 const { pickDailyRoutine } = routineModule;
 const now = () => new Date(2026, 10, 5, 12);
 const today = { createdAt: "2026-11-05T06:00:00.000Z", day: "2026-11-05" };
+
+test("goal priorities ignore the neutral choice and rotate across explicit goals", () => {
+  const { wellnessGoalPriority, firstWellnessRecommendation } =
+    wellnessRecommendations;
+  assert.deepEqual(
+    wellnessGoalPriority(["explore", "sleep", "other", "sleep"]),
+    ["sleep"],
+  );
+  assert.notEqual(
+    wellnessGoalPriority(["calm", "focus"], now())[0],
+    wellnessGoalPriority(["calm", "focus"], new Date(2026, 10, 6, 12))[0],
+  );
+  assert.equal(
+    firstWellnessRecommendation(["explore"]).route,
+    routes.routes.explore,
+  );
+  assert.equal(
+    firstWellnessRecommendation(["sleep", "explore"]).params.activity
+      .durationSec,
+    600,
+  );
+  assert.deepEqual(firstWellnessRecommendation(["focus"]).params, {
+    focus: "focus",
+    minutes: 5,
+  });
+});
+
+test("explicit wellness goals guide a local pause without overriding a current mood", () => {
+  const user = { personalization: false, wellnessGoals: ["explore", "sleep"] };
+  assert.equal(pickDailyRoutine({}, user, now()).suggestion.activity, "rest");
+  assert.equal(pickDailyRoutine({}, user, now()).source, "wellness-goal");
+  const checkedIn = pickDailyRoutine(
+    { checkins: [{ ...today, mood: "Stressed" }] },
+    user,
+    now(),
+  );
+  assert.equal(checkedIn.source, "today-checkin");
+  assert.equal(checkedIn.suggestion.activity, "grounding");
+});
 
 test("an empty account gets one curated practice and no fabricated completion", () => {
   const routine = pickDailyRoutine({}, null, now());
@@ -394,7 +448,15 @@ test("turning off persists past midnight while an opted-in goal can inform an en
   assert.equal(revoked.source, "curated");
 });
 
-function todayControls(app) {
+function todayScreen(
+  app,
+  {
+    fontScale = 1.5,
+    resolved = "light",
+    platform = "android",
+    width = 320,
+  } = {},
+) {
   class TestClock extends Date {
     constructor(...args) {
       super(...(args.length ? args : [now().getTime()]));
@@ -408,6 +470,7 @@ function todayControls(app) {
       props: { ...props, children },
     }),
     useEffect: () => {},
+    useCallback: (callback) => callback,
     useMemo: (factory) => factory(),
     useState(initial) {
       const index = cursor++;
@@ -422,8 +485,8 @@ function todayControls(app) {
     },
   };
   const native = {
-    Platform: { OS: "android" },
-    useWindowDimensions: () => ({ width: 320, fontScale: 1.5 }),
+    Platform: { OS: platform },
+    useWindowDimensions: () => ({ width, fontScale }),
     StyleSheet: { create: (styles) => styles, hairlineWidth: 1 },
     Image: "Image",
     Pressable: "Pressable",
@@ -435,29 +498,59 @@ function todayControls(app) {
     "react-native-safe-area-context": {
       useSafeAreaInsets: () => ({ top: 24 }),
     },
-    "expo-haptics": {},
+    "../haptics": { playHaptic: async () => {} },
     "../Companion": { useReducedMotion: () => true },
     "../content": content,
     "../explore-practices": explore,
     "../layout": sourceModule("../src/layout.ts", { "react-native": native }),
     "../routine": routineModule,
-    "../routes": sourceModule("../src/routes.ts"),
+    "../routes": routes,
+    "../SolaceBrandHeader": sourceModule("../src/SolaceBrandHeader.tsx", {
+      react,
+      "react-native": native,
+      "react-native-safe-area-context": {
+        useSafeAreaInsets: () => ({ top: 24, left: 0, right: 0 }),
+      },
+      "./layout": sourceModule("../src/layout.ts", { "react-native": native }),
+      "./ui": { AppText: "AppText", LotusMark: "LotusMark", Row: "Row" },
+    }),
     "../store": { useApp: () => app },
-    "../theme": { useTheme: () => ({ colors: {}, resolved: "light" }) },
+    "../theme": {
+      artGradient: (backgroundImage) => ({ backgroundImage }),
+      useTheme: () => ({ colors: {}, resolved }),
+    },
     "../ui": {
       AppText: "AppText",
       Button: "Button",
       Icon: "Icon",
+      IconButton: ({ label, onPress }) =>
+        react.createElement("Pressable", {
+          accessibilityLabel: label,
+          onPress,
+        }),
       LotusMark: "LotusMark",
       Row: "Row",
       Screen: "Screen",
       moodPetals: [],
     },
     "../../server/src/ritual-contract": ritualContract,
-    "./HabitEntryPoints": { TodayHabits: "TodayHabits" },
     "./RecommendationExplanation": {
       RecommendationExplanation: "RecommendationExplanation",
     },
+    "./TodayProgressCard": { TodayProgressCard: "TodayProgressCard" },
+  };
+  const { getTodayHabitsPreview } = sourceModule(
+    "../src/screens/HabitEntryPoints.tsx",
+    {
+      ...dependencies,
+      "../../server/src/habit-contract": habitContract,
+      "../habits-ui": { gardenLabels: {} },
+    },
+    TestClock,
+  );
+  dependencies["./HabitEntryPoints"] = {
+    TodayHabits: "TodayHabits",
+    getTodayHabitsPreview,
   };
   dependencies["./DailyRitualOptions"] = sourceModule(
     "../src/screens/DailyRitualOptions.tsx",
@@ -477,29 +570,199 @@ function todayControls(app) {
   return () => {
     cursor = 0;
     const controls = [];
-    function visit(node, inDailyPause = false) {
+    const nodes = [];
+    function visit(node, inDailyPause = false, parent, grandparent) {
       if (Array.isArray(node))
-        node.forEach((child) => visit(child, inDailyPause));
+        node.forEach((child) =>
+          visit(child, inDailyPause, parent, grandparent),
+        );
       else if (typeof node?.type === "function")
         visit(
           node.type(node.props),
           inDailyPause || node.type === DailyRitualOptions,
+          parent,
+          grandparent,
         );
       else if (node?.props) {
+        nodes.push({ ...node, parent, grandparent, inDailyPause });
         if (node.props.onPress) {
           const label =
             node.props.accessibilityLabel ??
             node.props.title ??
             textContent(node);
-          controls.push({ label, props: node.props, inDailyPause });
+          controls.push({
+            label,
+            props: node.props,
+            inDailyPause,
+            parent,
+            grandparent,
+          });
         }
-        visit(node.props.children, inDailyPause);
+        visit(node.props.children, inDailyPause, node, parent);
       }
     }
     visit(TodayScreen());
-    return controls;
+    return { controls, nodes };
   };
 }
+
+test("Today inserts progress after mood and keeps the four quick-action routes and existing sections", () => {
+  const quickActions = [
+    ["Breathe", ["breathing", { durationSec: 180 }]],
+    ["Reflect", ["reflection", {}]],
+    ["Sleep", ["sleep", {}]],
+    ["Focus", ["grounding", {}]],
+  ];
+  const habit = (
+    id,
+    schedule,
+    status = "active",
+    goal = { type: "completion" },
+  ) => ({
+    id,
+    schedule,
+    status,
+    goal,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    revisions: [{ day: "2026-11-01", schedule, status, goal }],
+  });
+  const habits = [
+    habit("complete", { type: "daily" }),
+    habit("partial", { type: "daily" }, "active", {
+      type: "quantity",
+      target: 2,
+      unit: "cups",
+    }),
+    habit("flexible", { type: "weekly", daysPerWeek: 2 }),
+    habit("future", { type: "weekdays", days: [(now().getDay() + 1) % 7] }),
+    habit("paused", { type: "daily" }, "paused"),
+  ];
+  for (const [platform, width, fontScale] of [
+    ["android", 320, 1],
+    ["android", 320, 1.5],
+    ["ios", 390, 1],
+    ["ios", 390, 1.5],
+  ]) {
+    for (const resolved of ["light", "dark"]) {
+      const destinations = [];
+      const app = {
+        user: { name: "Sage Test" },
+        data: {
+          checkins: [{ ...today, mood: "Okay" }],
+          sessions: [],
+          reflections: [],
+          preferences: [],
+          reminders: [],
+          habits,
+          habitProgress: [
+            { habitId: "complete", day: today.day, amount: 1, complete: true },
+            { habitId: "partial", day: today.day, amount: 1, complete: false },
+            {
+              habitId: "partial",
+              day: "2026-11-04",
+              amount: 2,
+              complete: true,
+            },
+            { habitId: "flexible", day: today.day, amount: 1, complete: true },
+            { habitId: "paused", day: today.day, amount: 1, complete: true },
+          ],
+        },
+        pendingWrites: [],
+        navigate: (...args) => destinations.push(args),
+      };
+      const render = todayScreen(app, {
+        platform,
+        width,
+        fontScale,
+        resolved,
+      });
+      const { nodes, controls } = render();
+      function indexOf(type, text) {
+        return nodes.findIndex(
+          (node) =>
+            node.type === type &&
+            (text === undefined || node.props.children.includes(text)),
+        );
+      }
+      const order = [
+        indexOf("AppText", "How are you feeling today?"),
+        indexOf("TodayProgressCard"),
+        indexOf("AppText", "Today’s Moment"),
+        ...quickActions.map(([label]) => indexOf("AppText", label)),
+        indexOf("AppText", "Your Journey"),
+        indexOf("TodayHabits"),
+        indexOf("AppText", "Explore More"),
+        indexOf("AppText", "Your Daily Pause"),
+      ];
+      assert.ok(
+        order.every((index, i) => index > (order[i - 1] ?? -1)),
+        `Unexpected Today section order on ${platform} ${resolved}: ${order}`,
+      );
+      const progressCards = nodes.filter(
+        (node) => node.type === "TodayProgressCard",
+      );
+      assert.equal(progressCards.length, 1);
+      const progress = progressCards[0].props;
+      assert.equal(progress.routine.completedCount, 1);
+      assert.deepEqual(progress.habits, { completed: 1, scheduled: 2 });
+      const habitCard = nodes.find(({ type }) => type === "TodayHabits");
+      assert.equal(habitCard.props.daily.done, progress.habits.completed);
+      assert.equal(
+        habitCard.props.daily.fixed.length,
+        progress.habits.scheduled,
+      );
+      progress.onViewDetails();
+      assert.deepEqual(destinations.pop(), ["journey"]);
+
+      const artwork = new Set();
+      const rows = new Set();
+      for (const [label, destination] of quickActions) {
+        const buttons = controls.filter(
+          (item) => !item.inDailyPause && item.label === label,
+        );
+        assert.equal(buttons.length, 1, label);
+        const [{ props, parent }] = buttons;
+        rows.add(parent);
+        assert.equal(props.accessibilityRole, "button", label);
+        assert.ok(!props.disabled, label);
+        const image = nodes.find(
+          (node) =>
+            node.type === "Image" &&
+            (node.parent?.props === props || node.grandparent?.props === props),
+        );
+        assert.equal(image?.props.resizeMode, "cover", label);
+        assert.equal(image.props.accessible, false, label);
+        artwork.add(image.props.source);
+        const style = (pressed) =>
+          Object.assign({}, ...[props.style({ pressed })].flat());
+        assert.equal(style(false).flex, 1, label);
+        assert.ok(style(false).minHeight >= 44, label);
+        assert.ok(style(true).opacity < style(false).opacity, label);
+        props.onPress();
+        assert.deepEqual(destinations.splice(0), [destination], label);
+      }
+      assert.equal(rows.size, 1, "the four actions share one row");
+      const [row] = rows;
+      const rowStyle = Object.assign({}, ...[row.props.style].flat());
+      assert.equal(
+        rowStyle.flexWrap ?? "nowrap",
+        resolved === "light" && (fontScale > 1.3 || width < 310)
+          ? "wrap"
+          : "nowrap",
+        "the actions stay in one row at standard sizes and reflow for large light-mode text",
+      );
+      assert.equal(artwork.size, 4, "each action uses its own artwork");
+
+      app.data.habitProgress = app.data.habitProgress.filter(
+        ({ habitId }) => habitId !== "complete",
+      );
+      const afterUndo = render().nodes.find(
+        (node) => node.type === "TodayProgressCard",
+      );
+      assert.deepEqual(afterUndo.props.habits, { completed: 0, scheduled: 2 });
+    }
+  }
+});
 
 test("Today shortcuts and Daily Pause controls keep their real destinations and settings", async () => {
   const destinations = [];
@@ -512,6 +775,8 @@ test("Today shortcuts and Daily Pause controls keep their real destinations and 
       reflections: [],
       preferences: [],
       reminders: [],
+      habits: [],
+      habitProgress: [],
     },
     pendingWrites: [],
     navigate: (...args) => destinations.push(args),
@@ -525,9 +790,9 @@ test("Today shortcuts and Daily Pause controls keep their real destinations and 
       });
     },
   };
-  const controls = todayControls(app);
+  const render = todayScreen(app);
   function control(label, dailyPause = false) {
-    const matches = controls().filter(
+    const matches = render().controls.filter(
       (item) => item.label === label && (!dailyPause || item.inDailyPause),
     );
     assert.equal(
@@ -540,11 +805,60 @@ test("Today shortcuts and Daily Pause controls keep their real destinations and 
   }
   const press = (label, dailyPause) => control(label, dailyPause).onPress();
 
-  for (const [label, route] of [
-    ["Guided Programs", "plan"],
+  press("See all practices");
+  assert.deepEqual(destinations.pop(), ["explore", { resetExplore: true }]);
+
+  const shortcuts = [
+    ["Guided Programs", "guided-programs"],
     ["Wellness Toolkit", "toolkit"],
     ["Check-Ins", "checkin"],
+  ];
+  const cardStyle = ({ props }) =>
+    Object.assign({}, ...props.style({ pressed: false }));
+  for (const [fontScale, theme] of [
+    [1, "light"],
+    [1, "dark"],
+    [1.5, "light"],
+    [1.5, "dark"],
   ]) {
+    const { controls: rendered } = todayScreen(app, {
+      fontScale,
+      resolved: theme,
+    })();
+    const [guided, toolkit, checkIns] = shortcuts.map(([label]) => {
+      const cards = rendered.filter((item) => item.label === label);
+      assert.equal(cards.length, 1);
+      assert.equal(cards[0].props.accessibilityRole, "button");
+      return cards[0];
+    });
+    assert.equal(guided.parent, toolkit.parent, "upper cards share one row");
+    assert.equal(
+      guided.grandparent,
+      checkIns.parent,
+      "Check-Ins is outside the upper row",
+    );
+    const row = guided.parent.props.style;
+    const group = checkIns.parent.props.style;
+    assert.equal(row.flexDirection, "row");
+    assert.equal(row.alignItems, "stretch");
+    assert.ok(row.gap >= 12 && row.gap <= 14);
+    assert.equal(group.gap, row.gap);
+    const styles = [guided, toolkit, checkIns].map(cardStyle);
+    assert.equal(styles[0].flex, 1);
+    assert.equal(styles[1].flex, 1);
+    assert.equal(styles[0].minHeight, styles[1].minHeight);
+    assert.ok(styles[0].minHeight >= 140 && styles[0].minHeight <= 150);
+    assert.ok(styles[2].minHeight >= 110 && styles[2].minHeight <= 120);
+    assert.ok(
+      styles.every(
+        (style) =>
+          style.height === undefined &&
+          style.borderRadius === styles[0].borderRadius,
+      ),
+    );
+  }
+
+  for (const [label, route] of shortcuts) {
     press(label);
     assert.deepEqual(destinations.pop(), [route]);
   }

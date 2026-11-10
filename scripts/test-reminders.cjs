@@ -12,6 +12,7 @@ function harness() {
   let clearedResponses = 0;
   let listenerRemoved = false;
   let granted = true;
+  let channelImportance = 3;
   let permissionRequests = 0;
   const scheduled = [];
   const channels = [];
@@ -23,7 +24,7 @@ function harness() {
     storage = new Map();
   let calls = 0;
   const notifications = {
-    AndroidImportance: { DEFAULT: 3 },
+    AndroidImportance: { DEFAULT: 3, NONE: 0 },
     AndroidNotificationVisibility: { PRIVATE: 0 },
     SchedulableTriggerInputTypes: {
       DAILY: "daily",
@@ -34,6 +35,11 @@ function harness() {
       channels.push({ id, options });
     },
     getPermissionsAsync: async () => ({ granted }),
+    getNotificationChannelAsync: async () => ({
+      importance: channelImportance,
+    }),
+    getAllScheduledNotificationsAsync: async () =>
+      [...active].map((identifier) => ({ identifier })),
     requestPermissionsAsync: async () => {
       permissionRequests++;
       return { granted };
@@ -127,6 +133,9 @@ function harness() {
     setPermission: (allowed) => {
       granted = allowed;
     },
+    setChannelBlocked: (blocked) => {
+      channelImportance = blocked ? 0 : 3;
+    },
     permissionRequests: () => permissionRequests,
     setLastResponse: (response) => {
       lastResponse = response;
@@ -145,6 +154,174 @@ const reminder = {
   days: [1],
   enabled: true,
 };
+
+test("saved reminder preferences only count as scheduled when device permission and IDs are current", async () => {
+  const h = harness();
+  h.release("active");
+  await h.api.restoreDeviceReminders("owner", [reminder]);
+  let delivery = await h.api.readReminderDelivery("owner");
+  assert.equal(delivery.permission, "allowed");
+  assert.deepEqual([...delivery.scheduled], [reminder.id]);
+
+  h.setPermission(false);
+  delivery = await h.api.readReminderDelivery("owner");
+  assert.equal(delivery.permission, "blocked");
+  assert.equal(delivery.scheduled.size, 0);
+
+  h.setPermission(true);
+  h.setChannelBlocked(true);
+  assert.equal(await h.api.readReminderPermission(), "blocked");
+  await assert.rejects(
+    h.api.scheduleReminder(reminder),
+    /Notifications are not allowed/,
+  );
+
+  h.setChannelBlocked(false);
+  h.active.clear();
+  delivery = await h.api.readReminderDelivery("owner");
+  assert.equal(delivery.permission, "allowed");
+  assert.equal(delivery.scheduled.size, 0);
+});
+
+function loadHelper(file, dependencies = {}) {
+  const source = fs.readFileSync(path.join(__dirname, file), "utf8");
+  const exports = {};
+  vm.runInNewContext(
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS },
+    }).outputText,
+    {
+      exports,
+      require: (name) => {
+        if (name in dependencies) return dependencies[name];
+        throw Error(`Unexpected dependency: ${name}`);
+      },
+    },
+  );
+  return exports;
+}
+
+test("the shared reminder field accepts typed or pasted HH:MM and rejects invalid times", () => {
+  const exports = loadHelper("../src/reminder-time.ts");
+  assert.equal(exports.formatReminderTime("0830"), "08:30");
+  assert.equal(exports.formatReminderTime("19:15"), "19:15");
+  assert.equal(exports.formatReminderTime("08:"), "08");
+  assert.equal(exports.formatReminderTime("083"), "08:3");
+  assert.equal(exports.validReminderTime("00:00"), true);
+  assert.equal(exports.validReminderTime("23:59"), true);
+  assert.equal(exports.validReminderTime("24:00"), false);
+  assert.equal(exports.validReminderTime("13:60"), false);
+});
+
+test("the reminder picker round-trips every clock minute and formats midnight and noon", () => {
+  const clock = loadHelper("../src/reminder-time.ts");
+  for (let hour = 0; hour < 24; hour++) {
+    for (let minute = 0; minute < 60; minute++) {
+      const time = { hour, minute };
+      const selected = clock.toReminderClock12(time);
+      assert.ok(selected.hour >= 1 && selected.hour <= 12);
+      assert.equal(selected.period, hour < 12 ? 0 : 1);
+      const restored = clock.fromReminderClock12(selected);
+      assert.equal(restored.hour, hour);
+      assert.equal(restored.minute, minute);
+    }
+  }
+  assert.equal(clock.reminderClockLabel({ hour: 0, minute: 0 }), "12:00 AM");
+  assert.equal(clock.reminderClockLabel({ hour: 12, minute: 0 }), "12:00 PM");
+  assert.equal(clock.reminderClockLabel({ hour: 20, minute: 30 }), "08:30 PM");
+});
+
+test("Gentle Reminders commits picker values and repeat days with the actual native scheduling helper", async () => {
+  const clock = loadHelper("../src/reminder-time.ts");
+  const h = harness();
+  h.release("first-alert");
+  const { isMatchingReminder, saveReminder } = loadHelper(
+    "../src/save-reminder.ts",
+    {
+      "react-native": { Platform: { OS: "android" } },
+      "./notifications": h.api,
+    },
+  );
+  const saved = [];
+  const { id, ...record } = {
+    ...reminder,
+    ...clock.fromReminderClock12({ hour: 12, minute: 0, period: 0 }),
+    days: [1, 3],
+  };
+  const input = {
+    owner: "test-owner",
+    id,
+    record,
+    save: async (value) => {
+      saved.push(value);
+      return { id };
+    },
+  };
+  const result = await saveReminder(input);
+  assert.equal(result.deviceScheduled, true);
+  assert.equal(saved[0].hour, 0);
+  assert.equal(saved[0].minute, 0);
+  assert.equal(saved[0].permission, "granted");
+  assert.deepEqual(saved[0].days, [1, 3]);
+  assert.equal(isMatchingReminder({ ...record, days: [3, 1] }, record), true);
+  assert.deepEqual(
+    h.scheduled.map(({ trigger }) => trigger.weekday),
+    [2, 4],
+  );
+  assert.ok(
+    h.scheduled.every(
+      ({ content, trigger }) =>
+        content.data.screen === "checkin" &&
+        trigger.hour === 0 &&
+        trigger.minute === 0,
+    ),
+  );
+
+  const noon = {
+    ...record,
+    ...clock.fromReminderClock12({ hour: 12, minute: 0, period: 1 }),
+  };
+  await assert.rejects(
+    saveReminder({
+      ...input,
+      editing: true,
+      record: noon,
+      save: async () => {
+        throw new Error("Synthetic save failure");
+      },
+    }),
+    /Synthetic save failure/,
+  );
+  assert.deepEqual([...h.active], ["first-alert", "new-2"]);
+  assert.deepEqual(h.cancelled, ["new-3", "new-4"]);
+  assert.deepEqual(
+    h.scheduled.slice(2).map(({ trigger }) => trigger.hour),
+    [12, 12],
+  );
+
+  const updated = await saveReminder({ ...input, record: noon, editing: true });
+  assert.equal(updated.deviceScheduled, true);
+  assert.equal(saved[1].id, id);
+  assert.equal(saved[1].hour, 12);
+  assert.deepEqual([...h.active], ["new-5", "new-6"]);
+});
+
+test("Gentle Reminders web preferences do not claim delivery", async () => {
+  const { saveReminder } = loadHelper("../src/save-reminder.ts", {
+    "react-native": { Platform: { OS: "web" } },
+    "./notifications": {
+      scheduleReminder: async () => ({ ids: [], permission: "web-preview" }),
+    },
+  });
+  const result = await saveReminder({
+    owner: "test-owner",
+    id: "web",
+    record: reminder,
+    save: async () => ({ id: "web" }),
+  });
+  assert.equal(result.deviceScheduled, false);
+  assert.match(result.message, /Open the mobile app/);
+});
 async function waitUntil(predicate) {
   for (let i = 0; i < 100; i++) {
     if (predicate()) return;

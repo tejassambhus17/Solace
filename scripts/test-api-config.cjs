@@ -136,6 +136,24 @@ test("HTTPS loopback and emulator-only addresses cannot masquerade as release AP
   }
 });
 
+test("the opted-in Android USB QA release accepts only its exact HTTPS loopback endpoint", () => {
+  const configuredUrl = "https://127.0.0.1:3164";
+  const options = { platform: "android", development: false, androidUsbQa: true };
+  assert.equal(resolveApiConfiguration({ ...options, configuredUrl }).baseUrl, configuredUrl);
+  for (const alternate of [
+    "http://127.0.0.1:3164",
+    "https://127.1:3164",
+    "https://localhost:3164",
+    "https://127.0.0.1:3001",
+    "https://127.0.0.1:3164/alternate",
+    "https://192.168.1.1:3164",
+  ])
+    assert.equal(resolveApiConfiguration({ ...options, configuredUrl: alternate }).baseUrl, null);
+  assert.equal(resolveApiConfiguration({ ...options, androidUsbQa: false, configuredUrl }).baseUrl, null);
+  assert.equal(resolveApiConfiguration({ ...options, platform: "ios", configuredUrl }).baseUrl, null);
+  assert.equal(resolveApiConfiguration({ ...options, platform: "web", configuredUrl }).baseUrl, null);
+});
+
 test("release rejects private-network endpoints and keeps setup instructions out of the app", () => {
   for (const url of [
     "https://10.12.0.5",

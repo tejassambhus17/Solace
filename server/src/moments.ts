@@ -280,7 +280,7 @@ export async function generateMoment(
     environment?: MomentEnvironment;
     memories: MomentMemory[];
   },
-  canFallback?: () => boolean,
+  options?: { signal?: AbortSignal; canRetry?: () => boolean },
 ): Promise<MomentResult> {
   if (isUrgent(input.feeling))
     return {
@@ -314,7 +314,7 @@ export async function generateMoment(
       template: base,
       approvedPreference: selection.selectedMemory?.text || null,
     },
-    { canFallback },
+    options,
   );
   const parsed = momentSchema.safeParse(output);
   if (!parsed.success) throw new Error("AI_INVALID_ACTIVITY");

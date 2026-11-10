@@ -105,3 +105,21 @@ The browser is a preview of shared mobile source. Native accessibility, backgrou
 Compared the light and dark references side by side with the 394 × 852 browser preview. The result follows the mountain header, segmented reporting switch, three metric cards, week calendar, lotus reflection banner, goal, milestone row and saved story. Existing Solace assets supply the landscape and lotus. Milestones use the app's icon set, and the phone mockup's fixed values are replaced by the signed-in account's actual data. The captures use a synthetic account.
 
 The tested 320 and 430 pixel viewports had no horizontal overflow. Longer calendars and larger text can scroll above the existing bottom navigation. The Android debug check reached the saved-story links by scrolling. The browser does not establish iPhone safe areas, Dynamic Type, VoiceOver or Liquid Glass appearance; the native navigation source was unchanged.
+
+## Companion and Live Voice — 7 November 2026
+
+Compared the supplied Companion and Voice references against the previous web export and the updated production Expo web export. The new composer orders dictation, message, Send and Live Voice, with the conversation actions in the overflow. At 320 × 568, the input retained 134 px and all three icon controls hit-tested at 44 px or larger. Quick Reset scrolled clear of the composer, opened the existing breathing player and returned to the conversation.
+
+The final Voice captures show the cinematic lotus and halo, centered title and guidance, accessible session controls and elapsed status in both themes. Standard viewport checks passed at 320 × 568, 375 × 667, 390 × 844 and 430 × 932. The 320 × 480 check used 1.65× CSS text enlargement and reached End through the short-screen scroll layout. The 320 × 400 check simulated a keyboard-sized viewport with the chat draft intact.
+
+The 13 final layout scenarios and nine interaction scenarios ran in Chrome with no uncaught exceptions. The interaction pass used a disposable SQLite account, an in-browser synthetic WebRTC peer and fixture responses for transcription and provider status. It exercised history and draft restoration, editable dictation, text persistence, connection errors and recovery, mute, elapsed time, and audio cleanup. Local evidence is in `work/voice-overhaul-qa/`. Native keyboard, system audio routing, screen reader behavior and device performance need device verification.
+
+Final result: passed for the tested browser layouts and interactions.
+
+## Personalized wellness goal onboarding
+
+Compared the supplied design with the live app at 390 × 844, selecting Feel calmer and Understand my feelings in both. The screen preserves the centered lotus, scenic blush mountain hero, illustrated horizontal cards, checkmarks, and wide purple Continue action. The app uses the existing Solace lotus, Cormorant titles, and Inter descriptions. The two progress dots reflect the goal picker and welcome. [Side-by-side comparison](work/wellness-goals-qa/reference-comparison.jpg)
+
+The initial review found missing checkbox state on the web, insufficient text separation over the hero in some positions, and a cropped dark stones illustration. The confirmation build includes keyboard toggling and ARIA state, a local dark scrim and a centered stones crop. Sampled subtitle contrast in the final dark screenshot was at least 5.62:1. The 320 px view scrolls to the action and keeps checkmarks and labels usable. [Compact dark](work/wellness-goals-qa/dark-320-actions.png) · [Light selected](work/wellness-goals-qa/light-390-reference-selection.png) · [Dark selected](work/wellness-goals-qa/dark-430-selected.png) · [Rendered browser results](work/wellness-goals-qa/browser-result.json)
+
+Final result: passed for the tested browser layouts and interactions.

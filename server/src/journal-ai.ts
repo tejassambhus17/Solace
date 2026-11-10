@@ -93,7 +93,7 @@ export async function reflectOnJournal(
     return { provider: "offline", support: true, reflection: reply };
   }
   const generated = await structuredOutput(
-    { ...ai, openAIFallback: false },
+    ai,
     "journal_reflection",
     responseFormat,
     [
@@ -105,7 +105,7 @@ export async function reflectOnJournal(
       "Set practice to none unless you actually offer grounding and the user requested grounding.",
     ].join(" "),
     { selectedJournalExcerpt: excerpt },
-    { signal, maxTokens: 650 },
+    { signal, maxTokens: 650, canRetry: () => false },
   );
   const parsed = responseSchema.safeParse(generated);
   if (!parsed.success) throw new Error("AI_INVALID_RESPONSE");

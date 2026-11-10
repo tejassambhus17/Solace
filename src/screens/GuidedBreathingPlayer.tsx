@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   Animated,
   Image,
@@ -9,8 +9,12 @@ import {
   StyleSheet,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import type { SolaceMoment } from "../../server/src/moment-contract";
 import { AmbientSound } from "../AmbientSound";
 import { EnvironmentScene } from "../Environment";
@@ -27,11 +31,15 @@ import {
   Button,
   coverImageStyle,
   Icon,
-  Screen,
   useNavigationInset,
 } from "../ui";
+import { GuidedEnvironmentSelector } from "./MomentEnvironmentPicker";
 
 type Exit = { resume: boolean; dismiss: () => void; confirm: () => void };
+
+const RING_ART = require("../../assets/guided-breath-rings.png");
+const TWILIGHT_ART = require("../../assets/today-twilight-lotus.jpg");
+const DAYLIGHT_ART = require("../../assets/redesign-explore-scene-light.jpg");
 
 export function GuidedBreathingPlayer({
   activity,
@@ -40,6 +48,7 @@ export function GuidedBreathingPlayer({
   breathingMotion,
   elapsedMs,
   environment,
+  soundEnvironment,
   running,
   started,
   sound,
@@ -49,7 +58,7 @@ export function GuidedBreathingPlayer({
   restart,
   leave,
   exit,
-  children,
+  onEnvironmentChange,
 }: {
   activity: SolaceMoment;
   position: ReturnType<typeof momentPosition>;
@@ -57,6 +66,7 @@ export function GuidedBreathingPlayer({
   breathingMotion: Animated.Value;
   elapsedMs: number;
   environment: MomentEnvironment;
+  soundEnvironment: MomentEnvironment;
   running: boolean;
   started: boolean;
   sound: boolean;
@@ -66,26 +76,63 @@ export function GuidedBreathingPlayer({
   restart: () => void;
   leave: () => void;
   exit?: Exit;
-  children: React.ReactNode;
+  onEnvironmentChange: (environment: MomentEnvironment) => void;
 }) {
-  const { colors, resolved } = useTheme();
-  const dark = resolved === "dark";
+  const { colors } = useTheme();
   const { fontScale, height, width } = useWindowDimensions();
   const { bottom, left, right, top } = useSafeAreaInsets();
-  const gutter = Math.max(useScreenGutter(), left, right);
-  const bottomClearance = Math.max(useNavigationInset(), bottom);
-  const compact = height < 480;
-  const transportClearance = 150 + Math.max(0, fontScale - 1) * 36;
-  const stageHeight = Math.max(
-    180,
-    Math.min(
-      550,
-      height * 0.605,
-      height - top - bottomClearance - transportClearance,
-    ),
+  const gutter = useScreenGutter();
+  const extraBottom = Math.max(0, useNavigationInset() - bottom);
+  const [viewport, setViewport] = useState({ height: 0, width: 0 });
+  const measureViewport = useCallback(
+    ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+      const next = {
+        height: Math.round(layout.height),
+        width: Math.round(layout.width),
+      };
+      setViewport((current) =>
+        current.height === next.height && current.width === next.width
+          ? current
+          : next,
+      );
+    },
+    [],
   );
-  const ringSize = Math.min(350, width * 0.86, stageHeight * 0.85);
+  const usableHeight =
+    viewport.height || Math.max(0, height - top - bottom - 48);
+  const usableWidth = viewport.width || Math.max(0, width - left - right);
+  const compact = usableHeight < 560;
+  const artworkSpace = Math.min(64, Math.max(0, usableHeight - 640) * 0.32);
+  const ringSize = Math.round(
+    Math.min(258, usableWidth * 0.61, Math.max(92, usableHeight * 0.39)),
+  );
+  // Very large text uses its own space beneath the ring instead of covering it.
+  const phaseInsideRing = fontScale <= 1.25 && ringSize >= 138;
   const elapsed = Math.floor(elapsedMs / 1000);
+  const cueSeconds = rhythm?.remaining ?? position.stepRemaining;
+  const phase = running
+    ? (rhythm?.phase ?? "Follow along")
+    : started
+      ? "Paused"
+      : "Ready to begin";
+  const secondsText = `${cueSeconds} ${cueSeconds === 1 ? "second" : "seconds"}`;
+  const phaseDetail = running
+    ? secondsText
+    : !started
+      ? `${activity.durationSec / 60} min · Timed`
+      : rhythm
+        ? `${rhythm.phase} · ${cueSeconds}s`
+        : `${cueSeconds}s in this step`;
+  const phaseDetailLabel =
+    started && !running
+      ? `${rhythm ? `${rhythm.phase}, ` : ""}${secondsText} remaining`
+      : undefined;
+  const playLabel = running
+    ? "Pause practice"
+    : started
+      ? "Resume practice"
+      : "Begin practice";
+  const progressText = `${elapsed} of ${activity.durationSec} seconds`;
   const scale = useMemo(
     () =>
       breathingMotion.interpolate({
@@ -94,201 +141,208 @@ export function GuidedBreathingPlayer({
       }),
     [breathingMotion],
   );
-
-  const cue = rhythm?.phase ?? position.step.title;
-  const cueSeconds = rhythm?.remaining ?? position.stepRemaining;
-  const phase = running ? cue : started ? "Paused" : "Ready to begin";
-  const playLabel = running
-    ? "Pause practice"
-    : started
-      ? "Resume practice"
-      : "Begin practice";
-  const stageInk = dark ? "#F7ECF4" : "#422C53";
-  const stageMuted = dark ? "#E5D2EE" : "#5F4B70";
-  return (
-    <Screen scroll={false} style={styles.frame}>
-      <View style={[styles.header, { paddingHorizontal: gutter }]}>
-        <PlayerControl
-          label="Close breathing practice"
-          icon="close"
-          onPress={leave}
-        />
-        <AppText
-          variant="label"
-          accessibilityRole="header"
-          style={styles.headerTitle}
-        >
-          Breathing Practice
-        </AppText>
-        <AmbientSound
-          compact
-          environment={environment}
-          running={running}
-          enabled={sound}
-          onToggle={toggleSound}
-        />
-      </View>
-      <ScrollView
-        style={styles.scroller}
-        contentContainerStyle={{
-          paddingBottom: bottomClearance + spacing.bottom,
-        }}
-        showsVerticalScrollIndicator={false}
+  const phaseCopy = (
+    <View
+      style={[
+        styles.phaseCopy,
+        phaseInsideRing && { maxWidth: ringSize * 0.6 },
+      ]}
+    >
+      <AppText
+        variant="heading"
+        accessibilityLiveRegion="polite"
+        style={[styles.phase, compact && styles.compactPhase]}
       >
-        <View style={[styles.stage, { minHeight: stageHeight }]}>
-          <View
-            pointerEvents="none"
-            style={[
-              StyleSheet.absoluteFill,
-              artGradient(
-                dark
-                  ? `linear-gradient(180deg, ${colors.bg} 0%, #2A2045 40%, #322649 55%, #49325A 72%, ${colors.bg} 100%)`
-                  : `linear-gradient(180deg, ${colors.bg} 0%, #EDDCF2 38%, #E5CFE9 55%, #E2C9E5 65%, ${colors.bg} 100%)`,
-              ),
-            ]}
+        {phase}
+      </AppText>
+      <AppText
+        variant="caption"
+        color={colors.muted}
+        accessibilityLabel={phaseDetailLabel}
+        style={styles.timeText}
+      >
+        {phaseDetail}
+      </AppText>
+    </View>
+  );
+
+  return (
+    <View style={[styles.frame, { backgroundColor: colors.bg }]}>
+      <PracticeBackdrop environment={environment} running={running} />
+      <SafeAreaView style={styles.frame}>
+        <View style={[styles.header, { paddingHorizontal: gutter }]}>
+          <PlayerControl
+            label="Close breathing practice"
+            icon="close"
+            onPress={leave}
           />
-          <View pointerEvents="none" style={styles.landscape}>
-            {environment === "twilight" ? (
-              <Image
-                accessible={false}
-                source={require("../../assets/today-twilight-lotus.jpg")}
-                style={coverImageStyle}
-                resizeMode="cover"
-                fadeDuration={0}
-              />
-            ) : (
-              <EnvironmentScene
-                environment={environment}
-                active={running}
-                style={[StyleSheet.absoluteFill, { borderRadius: 0 }]}
-              />
-            )}
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                artGradient(
-                  dark
-                    ? `linear-gradient(180deg, #322649 0%, #32264900 39%, #1814260A 68%, ${colors.bg} 100%)`
-                    : `linear-gradient(180deg, #E5CFE9 0%, #E5CFE94D 32%, #E5CFE912 64%, ${colors.bg} 100%)`,
-                ),
-              ]}
-            />
-          </View>
-          <View
-            style={[
-              styles.phaseWrap,
-              { paddingBottom: Math.max(44, stageHeight * 0.16) },
-            ]}
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={styles.headerTitle}
           >
-            <Animated.Image
-              pointerEvents="none"
-              accessible={false}
-              source={require("../../assets/guided-breath-rings.png")}
-              resizeMode="contain"
-              fadeDuration={0}
-              style={{
-                position: "absolute",
-                width: ringSize,
-                height: ringSize,
-                transform: [{ scale }],
-              }}
-            />
-            <View
-              style={[
-                styles.phaseCopy,
-                { width: ringSize * (compact ? 0.72 : 0.62) },
-              ]}
-            >
-              <AppText
-                variant="heading"
-                accessibilityLiveRegion="polite"
-                color={stageInk}
-                style={[styles.phase, compact && styles.compactPhase]}
-              >
-                {phase}
-              </AppText>
-              <AppText color={stageMuted} style={styles.seconds}>
-                {running
-                  ? `${cueSeconds} ${cueSeconds === 1 ? "second" : "seconds"}`
-                  : started
-                    ? "Your time is kept"
-                    : `${activity.durationSec / 60} min · Timed`}
-              </AppText>
-            </View>
-          </View>
-        </View>
-        <View style={[styles.transport, { paddingHorizontal: gutter }]}>
-          <View style={styles.controls}>
-            <PlayerControl
-              label="Restart"
-              icon="refresh-outline"
-              disabled={!started}
-              onPress={restart}
-            />
-            <PlayerControl
-              label={playLabel}
-              icon={running ? "pause" : "play"}
-              primary
-              onPress={togglePlay}
-            />
-            <PlayerControl label="Stop practice" icon="stop" onPress={leave} />
-          </View>
-          <AppText variant="caption" style={styles.centered}>
-            Step {position.index + 1} of {activity.steps.length} ·{" "}
             {activity.title}
           </AppText>
-          <View
-            accessibilityRole="progressbar"
-            accessibilityLabel="Moment progress"
-            aria-valuemin={0}
-            aria-valuemax={activity.durationSec}
-            aria-valuenow={elapsed}
-            aria-valuetext={`${elapsed} of ${activity.durationSec} seconds`}
-            style={[styles.progress, { backgroundColor: colors.border }]}
-          >
-            <View
-              style={{
-                height: "100%",
-                width: `${(elapsedMs / (activity.durationSec * 1000)) * 100}%`,
-                backgroundColor: colors.lavender,
-              }}
+          <View style={styles.sound}>
+            <AmbientSound
+              compact
+              environment={soundEnvironment}
+              running={running}
+              enabled={sound}
+              onToggle={toggleSound}
             />
           </View>
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={styles.centered}
-          >
-            {momentClockText(elapsed)} / {momentClockText(activity.durationSec)}
-          </AppText>
-          {started && !running && (
-            <AppText
-              variant="caption"
-              color={colors.muted}
-              style={styles.centered}
-            >
-              {cue} · {cueSeconds} sec remaining
-            </AppText>
-          )}
-          {!!notice && (
-            <AppText
-              variant="caption"
-              accessibilityLiveRegion="polite"
-              style={styles.centered}
-            >
-              {notice}
-            </AppText>
-          )}
-          <AppText
-            variant="caption"
-            color={colors.muted}
-            style={[styles.centered, { marginTop: 6 }]}
-          >
-            {position.step.instruction}
-          </AppText>
-          {children}
         </View>
-      </ScrollView>
+        <ScrollView
+          onLayout={measureViewport}
+          bounces={false}
+          overScrollMode="never"
+          contentInsetAdjustmentBehavior="never"
+          showsVerticalScrollIndicator={false}
+          style={styles.frame}
+          contentContainerStyle={[
+            styles.scroller,
+            {
+              paddingHorizontal: gutter,
+              paddingTop: compact ? spacing.compact : spacing.row,
+              paddingBottom:
+                extraBottom +
+                (compact
+                  ? spacing.compact
+                  : Math.min(64, usableHeight * 0.085) + artworkSpace),
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.practice,
+              { gap: compact ? spacing.compact : spacing.row },
+            ]}
+          >
+            <View style={styles.stage}>
+              <View
+                style={[
+                  styles.ringPlate,
+                  { minHeight: Math.ceil(ringSize * 1.1) },
+                ]}
+              >
+                <Animated.Image
+                  pointerEvents="none"
+                  accessible={false}
+                  source={RING_ART}
+                  resizeMode="contain"
+                  fadeDuration={0}
+                  testID="guided-breathing-ring"
+                  style={[
+                    styles.ring,
+                    {
+                      width: ringSize,
+                      height: ringSize,
+                      transform: [{ scale }],
+                    },
+                  ]}
+                />
+                {phaseInsideRing && phaseCopy}
+              </View>
+              {!phaseInsideRing && phaseCopy}
+            </View>
+            <View style={styles.timer}>
+              <View style={styles.timerLabels}>
+                <AppText variant="label" color={colors.lavenderText}>
+                  Step {position.index + 1} of {activity.steps.length}
+                </AppText>
+                <AppText variant="caption" style={styles.timeText}>
+                  {momentClockText(elapsed)} /{" "}
+                  {momentClockText(activity.durationSec)}
+                </AppText>
+              </View>
+              <View
+                accessibilityRole="progressbar"
+                accessibilityLabel="Moment progress"
+                accessibilityValue={{
+                  min: 0,
+                  max: activity.durationSec,
+                  now: elapsed,
+                  text: progressText,
+                }}
+                aria-valuemin={0}
+                aria-valuemax={activity.durationSec}
+                aria-valuenow={elapsed}
+                aria-valuetext={progressText}
+                style={styles.progress}
+              >
+                {activity.steps.map((step, index) => (
+                  <View
+                    aria-hidden
+                    key={index}
+                    style={[
+                      styles.progressSegment,
+                      {
+                        flex: step.durationSec,
+                        backgroundColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={{
+                        height: "100%",
+                        width: `${index < position.index ? 100 : index > position.index ? 0 : Math.max(0, (1 - position.stepRemaining / step.durationSec) * 100)}%`,
+                        backgroundColor: colors.lavenderText,
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+            <View
+              style={[
+                styles.guidance,
+                { borderColor: colors.border, backgroundColor: colors.surface },
+              ]}
+            >
+              <View style={styles.guidanceCopy}>
+                <AppText variant="heading">{position.step.title}</AppText>
+                <AppText color={colors.muted}>
+                  {position.step.instruction}
+                </AppText>
+                {!!notice && (
+                  <AppText
+                    color={colors.lavenderText}
+                    variant="caption"
+                    accessibilityLiveRegion="polite"
+                  >
+                    {notice}
+                  </AppText>
+                )}
+              </View>
+            </View>
+            <View style={styles.controls}>
+              <PlayerControl
+                label="Restart"
+                icon="refresh-outline"
+                disabled={!started}
+                onPress={restart}
+              />
+              <PlayerControl
+                label={playLabel}
+                icon={running ? "pause" : "play"}
+                primary
+                onPress={togglePlay}
+              />
+              <PlayerControl
+                label="Stop practice"
+                icon="stop"
+                onPress={leave}
+              />
+            </View>
+            <GuidedEnvironmentSelector
+              value={environment}
+              soundEnvironment={soundEnvironment}
+              onChange={onEnvironmentChange}
+            />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
       <Modal
         visible={!!exit}
         transparent
@@ -301,7 +355,7 @@ export function GuidedBreathingPlayer({
             contentContainerStyle={[
               styles.modal,
               {
-                paddingHorizontal: gutter,
+                paddingHorizontal: Math.max(gutter, left, right),
                 paddingTop: Math.max(gutter, top),
                 paddingBottom: Math.max(gutter, bottom),
               },
@@ -333,9 +387,81 @@ export function GuidedBreathingPlayer({
           </ScrollView>
         )}
       </Modal>
-    </Screen>
+    </View>
   );
 }
+
+const PracticeBackdrop = React.memo(function PracticeBackdrop({
+  environment,
+  running,
+}: {
+  environment: MomentEnvironment;
+  running: boolean;
+}) {
+  const { colors, resolved } = useTheme();
+  const dark = resolved === "dark";
+  return (
+    <View
+      pointerEvents="none"
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden
+      style={StyleSheet.absoluteFill}
+    >
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          artGradient(
+            dark
+              ? `linear-gradient(180deg, ${colors.bg} 0%, #2A2045 35%, #322649 65%, ${colors.bg} 100%)`
+              : `linear-gradient(180deg, ${colors.bg} 0%, #F1E8F7 34%, #ECE1F2 66%, ${colors.bg} 100%)`,
+          ),
+        ]}
+      />
+      {environment === "twilight" ? (
+        <View style={[styles.landscape, !dark && styles.daylightLandscape]}>
+          <Image
+            accessible={false}
+            source={dark ? TWILIGHT_ART : DAYLIGHT_ART}
+            style={coverImageStyle}
+            resizeMode={dark ? "contain" : "cover"}
+            resizeMethod={dark ? undefined : "scale"}
+            fadeDuration={0}
+          />
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              artGradient(
+                dark
+                  ? "linear-gradient(180deg, #302445 0%, #3024451A 43%, #16112044 100%)"
+                  : "linear-gradient(180deg, #ECE1F2 0%, #ECE1F2D9 13%, #ECE1F226 42%, transparent 68%)",
+              ),
+            ]}
+          />
+        </View>
+      ) : (
+        <>
+          <View style={StyleSheet.absoluteFill}>
+            <EnvironmentScene
+              environment={environment}
+              active={running}
+              style={styles.scene}
+            />
+          </View>
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              artGradient(
+                `linear-gradient(180deg, ${colors.bg}CC 0%, ${colors.bg}86 48%, ${colors.bg}AF 100%)`,
+              ),
+            ]}
+          />
+        </>
+      )}
+    </View>
+  );
+});
 
 function PlayerControl({
   label,
@@ -350,7 +476,8 @@ function PlayerControl({
   primary?: boolean;
   onPress: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const light = resolved === "light";
   return (
     <Pressable
       accessibilityRole="button"
@@ -363,8 +490,16 @@ function PlayerControl({
         styles.circle,
         primary && styles.mainCircle,
         {
-          backgroundColor: primary ? colors.lavenderSurface : colors.surface,
-          borderColor: primary ? colors.lavender : colors.border,
+          backgroundColor: primary
+            ? light
+              ? colors.primary
+              : colors.lavenderSurface
+            : colors.surface,
+          borderColor: primary
+            ? light
+              ? colors.accent
+              : colors.lavender
+            : colors.border,
         },
         (disabled || pressed) && { opacity: disabled ? 0.42 : 0.7 },
       ]}
@@ -372,74 +507,84 @@ function PlayerControl({
       <Icon
         name={icon}
         size={primary ? 24 : 19}
-        color={primary ? colors.lavenderText : colors.text}
+        color={primary && !light ? colors.lavenderText : colors.text}
       />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  frame: { flex: 1, paddingTop: 0, paddingBottom: 0, paddingHorizontal: 0 },
+  frame: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    minHeight: 48,
+    gap: spacing.compact,
     zIndex: 1,
-    paddingTop: 9,
   },
-  scroller: { flex: 1 },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 17, lineHeight: 23 },
-  stage: { justifyContent: "center", overflow: "hidden" },
+  headerTitle: { flex: 1, textAlign: "center" },
+  sound: { width: 48, alignItems: "center" },
+  scroller: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
+  practice: { width: "100%", maxWidth: 370 },
   landscape: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    height: "45%",
-    overflow: "hidden",
+    aspectRatio: 1100 / 591,
   },
-  phaseWrap: {
-    ...StyleSheet.absoluteFill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  phaseCopy: { alignItems: "center", paddingHorizontal: 4 },
+  daylightLandscape: { aspectRatio: 1040 / 518 },
+  scene: { flex: 1, minHeight: 0, borderRadius: 0 },
+  stage: { gap: spacing.compact, alignItems: "center" },
+  ringPlate: { width: "100%", justifyContent: "center", alignItems: "center" },
+  ring: { position: "absolute" },
+  phaseCopy: { alignItems: "center" },
   phase: {
     textAlign: "center",
-    fontSize: 30,
-    lineHeight: Platform.OS === "android" ? 37 : 34,
+    fontSize: 25,
+    lineHeight: Platform.OS === "android" ? 31 : 28,
   },
   compactPhase: {
-    fontSize: 25,
-    lineHeight: Platform.OS === "android" ? 32 : 29,
+    fontSize: 22,
+    lineHeight: Platform.OS === "android" ? 28 : 25,
   },
-  seconds: { textAlign: "center", fontVariant: ["tabular-nums"], marginTop: 1 },
-  transport: { alignItems: "stretch", gap: 8, paddingTop: 2 },
+  guidance: { borderWidth: 1, borderRadius: 16, padding: spacing.row },
+  guidanceCopy: { gap: 3 },
+  timeText: { textAlign: "center", fontVariant: ["tabular-nums"] },
+  timer: { gap: spacing.compact, paddingHorizontal: spacing.compact },
+  timerLabels: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
+  progress: {
+    width: "100%",
+    height: 5,
+    flexDirection: "row",
+    gap: 4,
+  },
+  progressSegment: {
+    height: "100%",
+    overflow: "hidden",
+    borderRadius: 3,
+  },
   controls: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    gap: 24,
-    marginBottom: 5,
+    gap: spacing.card,
   },
   circle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
   },
-  mainCircle: { width: 65, height: 65, borderRadius: 33 },
-  centered: { textAlign: "center" },
-  progress: {
-    alignSelf: "center",
-    width: "54%",
-    maxWidth: 225,
-    height: 3,
-    overflow: "hidden",
-    borderRadius: 2,
-  },
+  mainCircle: { width: 58, height: 58, borderRadius: 29 },
   modal: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
   exitCard: {
     width: "100%",

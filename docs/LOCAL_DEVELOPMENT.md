@@ -45,7 +45,7 @@ For a persistent setting, edit only EXPO_PUBLIC_API_URL in the root .env/.env.lo
 - Root public configuration: EXPO_PUBLIC_API_URL. Keep provider credentials out of this file and all EXPO_PUBLIC variables.
 - Private server configuration: server/.env or server process environment. PORT defaults to 3001 and HOST to 0.0.0.0. Relative DATABASE_PATH values resolve from server/, and the default database is server/data/solace.sqlite.
 - Authentication works without an AI provider key. Built-in companion replies remain explicitly labeled. Real AI is a separate check after privately configuring the provider key in server/.env.
-- AI_MODE=live requires GEMINI_API_KEY or OPENAI_API_KEY. Gemini takes priority when both are configured. OPENAI_FALLBACK_ENABLED=true permits a second provider on transient text generation failures. OpenAI remains the transcription provider.
+- `AI_MODE=live` requires `OPENAI_API_KEY`. OpenAI serves text and audio through the Node API. See the [OpenAI setup guide](OPENAI_MIGRATION.md) for model IDs and verification.
 - Development defaults: iOS simulator 127.0.0.1:3001, Android emulator 10.0.2.2:3001, web browser hostname on port 3001. Explicit public configuration takes precedence. If the server port changes, configure the matching public URL too.
 - Release builds require an explicit public HTTPS API. The app rejects loopback, private network addresses and local-only hostnames. An invalid release address shows a plain build-recovery message in the app. Diagnose it in build configuration.
 

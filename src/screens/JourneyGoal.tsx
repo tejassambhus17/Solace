@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Pressable, View } from "react-native";
+import { AppState, Pressable, StyleSheet, View } from "react-native";
 import {
   goalMetrics,
   goalPeriods,
@@ -14,11 +14,25 @@ import {
   journeyGoalProgress,
   selectJourneyGoal,
 } from "../journey-goals";
+import { useTabResetGuard } from "../navigation-reset";
+import { EditorialSection } from "../NestedDesign";
 import { activeSeconds, type DayEntry } from "../progress";
+import { webRadioProps } from "../radio-keyboard";
 import { useApp } from "../store";
 import { savedReflectionRoute } from "../routes";
 import { useTheme } from "../theme";
-import { AppText, Button, Card, Icon, Input, Row, Screen } from "../ui";
+import { spacing } from "../layout";
+import {
+  AppText,
+  BotanicalBackdrop,
+  Button,
+  Card,
+  Icon,
+  Input,
+  NestedState,
+  Row,
+  Screen,
+} from "../ui";
 
 const defaultTitle = "Make a little time for myself";
 const defaultTargets: Record<GoalMetric, number> = {
@@ -47,35 +61,37 @@ function GoalOption({
   selected,
   disabled,
   onPress,
+  equal = false,
 }: {
   title: string;
   selected: boolean;
   disabled: boolean;
   onPress: () => void;
+  equal?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="radio"
+      {...webRadioProps(selected)}
       accessibilityState={{ checked: selected, disabled }}
       aria-checked={selected}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: 44,
-        justifyContent: "center",
-        borderRadius: 20,
-        paddingHorizontal: 12,
-        paddingVertical: 5,
-        backgroundColor: selected ? colors.lavenderSurface : colors.surface,
-        borderWidth: 1,
-        borderColor: selected ? colors.lavenderText : colors.border,
-        opacity: pressed || disabled ? 0.65 : 1,
-      })}
+      style={({ pressed }) => [
+        styles.option,
+        equal && styles.equalOption,
+        {
+          backgroundColor: selected ? colors.lavenderSurface : colors.surface,
+          borderColor: selected ? colors.lavenderText : colors.border,
+          opacity: pressed || disabled ? 0.65 : 1,
+        },
+      ]}
     >
       <AppText
         variant="caption"
         color={selected ? colors.lavenderText : colors.text}
+        style={styles.optionLabel}
       >
         {title}
       </AppText>
@@ -164,6 +180,13 @@ export function JourneyGoalScreen() {
     [goal, app.data, today],
   );
   const limits = goalTargetBounds(metric, period);
+  useTabResetGuard(
+    editing &&
+      (title.trim() !== (goal?.title ?? defaultTitle) ||
+        metric !== (goal?.metric ?? "mindful-minutes") ||
+        period !== (goal?.period ?? "week") ||
+        target !== String(goal?.target ?? 15)),
+  );
 
   useEffect(() => {
     const refresh = () => setToday(localDay());
@@ -249,70 +272,104 @@ export function JourneyGoalScreen() {
   }
 
   return (
-    <Screen title="Your goal" back={app.back}>
+    <Screen variant="nested" title="Your goal" back={app.back}>
       {editing ? (
-        <Card style={{ gap: 13 }}>
-          <AppText variant="heading" accessibilityRole="header">
-            {goal ? "Edit your goal" : "Set a personal goal"}
-          </AppText>
-          <AppText color={colors.muted}>
-            Choose a small practice and a pace that fits your life.
-          </AppText>
-          <AppText variant="label">Name</AppText>
-          <Input
-            accessibilityLabel="Personal goal name"
-            value={title}
-            onChangeText={setTitle}
-            maxLength={120}
-            editable={!busy}
-          />
-          <AppText variant="label">What would you like to track?</AppText>
+        <View style={styles.editor}>
           <View
-            accessibilityRole="radiogroup"
-            accessibilityLabel="Goal metric"
-            style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}
+            style={[styles.goalLead, { backgroundColor: colors.sageSurface }]}
           >
-            {goalMetrics.map((option) => (
-              <GoalOption
-                key={option}
-                title={journeyGoalLabels[option]}
-                selected={metric === option}
-                disabled={busy}
-                onPress={() => changeOptions(option, period)}
-              />
-            ))}
+            <BotanicalBackdrop style={styles.goalLeaves} />
+            <Icon name="flag-outline" size={27} color={colors.sageText} />
+            <AppText
+              variant="display"
+              accessibilityRole="header"
+              style={styles.goalHeadline}
+            >
+              {goal ? "Edit your goal" : "Set a personal goal"}
+            </AppText>
+            <AppText color={colors.muted} style={styles.leadCopy}>
+              Choose a small practice and a pace that fits your life.
+            </AppText>
           </View>
-          <AppText variant="label">Period</AppText>
-          <View
-            accessibilityRole="radiogroup"
-            accessibilityLabel="Goal period"
-            style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}
-          >
-            {goalPeriods.map((option) => (
-              <GoalOption
-                key={option}
-                title={periodOptions[option]}
-                selected={period === option}
-                disabled={busy}
-                onPress={() => changeOptions(metric, option)}
+          <View style={styles.form}>
+            <View style={styles.field}>
+              <AppText variant="label">Name</AppText>
+              <Input
+                accessibilityLabel="Personal goal name"
+                value={title}
+                onChangeText={setTitle}
+                maxLength={120}
+                editable={!busy}
               />
-            ))}
+            </View>
+            <View style={styles.field}>
+              <AppText variant="label">What would you like to track?</AppText>
+              <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel="Goal metric"
+                style={styles.options}
+              >
+                {goalMetrics.map((option) => (
+                  <GoalOption
+                    key={option}
+                    title={journeyGoalLabels[option]}
+                    selected={metric === option}
+                    disabled={busy}
+                    onPress={() => changeOptions(option, period)}
+                  />
+                ))}
+              </View>
+            </View>
+            <View
+              style={[
+                styles.field,
+                styles.formRule,
+                { borderColor: colors.border },
+              ]}
+            >
+              <AppText variant="label">Period</AppText>
+              <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel="Goal period"
+                style={styles.options}
+              >
+                {goalPeriods.map((option) => (
+                  <GoalOption
+                    key={option}
+                    title={periodOptions[option]}
+                    selected={period === option}
+                    disabled={busy}
+                    onPress={() => changeOptions(metric, option)}
+                    equal
+                  />
+                ))}
+              </View>
+              <AppText variant="caption" color={colors.muted}>
+                Week and month goals follow your local calendar.
+              </AppText>
+            </View>
+            <View
+              style={[
+                styles.field,
+                styles.formRule,
+                { borderColor: colors.border },
+              ]}
+            >
+              <AppText variant="label">Target</AppText>
+              <Input
+                accessibilityLabel="Goal target"
+                value={target}
+                onChangeText={setTarget}
+                keyboardType="number-pad"
+                maxLength={String(limits.max).length}
+                editable={!busy}
+              />
+              <AppText variant="caption" color={colors.muted}>
+                {limits.min}–{limits.max}{" "}
+                {journeyGoalLabels[metric].toLowerCase()}
+              </AppText>
+            </View>
           </View>
-          <AppText variant="caption" color={colors.muted}>
-            Week and month goals follow your local calendar.
-          </AppText>
-          <AppText variant="label">Target</AppText>
-          <Input
-            accessibilityLabel="Goal target"
-            value={target}
-            onChangeText={setTarget}
-            keyboardType="number-pad"
-            maxLength={String(limits.max).length}
-            editable={!busy}
-          />
-          <AppText variant="caption" color={colors.muted}>
-            {limits.min}–{limits.max} {journeyGoalLabels[metric].toLowerCase()}
-          </AppText>
           {!!error && (
             <AppText accessibilityRole="alert" color={colors.danger}>
               {error}
@@ -328,19 +385,47 @@ export function JourneyGoalScreen() {
               setEditing(false);
             }}
           />
-        </Card>
+        </View>
       ) : goal && progress ? (
         <>
-          <Card style={{ gap: 10 }}>
-            <AppText variant="caption" color={colors.lavenderText}>
-              {progress.period}
-            </AppText>
-            <AppText variant="title" accessibilityRole="header">
+          <View
+            style={[
+              styles.goalLead,
+              { backgroundColor: colors.lavenderSurface },
+            ]}
+          >
+            <BotanicalBackdrop style={styles.goalLeaves} />
+            <Row>
+              <Icon name="flag-outline" color={colors.lavenderText} size={18} />
+              <AppText
+                variant="caption"
+                color={colors.lavenderText}
+                style={{ flex: 1 }}
+              >
+                {progress.period}
+              </AppText>
+            </Row>
+            <AppText
+              variant="display"
+              accessibilityRole="header"
+              style={styles.goalHeadline}
+            >
               {goal.title}
             </AppText>
             {goal.active ? (
               <>
-                <AppText color={colors.muted}>{progress.description}</AppText>
+                <Row style={styles.goalProgressLabel}>
+                  <AppText color={colors.muted} style={styles.goalProgressCopy}>
+                    {progress.description}
+                  </AppText>
+                  <AppText
+                    variant="label"
+                    color={colors.lavenderText}
+                    style={styles.progressNumber}
+                  >
+                    {progress.percentage}%
+                  </AppText>
+                </Row>
                 <View
                   accessibilityRole="progressbar"
                   accessibilityLabel="Personal goal progress"
@@ -358,7 +443,7 @@ export function JourneyGoalScreen() {
                     height: 9,
                     overflow: "hidden",
                     borderRadius: 5,
-                    backgroundColor: colors.lavenderSurface,
+                    backgroundColor: colors.surface,
                   }}
                 >
                   <View
@@ -382,6 +467,9 @@ export function JourneyGoalScreen() {
                 for the current period.
               </AppText>
             )}
+          </View>
+          <View style={styles.manageGoal}>
+            <EditorialSection title="Manage goal" />
             {!!notice && (
               <AppText accessibilityLiveRegion="polite" color={colors.sageText}>
                 {notice}
@@ -452,7 +540,7 @@ export function JourneyGoalScreen() {
                 onPress={() => setConfirmRemove(true)}
               />
             )}
-          </Card>
+          </View>
           <AppText
             variant="heading"
             accessibilityRole="header"
@@ -474,18 +562,19 @@ export function JourneyGoalScreen() {
               )}
             </Card>
           ) : (
-            <AppText color={colors.muted}>
-              Saved {progress.unit} will appear here when you have activity for
-              this period.
-            </AppText>
+            <NestedState
+              title="Room to begin"
+              icon="leaf-outline"
+              description={`Saved ${progress.unit} will appear here when you have activity for this period.`}
+            />
           )}
         </>
       ) : (
-        <Card style={{ gap: 12 }}>
-          <AppText variant="heading">Make space for a small goal</AppText>
-          <AppText color={colors.muted}>
-            A personal goal can help you find a rhythm you want to return to.
-          </AppText>
+        <NestedState
+          title="Make space for a small goal"
+          description="A personal goal can help you find a rhythm you want to return to."
+          icon="flag-outline"
+        >
           {!!notice && (
             <AppText accessibilityLiveRegion="polite" color={colors.sageText}>
               {notice}
@@ -496,8 +585,47 @@ export function JourneyGoalScreen() {
             disabled={busy}
             onPress={startEditing}
           />
-        </Card>
+        </NestedState>
       )}
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  editor: { gap: spacing.row },
+  goalLead: {
+    borderRadius: 18,
+    overflow: "hidden",
+    padding: spacing.card,
+    gap: spacing.compact,
+  },
+  goalHeadline: { fontSize: 37, lineHeight: 44 },
+  goalLeaves: { top: -50, right: -30, width: 200, height: 200, opacity: 0.3 },
+  leadCopy: { maxWidth: 265 },
+  form: { gap: spacing.card, paddingTop: spacing.compact },
+  formRule: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: spacing.row,
+  },
+  field: { gap: spacing.compact },
+  goalProgressLabel: { alignItems: "flex-start", flexWrap: "wrap" },
+  goalProgressCopy: { flex: 1, minWidth: 130 },
+  progressNumber: { fontVariant: ["tabular-nums"] },
+  manageGoal: { gap: spacing.compact, marginTop: spacing.section },
+  options: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.compact,
+  },
+  option: {
+    minHeight: 48,
+    maxWidth: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: spacing.row,
+    paddingVertical: 5,
+    justifyContent: "center",
+  },
+  equalOption: { flexGrow: 1, flexBasis: "28%" },
+  optionLabel: { textAlign: "center" },
+});

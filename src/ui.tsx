@@ -25,6 +25,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { StatusBar } from "expo-status-bar";
 import { useTheme } from "./theme";
 import { spacing, useScreenGutter } from "./layout";
+import { useGuardedBack } from "./navigation-reset";
 
 // Floating navigation shares its measured height with scrolling and fixed composers.
 export const NavigationInset = createContext(0);
@@ -87,13 +88,14 @@ export function ScreenHeader({
   title: string;
   back?: () => void;
 }) {
+  const goBack = useGuardedBack(back);
   return (
     <Row style={{ marginBottom: spacing.screenTop }}>
       {back && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          onPress={back}
+          onPress={goBack}
           style={{
             minWidth: 44,
             minHeight: 44,
@@ -111,6 +113,103 @@ export function ScreenHeader({
   );
 }
 
+export function NestedHeader({
+  title,
+  onBack,
+  eyebrow,
+  subtitle,
+  action,
+  style,
+  ariaLabel = "Go back",
+}: {
+  title: string;
+  onBack?: () => void;
+  eyebrow?: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  ariaLabel?: string;
+}) {
+  const { colors } = useTheme();
+  const goBack = useGuardedBack(onBack);
+  return (
+    <View style={[nestedStyles.header, style]}>
+      <View style={nestedStyles.headerRow}>
+        {onBack && (
+          <IconButton
+            name="chevron-back"
+            label={ariaLabel}
+            onPress={goBack}
+            size={48}
+            appearance="outlined"
+          />
+        )}
+        <View style={nestedStyles.title}>
+          {eyebrow && (
+            <AppText variant="caption" color={colors.lavenderText}>
+              {eyebrow}
+            </AppText>
+          )}
+          <AppText variant="heading" accessibilityRole="header">
+            {title}
+          </AppText>
+        </View>
+        {action}
+      </View>
+      {subtitle && <AppText color={colors.muted}>{subtitle}</AppText>}
+    </View>
+  );
+}
+
+export function NestedState({
+  title,
+  description,
+  icon,
+  children,
+}: {
+  title: string;
+  description: string;
+  icon: string;
+  children?: React.ReactNode;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Card style={nestedStyles.state}>
+      <View
+        style={[
+          nestedStyles.stateIcon,
+          { backgroundColor: colors.lavenderSurface },
+        ]}
+      >
+        <Icon name={icon} color={colors.lavenderText} size={22} />
+      </View>
+      <AppText variant="heading" accessibilityRole="header">
+        {title}
+      </AppText>
+      <AppText color={colors.muted}>{description}</AppText>
+      {children}
+    </Card>
+  );
+}
+
+const nestedStyles = StyleSheet.create({
+  header: { gap: spacing.compact, marginBottom: spacing.card },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+  },
+  title: { flex: 1, minWidth: 0, gap: 2 },
+  state: { gap: spacing.row },
+  stateIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});
+
 export function Screen({
   children,
   scroll = true,
@@ -125,6 +224,7 @@ export function Screen({
   edgeToEdgeTop = false,
   heroStatusBar,
   adjustKeyboardInsets = true,
+  variant,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
@@ -139,6 +239,7 @@ export function Screen({
   edgeToEdgeTop?: boolean;
   heroStatusBar?: "light" | "dark";
   adjustKeyboardInsets?: boolean;
+  variant?: "nested";
 }) {
   const { colors, resolved } = useTheme();
   const gutter = useScreenGutter();
@@ -162,13 +263,26 @@ export function Screen({
         style,
       ]}
     >
-      {title && <ScreenHeader title={title} back={back} />}
+      {title &&
+        (variant === "nested" ? (
+          <NestedHeader title={title} onBack={back} />
+        ) : (
+          <ScreenHeader title={title} back={back} />
+        ))}
       {children}
     </View>
   );
   return (
     <SafeAreaView
-      edges={edgeTop ? [] : ["top"]}
+      edges={
+        variant === "nested"
+          ? edgeTop
+            ? ["left", "right"]
+            : ["top", "left", "right"]
+          : edgeTop
+            ? []
+            : ["top"]
+      }
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       {scroll ? (
@@ -254,10 +368,12 @@ export function Card({
   children,
   onPress,
   style,
+  accessibilityLabel,
 }: {
   children: React.ReactNode;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
+  accessibilityLabel?: string;
 }) {
   const { colors } = useTheme();
   const styles: StyleProp<ViewStyle> = [
@@ -273,6 +389,7 @@ export function Card({
   return onPress ? (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       style={({ pressed }) => [
         styles,
@@ -369,7 +486,7 @@ export function Button({
   );
 }
 export function Input(props: React.ComponentPropsWithRef<typeof TextInput>) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
@@ -388,7 +505,11 @@ export function Input(props: React.ComponentPropsWithRef<typeof TextInput>) {
         {
           backgroundColor: colors.surface,
           borderWidth: 1,
-          borderColor: focused ? colors.primary : colors.border,
+          borderColor: focused
+            ? resolved === "dark"
+              ? colors.primary
+              : colors.accent
+            : colors.border,
           borderRadius: 16,
           color: colors.text,
           fontFamily: "Inter_400Regular",
@@ -527,33 +648,67 @@ export function IconButton({
   onPress,
   disabled = false,
   size = 44,
+  appearance = "plain",
+  expanded,
+  indicator,
 }: {
   name: string;
   label: string;
   onPress: () => void;
   disabled?: boolean;
   size?: number;
+  appearance?: "plain" | "outlined" | "artwork";
+  expanded?: boolean;
+  indicator?: boolean;
 }) {
   const { colors } = useTheme();
+  const artwork = appearance === "artwork";
+  const bordered = appearance !== "plain";
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
+      accessibilityState={{ disabled, expanded }}
       aria-disabled={disabled}
+      aria-expanded={expanded}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({
         width: size,
         height: size,
         borderRadius: size / 2,
+        flexShrink: 0,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: pressed ? colors.surface2 : "transparent",
-        opacity: disabled ? 0.45 : 1,
+        backgroundColor: artwork
+          ? "rgba(23, 17, 32, 0.64)"
+          : bordered
+            ? pressed
+              ? colors.lavenderSurface
+              : colors.surface
+            : pressed
+              ? colors.surface2
+              : "transparent",
+        borderWidth: bordered ? 1 : 0,
+        borderColor: artwork ? "rgba(232, 215, 246, 0.42)" : colors.border,
+        opacity: disabled ? 0.45 : artwork && pressed ? 0.72 : 1,
       })}
     >
-      <Icon name={name} size={22} />
+      <Icon name={name} size={22} color={artwork ? "#FFF8F4" : undefined} />
+      {indicator && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            backgroundColor: colors.lavender,
+          }}
+        />
+      )}
     </Pressable>
   );
 }

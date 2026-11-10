@@ -377,6 +377,7 @@ test("Metro receives public app config but not private provider or database envi
     PORT: "3001",
     HOST: "0.0.0.0",
     AI_MODE: "live",
+    AI_PROVIDER: "openai",
   };
   const client = clientEnvironment(process.execPath, original);
   assert.equal(client.EXPO_PUBLIC_API_URL, original.EXPO_PUBLIC_API_URL);
@@ -389,6 +390,7 @@ test("Metro receives public app config but not private provider or database envi
     "PORT",
     "HOST",
     "AI_MODE",
+    "AI_PROVIDER",
   ])
     assert.equal(key in client, false);
   assert.equal(original.OPENAI_API_KEY, "private-test-sentinel");

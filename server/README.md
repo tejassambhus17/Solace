@@ -14,15 +14,13 @@ Defaults: port 3001, one SQLite file at `server/data/solace.sqlite`. Private `.e
 
 ## Live AI and offline companion
 
-Put provider keys in **server/.env** or the private server environment. Restart the API after changing its configuration.
+Put `OPENAI_API_KEY` in **server/.env** or the private server environment. Restart the API after changing configuration. The pinned OpenAI Node SDK handles Responses and Audio over the official OpenAI API.
 
-- `GEMINI_API_KEY` selects Gemini for chat, Moments and weekly reflections. `GEMINI_MODEL` defaults to `gemini-3.1-flash-lite`. Use a model available to your project that supports text and structured outputs.
-- `OPENAI_API_KEY`, `OPENAI_MODEL` and `OPENAI_BASE_URL` still work for text when Gemini is unconfigured. An OpenAI key also enables the existing transcription endpoint. `OPENAI_FALLBACK_ENABLED=true` permits one attempt with OpenAI after a Gemini network failure, timeout, rate limit or upstream 5xx. It defaults to false because failover sends the request to a second provider. Solace rechecks the session and applicable consent and context before sending to OpenAI. Refusals and invalid output return a recoverable error.
-- `AI_MODE=auto` uses live AI when a key is configured and the labeled built-in companion otherwise. `AI_MODE=live` requires either key. `AI_MODE=offline` disables all provider requests. A rate limit returns a recoverable 429 if no fallback succeeds. Other provider failures return 502.
+- `OPENAI_CHAT_MODEL` defaults to `gpt-6.1-terra`. `OPENAI_LIGHT_MODEL` defaults to `gpt-6-luna` for structured generation. Model overrides are explicit.
+- `AI_MODE=auto` uses OpenAI with a key and labeled built-in guidance otherwise. `AI_MODE=live` requires an OpenAI key. `AI_MODE=offline` disables provider requests. Live request failures return recoverable errors.
+- Live chat sends bounded conversation turns. Approved preferences and recent mood/tag context require personalization consent. Responses use `store:false` and keep conversation records on Solace. Journal AI sends only an explicitly approved excerpt. [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)
 
-Live chat sends bounded conversation turns. Approved preferences and recent mood/tag context are only added when `user.personalization` is true. Both adapters set `store:false`. For real personal or sensitive data, use a billing-enabled Gemini project and review Google's data-use and logging terms. Solace's request setting does not override those terms. [Gemini API terms](https://ai.google.dev/gemini-api/terms?authuser=00) · [Gemini logging policy](https://ai.google.dev/gemini-api/docs/logs-policy)
-
-The server calls Gemini GenerateContent and OpenAI Responses over HTTPS. [Gemini API reference](https://ai.google.dev/api/generate-content?hl=en) · [OpenAI text generation guide](https://developers.openai.com/api/docs/guides/text)
+See the [model, privacy and usage configuration](../docs/OPENAI_MIGRATION.md).
 
 ## Routes
 
@@ -39,7 +37,7 @@ The server calls Gemini GenerateContent and OpenAI Responses over HTTPS. [Gemini
 | POST | `/api/records/:collection` | Record body → `{record}`, 201 |
 | PATCH | `/api/records/:collection/:id` | Changes → `{record}` |
 | DELETE | `/api/records/:collection/:id` | Removes owned record, 204 |
-| POST | `/api/chat` | `{text,conversationId?,requestId?}` → `{conversation,reply,provider,action?}` |
+| POST | `/api/chat` | `{text,conversationId?,requestId?}` → `{conversation,reply,provider,action?,appAction?}` |
 | GET | `/api/export` | Downloadable JSON for current account |
 | DELETE | `/api/account` or `/api/auth/me` | Deletes account, sessions and records, 204 |
 
@@ -48,6 +46,8 @@ All non-public routes require `Authorization: Bearer <token>`. Tokens are random
 The chat endpoint stores each successful user/assistant exchange together. Saved conversations can be renamed without editing their message history. Deleting a conversation also removes preferences whose `sourceConversationId` is that conversation. Session-derived preferences have owned source validation and are removed when their source session is deleted. An in-flight reply cannot recreate a deleted conversation or deleted account. One provider chat is allowed in flight per account. Conversations are limited to 200 messages and 80,000 input characters before requesting a new conversation. Explicit distress receives local human-support guidance even when a provider request is pending or a conversation is full.
 
 Clients can provide a UUID `requestId` and reuse it with the same text and original conversation ID when retrying. For 24 hours the API returns the saved exchange without another provider call, rejects changed input, and rejects retrying an exchange from a deleted conversation. The receipt contains IDs and an expiration timestamp. Expired receipts are pruned on startup and on later chat writes for that account. Account deletion removes its receipts.
+
+Current clients send `X-Solace-App-Actions: 1` with chat or Realtime session creation. The backend validates proposed actions against a typed allowlist and the latest direct request. Text retries return the original proposal ID. Live Voice delivers an action through authenticated, revisioned session state only after a completed tool turn and uninterrupted playback of its acknowledgement. The mobile app handles confirmation and uses the existing authorized APIs and local reminder scheduler. Proposal acknowledgement is distinct from execution feedback. Journal discussion does not expose app tools.
 
 Live provider response bodies are limited to 256 KiB. Malformed, refused, incomplete, or oversized replies surface as recoverable provider errors. Reminders store preferences on the server and the Expo client handles native scheduling and delivery.
 
@@ -76,10 +76,11 @@ PATCH `/api/auth/me` accepts `avatar: "data:image/jpeg;base64,..."` or `null`. J
 
 ## Generated Moments, weekly reflections and voice
 
-- `GET /api/capabilities` (authenticated) reports configured `voiceTranscription` and `aiProvider`. A configured key is not proof of account/model access; provider failures remain recoverable errors.
-- `POST /api/moments/generate` takes `{feeling, environment?}`. It returns `{activity, provider, explanation, usedMemoryIds}`. `activity` follows the shared type in `src/moment-contract.ts` and the server's strict Zod schema. Type, duration, steps, comfortable breathing bounds and environment are bounded. Both text providers receive a JSON schema. The server validates the result and rejects invalid, refused or incomplete output. In built-in mode, curated templates are explicitly labeled `offline`. Serious-distress input returns `activity:null`, `support:true` and human-support guidance instead of an activity.
+- `GET /api/capabilities` (authenticated) reports configured `voiceTranscription`, `voiceSpeech`, and `aiProvider`. Availability reflects configuration. Provider errors remain recoverable.
+- `POST /api/moments/generate` takes `{feeling, environment?}` and returns `{activity, provider, explanation, usedMemoryIds}`. The server requests strict structured output and validates type, duration, steps, breathing bounds and environment. Built-in mode labels curated templates `offline`. Serious-distress input returns human-support guidance.
 - `POST /api/insights/weekly` takes optional `{endDate:"YYYY-MM-DD"}`. Counts come from the authenticated account's actual saved records; incomplete/future sessions are excluded. The live service receives aggregate participation counts only, never journal text. AI may phrase an optional reflection question; server-computed totals are always retained and no clinical trend is inferred. Empty accounts have a factual empty state.
-- `POST /api/voice/transcribe` accepts a raw audio body of at most 8 MiB with supported audio MIME type (MP4/M4A, WebM, WAV, MPEG/MP3 or Ogg). It uses the configured OpenAI transcription endpoint when an OpenAI key exists, or sends bounded in-memory audio to configured Gemini. A successful result contains `{text,provider:"live"}`. Audio is processed without storage, and disconnects cancel the provider request. `OPENAI_TRANSCRIPTION_MODEL` defaults to `gpt-transcribe`. Offline or unconfigured mode returns 503, and provider failures leave text chat available. [Gemini audio input](https://ai.google.dev/gemini-api/docs/audio)
+- `POST /api/plans/preview` accepts `{goal, preferredFocuses, dailyMinutes}`. It returns three canonical activity choices and a source label. The existing Save action controls persistence.
+- `POST /api/voice/transcribe` sends bounded, in-memory audio to OpenAI with `gpt-transcribe` by default and returns `{text,provider:"live"}`. `POST /api/voice/speech` synthesizes a saved, account-owned assistant reply as MP3 with `gpt-4o-mini-tts` and `marin` by default. The user can cancel playback and continue in text after a provider error. [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text) · [OpenAI Audio Speech](https://developers.openai.com/api/docs/guides/text-to-speech)
 
 Structured Moments persist through the existing `sessions` collection with `kind:"generated"`, validated `activity`, selected `environment`, actual `durationSec`, `completed`, optional `provider` and optional self-reported `feedback`. A stable client ID and original creation timestamp make exact creation retries idempotent; a changed payload conflicts instead of adding another completion. The account-scoped `preferences` collection uses one `id:"wellness"` record with `environment`, `ambientEnabled` and `streaksEnabled`. `goals` records contain a title, weekly target of 5–210 minutes and an active flag. These records participate in state, export, persistence and account deletion. They do not create an emotional score or achievement by themselves.
 
@@ -87,4 +88,4 @@ Memory categories may be `preference`, `activity`, `goal` or `context`. Only app
 
 Deleting or editing memory, removing a source that cascades to memory, or disabling personalization resets AI context in retained conversations. Visible/exported history remains intact. `contextResetMessageCount`, `contextResetAt` and a server-owned reset ID record this boundary; only subsequent messages are sent as conversation context. Renaming/patching cannot lower or remove it, and an in-flight reply using the earlier context is rejected. This prevents an older assistant quote of a deleted preference being silently fed back as active personalization. Ordinary new text explicitly sent by the user remains part of its current turn. Provider-side retention is governed separately by the provider; app-side deletion cannot retract an already transmitted request.
 
-The configured Gemini key passed live checks for chat, weekly generation and voice transcription with synthetic data. OpenAI failover and provider failure branches are exercised with stubbed transports. See the [verification record](../docs/VERIFICATION.md). [Gemini structured outputs](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) · [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+See the [verification record](../docs/VERIFICATION.md) for live and mocked test coverage.

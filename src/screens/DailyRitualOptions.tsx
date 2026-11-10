@@ -40,13 +40,16 @@ function RitualOption({
       style={({ pressed }) => [
         styles.option,
         {
-          backgroundColor: selected ? colors.sageSurface : colors.surface,
-          borderColor: selected ? colors.sageText : colors.border,
+          backgroundColor: selected ? colors.lavenderSurface : colors.surface,
+          borderColor: selected ? colors.lavenderText : colors.border,
           opacity: pressed || disabled ? 0.65 : 1,
         },
       ]}
     >
-      <AppText variant="label" color={selected ? colors.sageText : colors.text}>
+      <AppText
+        variant="label"
+        color={selected ? colors.lavenderText : colors.text}
+      >
         {label}
       </AppText>
     </Pressable>
@@ -178,12 +181,22 @@ export function DailyRitualOptions({
         />
       )}
       {open && settings.enabled && (
-        <View style={[styles.choices, { borderColor: colors.heroBorder }]}>
-          <AppText variant="caption" color={colors.muted}>
-            Daily Pause builds its suggestion on this device. With
-            personalization on, it can use your active Journey goal and activity
-            preferences you choose to remember.
-          </AppText>
+        <View
+          style={[
+            styles.choices,
+            { borderColor: colors.heroBorder, backgroundColor: colors.surface },
+          ]}
+        >
+          <View style={styles.choiceTitle}>
+            <Icon name="leaf-outline" color={colors.lavenderText} size={22} />
+            <AppText
+              variant="heading"
+              accessibilityRole="header"
+              style={styles.choiceHeading}
+            >
+              Make this pause your own
+            </AppText>
+          </View>
           <AppText variant="label">Today’s activity</AppText>
           <Row style={styles.wrap}>
             <RitualOption
@@ -222,7 +235,6 @@ export function DailyRitualOptions({
           </Row>
           <Button
             title="Save today’s choices"
-            variant="secondary"
             disabled={!dirty}
             loading={saving}
             onPress={() =>
@@ -238,6 +250,10 @@ export function DailyRitualOptions({
             disabled={saving}
             onPress={() => void save({ enabled: false }, true)}
           />
+          <AppText variant="caption" color={colors.muted}>
+            Suggestions are made on this device. If personalization is on, your
+            active Journey goal and approved preferences can inform them.
+          </AppText>
         </View>
       )}
       {!!failure && (
@@ -283,8 +299,15 @@ const styles = StyleSheet.create({
   actionLabel: { flexShrink: 1, fontSize: 12, lineHeight: 17 },
   pressed: { opacity: 0.7 },
   choices: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: spacing.row,
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: spacing.card,
     gap: spacing.row,
   },
+  choiceTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
+  choiceHeading: { flex: 1, fontSize: 27, lineHeight: 30 },
 });

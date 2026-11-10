@@ -1,0 +1,18 @@
+# Companion app actions
+
+The reported iPhone release already carried the action client. Its server rejected “Turn on light mode” before offering a tool. A partial habit command could start a conversation about recurrence, but “Daily” failed the same one-message action gate. No proposal reached the app, so no habit could be saved. That release also had no path to speak the app’s verified result after a Realtime tool call.
+
+The repaired flow shares the typed action contract and the authenticated app dispatcher across chat and Live Voice. Explicit commands and approved follow-ups can resolve locally on the server. Broader supported phrasing can use the OpenAI function tool with structured, grounded arguments. Chat saves the draft with the owning conversation and expires it after ten minutes. Voice keeps its draft in the active session. The model cannot supply a confirmation target. “Yes” only approves the current single-choice proposal, and the visible button remains available. Successful writes use the original app service and update the existing store. Chat shows the actual result, and Realtime returns a result associated with its original tool call when OpenAI selected it.
+
+| Area | Open or view | Act through chat and Live Voice |
+| --- | --- | --- |
+| Today | Home, Daily Pause, mood check-in | Open check-in or practice flow. Mood choices and submission remain in the screen. |
+| Solace | Companion, conversation history, Journal, new entry, title or date results | Open the authorized Journal screen without sending saved entry bodies to the provider. User selects the matching entry. |
+| Explore | Wellness Tools, Ambient Mixer, Guided Techniques and Programs, Wellness Toolkit, plans, Timed Practice, resources, Moments, reflections, grounding, sleep, affirmations, Daily Challenge | Launch supported breathing, grounding or wind-down sessions. A focus request opens the selected timed session for review. Sound and saved practice selection remain in their respective screens. |
+| Habits | Dashboard, My Habits, exact-name details, insights, reminders and Garden | Read actual completion totals. Confirm creation with supported daily or selected-day schedules, check-off/quantity/duration goals and an optional reminder. Confirm completing, undoing today’s completion, renaming, changing the schedule or archiving. Ambiguous matches require a selection or a more precise request. |
+| Journey | Overview, time period, activity history, personal goals, milestones, saved affirmations | Read recorded mindful time, activity and check-in counts, habit completions and Garden growth. Data is calculated from authorized app records. |
+| Profile | Appearance, Gentle Reminders, memory controls, account, Privacy & Data, Human Support and About | Save light, dark or device appearance. Confirm creating a supported recurring reminder or disabling a uniquely named reminder. Device scheduling and permission failures are reported separately from preference saving. |
+
+Arbitrary routes, URLs, commands and record identifiers are unavailable to the model. Destructive deletion, private data disclosure, Journal content editing, account changes, one-off alerts and unsupported practice durations stay in their established screens. Spoken navigation ends the current voice session before leaving and retains the conversation. Voice results are session-bound and duplicate reports are ignored.
+
+The upgraded action protocol is `X-Solace-App-Actions: 2`. Version 1 clients retain basic actions and review buttons. An updated standalone app is required for version 2 features because the installed production iOS build has Expo Updates disabled.

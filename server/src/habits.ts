@@ -7,7 +7,6 @@ import {
   habitCategories,
   habitColors,
   habitDay,
-  habitGardenStage,
   habitIcons,
   habitRevisionOn,
   habitStatuses,
@@ -20,6 +19,13 @@ import {
 } from "./habit-contract.js";
 import { idSchema } from "./validation.js";
 import { calendarDay, weeklyTimeZone } from "./weekly.js";
+import {
+  advanceGarden,
+  creditGardenHabit,
+  gardenState,
+  saveGardenChoice,
+  sessionHasGardenCredit,
+} from "./garden-intentions.js";
 
 const goalSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("completion") }),
@@ -91,6 +97,17 @@ const progressSchema = z.strictObject({
   expectedRevision: z.number().int().min(0),
   sessionId: idSchema.optional(),
 });
+const intentionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.enum(["calming", "breathing", "sleep", "journal"]),
+    timeZone: weeklyTimeZone,
+  }),
+  z.strictObject({
+    kind: z.literal("habit"),
+    habitId: idSchema,
+    timeZone: weeklyTimeZone,
+  }),
+]);
 
 const collections = {
   habits: "habits",
@@ -145,7 +162,7 @@ export function habitState(store: Store, owner: string) {
   return {
     habits: list<Habit>(store, owner, collections.habits),
     habitProgress: list<HabitProgress>(store, owner, collections.progress),
-    habitGarden: list<HabitGarden>(store, owner, collections.garden),
+    ...gardenState(store, owner),
   };
 }
 
@@ -205,6 +222,18 @@ export function habitRoutes(
   router.get("/", (request, response) =>
     response.json(habitState(store, ownerFor(request))),
   );
+
+  router.get("/garden-intention", (request, response) =>
+    response.json(gardenState(store, ownerFor(request))),
+  );
+  router.put("/garden-intention", (request, response) => {
+    const owner = ownerFor(request);
+    const { timeZone, ...choice } = intentionSchema.parse(request.body);
+    const error = saveGardenChoice(store, owner, choice, timeZone);
+    return error
+      ? failure(response, 409, error, "GARDEN_INTENTION_UNAVAILABLE")
+      : response.json(gardenState(store, owner));
+  });
 
   router.post("/", (request, response) => {
     const owner = ownerFor(request);
@@ -330,7 +359,11 @@ export function habitRoutes(
       );
       if (claim)
         return claim.habitId === habitId && claim.day === day && previous
-          ? response.json({ progress: previous, garden })
+          ? response.json({
+              progress: previous,
+              garden,
+              ...gardenState(store, owner),
+            })
           : failure(
               response,
               409,
@@ -339,7 +372,11 @@ export function habitRoutes(
             );
     }
     if (!sessionId && previous?.amount === amount)
-      return response.json({ progress: previous, garden });
+      return response.json({
+        progress: previous,
+        garden,
+        ...gardenState(store, owner),
+      });
     if (
       !revision ||
       !isHabitScheduled(habit, day) ||
@@ -396,6 +433,11 @@ export function habitRoutes(
     const target = habitTarget(revision.goal);
     const complete = nextAmount >= target;
     const timestamp = now.toISOString();
+    const firstEarning = complete && !previous?.earned;
+    const coveredBySession =
+      !!sessionId &&
+      firstEarning &&
+      sessionHasGardenCredit(store, owner, sessionId);
     const progress: HabitProgress = {
       id,
       habitId,
@@ -404,6 +446,9 @@ export function habitRoutes(
       target,
       complete,
       earned: complete || previous?.earned === true,
+      ...(coveredBySession || previous?.gardenCreditFromSession
+        ? { gardenCreditFromSession: true }
+        : {}),
       revision: (previous?.revision ?? 0) + 1,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
@@ -412,20 +457,13 @@ export function habitRoutes(
         : previous?.linkedSessionIds,
     };
     let nextGarden = garden;
-    if (complete && !previous?.earned) {
-      const earnedTotal = (garden?.earnedTotal ?? 0) + 1;
-      nextGarden = {
-        id: "garden",
-        earnedTotal,
-        stage: habitGardenStage(earnedTotal),
-        createdAt: garden?.createdAt ?? timestamp,
-        updatedAt: timestamp,
-      };
-    }
+    let credited = false;
     store.transaction(() => {
       put(store, owner, collections.progress, progress);
-      if (nextGarden && nextGarden !== garden)
-        put(store, owner, collections.garden, nextGarden);
+      if (firstEarning) {
+        if (!coveredBySession) nextGarden = advanceGarden(store, owner, now);
+        credited = creditGardenHabit(store, owner, progress, now);
+      }
       if (sessionId)
         put(store, owner, collections.claims, {
           id: sessionId,
@@ -434,7 +472,11 @@ export function habitRoutes(
           day,
         });
     });
-    return response.json({ progress, garden: nextGarden });
+    return response.json({
+      progress,
+      garden: nextGarden,
+      ...(credited ? gardenState(store, owner) : {}),
+    });
   });
 
   router.delete("/:id", (request, response) => {

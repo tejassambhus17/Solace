@@ -11,20 +11,22 @@ import {
   describeChatExplanation,
 } from "../src/chat-evidence.js";
 import { momentSchema } from "../src/moments.js";
-import { createChatPractice } from "../../src/chat-practices.js";
+import {
+  createChatPractice,
+  shortChatPracticeReason,
+} from "../../src/chat-practices.js";
 import { journeySummary } from "../../src/progress.js";
+import { openAIResponse } from "./openai-fixture.js";
 
 const ai: AIConfig = {
   mode: "live",
   baseUrl: "https://api.openai.com/v1",
   model: "test-model",
-  gemini: { apiKey: "test-provider", model: "test-gemini" },
+  apiKey: "test-provider",
 };
 
 function providerTurn(text: string) {
-  return Response.json({
-    candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }],
-  });
+  return openAIResponse(text, true);
 }
 
 test("chat presets are stable, playable snapshots accepted by the completion API", () => {
@@ -32,6 +34,46 @@ test("chat presets are stable, playable snapshots accepted by the completion API
   assert.equal(new Set(practices.map((practice) => practice.id)).size, 6);
   for (const practice of practices)
     assert.ok(momentSchema.safeParse(practice).success);
+});
+
+test("short card reasons name a topic only when the user mentioned it and the basis is the conversation", () => {
+  const conversation = {
+    basis: "conversation",
+    reason: "From this chat.",
+  } as const;
+  const general = { basis: "general", reason: "A general practice." } as const;
+  const personalized = {
+    basis: "personalized",
+    reason: "An approved preference.",
+  } as const;
+  assert.equal(
+    shortChatPracticeReason(
+      "wind-down",
+      conversation,
+      "I want to relax before bed.",
+    ),
+    "You brought up bedtime.",
+  );
+  assert.equal(
+    shortChatPracticeReason("wind-down", conversation, "Today was tiring."),
+    "Based on what you shared in this conversation.",
+  );
+  assert.equal(
+    shortChatPracticeReason(
+      "wind-down",
+      general,
+      "I want to relax before bed.",
+    ),
+    general.reason,
+  );
+  assert.equal(
+    shortChatPracticeReason(
+      "wind-down",
+      personalized,
+      "I want to relax before bed.",
+    ),
+    personalized.reason,
+  );
 });
 
 test("model text cannot create a card by mentioning a practice or choosing an unknown identifier", async () => {
@@ -90,7 +132,7 @@ test("chat explanations only cite matching authorized evidence and hide it after
     let sawGroundingBasis = false;
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      const instructions = body.systemInstruction.parts[0].text;
+      const instructions = body.instructions;
       sawGroundingBasis = instructions.includes(
         '{"kind":"approved-preference","practice":"grounding"}',
       );
@@ -286,9 +328,7 @@ test("chat suggestion opens an owned practice that saves once and updates Journe
       providerCalls++;
       const body = JSON.parse(String(init?.body));
       assert.ok(
-        body.generationConfig.responseJsonSchema.properties.practice.enum.includes(
-          "focus",
-        ),
+        body.text.format.schema.properties.practice.enum.includes("focus"),
       );
       return providerTurn(
         JSON.stringify({

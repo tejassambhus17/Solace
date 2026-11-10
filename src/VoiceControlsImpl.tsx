@@ -11,11 +11,12 @@ import {
 import {
   AudioModule,
   RecordingPresets,
+  createAudioPlayer,
   setAudioModeAsync,
   useAudioRecorder,
 } from "expo-audio";
 import * as Speech from "expo-speech";
-import { File } from "expo-file-system";
+import { File, Paths } from "expo-file-system";
 import { interruptAmbientPlayback } from "./audio-focus";
 import { ChatComposerControl } from "./ChatComposer";
 import { useApp } from "./store";
@@ -30,6 +31,39 @@ import {
 
 export type VoiceControlStage =
   VoiceState | "review" | "starting-playback" | "speaking";
+
+type SpokenReply = {
+  text: string;
+  id?: string;
+  conversationId?: string;
+  provider?: "live" | "offline";
+  sensitive?: boolean;
+};
+
+async function temporarySpeech(audio: ArrayBuffer) {
+  if (Platform.OS === "web") {
+    const uri = URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" }));
+    return { uri, remove: () => URL.revokeObjectURL(uri) };
+  }
+  const file = new File(
+    Paths.cache,
+    `solace-reply-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`,
+  );
+  const remove = () => {
+    try {
+      if (file.exists) file.delete();
+    } catch {
+      /* The private OS cache can evict a failed cleanup. */
+    }
+  };
+  try {
+    await file.write(audio);
+    return { uri: file.uri, remove };
+  } catch (error) {
+    remove();
+    throw error;
+  }
+}
 
 async function recordingPermission() {
   const { granted } = await AudioModule.requestRecordingPermissionsAsync();
@@ -62,7 +96,7 @@ export function VoiceControlsImpl({
   onMeter,
 }: {
   disabled: boolean;
-  reply: string;
+  reply?: SpokenReply;
   onTranscript: (text: string) => boolean;
   onState?: (state: "idle" | "listening" | "thinking" | "speaking") => void;
   onStage?: (stage: VoiceControlStage) => void;
@@ -80,12 +114,24 @@ export function VoiceControlsImpl({
   const { colors } = useTheme();
   const { height } = useWindowDimensions();
   const talk = variant === "talk";
+  const {
+    text: replyText,
+    id: replyId,
+    conversationId,
+    provider,
+    sensitive,
+  } = reply ?? {};
+  const liveSpeech =
+    provider === "live" && !!conversationId && !!replyId && !sensitive;
+  const builtInSpeech = provider === "offline" && !!replyText;
   const [state, setState] = useState<VoiceState>("idle");
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const displayedSeconds = useRef(0);
   const [speaking, setSpeaking] = useState(false);
   const [startingSpeech, setStartingSpeech] = useState(false);
   const ownsSpeech = useRef(false);
+  const speechRequest = useRef<AbortController | null>(null);
+  const disposePlayback = useRef<(() => void) | null>(null);
   const speechTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoRead = useRef<string | undefined>(undefined);
   function clearSpeechWait() {
@@ -239,10 +285,7 @@ export function VoiceControlsImpl({
         (await latest.current.app.transcribeVoice(audio, mime.current, signal))
           .text,
       transcript: (text) => {
-        if (
-          mounted.current &&
-          (!latest.current.talk || !latest.current.onTranscript(text))
-        )
+        if (mounted.current && !latest.current.onTranscript(text))
           setReview(text);
       },
       changed: (next, failure) => {
@@ -277,6 +320,10 @@ export function VoiceControlsImpl({
     }
   }
   function stopOwnedSpeech() {
+    speechRequest.current?.abort();
+    speechRequest.current = null;
+    disposePlayback.current?.();
+    disposePlayback.current = null;
     if (!ownsSpeech.current) return;
     ownsSpeech.current = false;
     return Speech.stop().catch(() => {});
@@ -382,7 +429,7 @@ export function VoiceControlsImpl({
     if (
       autoReadKey &&
       autoReadKey !== lastAutoRead.current &&
-      reply &&
+      builtInSpeech &&
       !disabled &&
       state === "idle" &&
       AppState.currentState !== "background" &&
@@ -393,7 +440,16 @@ export function VoiceControlsImpl({
     } else {
       void stopOwnedSpeech();
     }
-  }, [reply, disabled, autoReadKey, muted]);
+  }, [
+    replyText,
+    replyId,
+    conversationId,
+    builtInSpeech,
+    liveSpeech,
+    disabled,
+    autoReadKey,
+    muted,
+  ]);
   async function speak() {
     if (speaking || startingSpeech) {
       ++speechVersion.current;
@@ -403,16 +459,40 @@ export function VoiceControlsImpl({
       setSpeaking(false);
       return;
     }
-    if (!reply || disabled || muted || state !== "idle") return;
+    if (
+      (!liveSpeech && !builtInSpeech) ||
+      disabled ||
+      muted ||
+      state !== "idle"
+    )
+      return;
     await startSpeech();
   }
   async function startSpeech() {
     const version = ++speechVersion.current;
+    const current = () => mounted.current && speechVersion.current === version;
+    const finish = (failure?: string) => {
+      if (!current()) return;
+      ++speechVersion.current;
+      clearSpeechWait();
+      void stopOwnedSpeech();
+      setStartingSpeech(false);
+      setSpeaking(false);
+      if (failure) setError(failure);
+    };
+    const started = () => {
+      if (!current()) return;
+      clearSpeechWait();
+      setStartingSpeech(false);
+      setSpeaking(true);
+    };
+    const playbackFailure =
+      "Audio playback couldn't start. You can read the reply or try again.";
     setError("");
     setStartingSpeech(true);
     try {
       await stopOwnedSpeech();
-      if (!mounted.current || speechVersion.current !== version) return;
+      if (!current()) return;
       interruptAmbientPlayback();
       await setAudioModeAsync({
         allowsRecording: false,
@@ -420,25 +500,77 @@ export function VoiceControlsImpl({
         interruptionMode: "doNotMix",
         shouldPlayInBackground: false,
       });
-      if (!mounted.current || speechVersion.current !== version) return;
-      clearSpeechWait();
-      speechTimer.current = setTimeout(() => {
-        if (!mounted.current || speechVersion.current !== version) return;
-        ++speechVersion.current;
-        void stopOwnedSpeech();
-        setStartingSpeech(false);
-        setSpeaking(false);
-        setError(
-          "Audio couldn't start on this device. You can read the reply or try again.",
+      if (!current()) return;
+      if (liveSpeech && conversationId && replyId) {
+        const request = new AbortController();
+        speechRequest.current = request;
+        const audio = await latest.current.app.speakVoiceReply(
+          conversationId,
+          replyId,
+          request.signal,
         );
-      }, 8000);
+        if (!current()) return;
+        speechRequest.current = null;
+        const source = await temporarySpeech(audio);
+        if (!current()) {
+          source.remove();
+          return;
+        }
+        let player: ReturnType<typeof createAudioPlayer> | undefined;
+        let listener: { remove: () => void } | undefined;
+        disposePlayback.current = () => {
+          try {
+            listener?.remove();
+          } catch {
+            /* A disposed player has no active subscription. */
+          }
+          try {
+            player?.remove();
+          } catch {
+            /* The OS can dispose an interrupted player before cleanup. */
+          } finally {
+            source.remove();
+          }
+        };
+        player = createAudioPlayer(source.uri, {
+          updateInterval: 200,
+          allowsExternalPlayback: false,
+        });
+        let hasPlayed = false;
+        listener = player.addListener("playbackStatusUpdate", (status) => {
+          if (!current()) return;
+          if (status.didJustFinish) finish();
+          else if (
+            status.error ||
+            status.mediaServicesDidReset ||
+            status.playbackState === "failed"
+          )
+            finish(playbackFailure);
+          // Web emits a play event before decoding, then a loaded-data event
+          // that still reports paused at position zero. Wait for progress.
+          else if (
+            status.playing &&
+            !hasPlayed &&
+            (Platform.OS !== "web" || status.currentTime > 0)
+          ) {
+            hasPlayed = true;
+            started();
+          } else if (hasPlayed && !status.playing && !status.isBuffering)
+            finish();
+        });
+        speechTimer.current = setTimeout(() => finish(playbackFailure), 8000);
+        player.play();
+        return;
+      }
+      if (!builtInSpeech || !replyText) return finish();
+      speechTimer.current = setTimeout(() => finish(playbackFailure), 8000);
       const limit =
         Number.isFinite(Speech.maxSpeechInputLength) &&
         Speech.maxSpeechInputLength > 0
           ? Math.min(4000, Speech.maxSpeechInputLength)
           : 4000;
       ownsSpeech.current = true;
-      Speech.speak(reply.slice(0, limit), {
+      Speech.speak(replyText.slice(0, limit), {
         rate: 0.9,
         onStart: () => {
           if (mounted.current && version === speechVersion.current) {
@@ -475,16 +607,15 @@ export function VoiceControlsImpl({
           }
         },
       });
-    } catch {
-      if (mounted.current && version === speechVersion.current) {
-        void stopOwnedSpeech();
-        clearSpeechWait();
-        setStartingSpeech(false);
-        setSpeaking(false);
-        setError(
-          "Audio playback isn't available. You can read the reply instead.",
-        );
-      }
+    } catch (error) {
+      const failure = error as { code?: string; status?: number };
+      finish(
+        failure?.code === "AI_QUOTA_EXCEEDED"
+          ? "Spoken replies have reached their current quota. You can read the reply instead."
+          : failure?.status === 429
+            ? "Voice is busy right now. Try again in a moment or read the reply."
+            : playbackFailure,
+      );
     }
   }
   const listening = state === "listening";
@@ -565,7 +696,7 @@ export function VoiceControlsImpl({
       busy={microphoneBusy}
     />
   );
-  const playback = !!reply && !muted && (
+  const playback = (liveSpeech || builtInSpeech) && !muted && (
     <IconButton
       name={
         speaking || startingSpeech
@@ -577,7 +708,9 @@ export function VoiceControlsImpl({
           ? "Stop reading reply"
           : startingSpeech
             ? "Cancel audio playback"
-            : "Read reply aloud"
+            : liveSpeech
+              ? "Read reply aloud with an AI-generated voice"
+              : "Read reply aloud"
       }
       disabled={(disabled && !speaking && !startingSpeech) || state !== "idle"}
       onPress={() => void speak()}
@@ -592,6 +725,15 @@ export function VoiceControlsImpl({
         : "Voice recording needs a connected transcription service. You can still type or listen to replies.";
   const details = (
     <>
+      {talk && liveSpeech && !muted && (
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={{ paddingBottom: 6 }}
+        >
+          Spoken replies use an AI-generated voice.
+        </AppText>
+      )}
       {(listening || voiceBusy) && (
         <AppText
           variant="caption"
@@ -692,21 +834,20 @@ export function VoiceControlsImpl({
   );
   const showDetails =
     listening || voiceBusy || !!review || !!error || unavailable;
+  if (renderComposer && !talk)
+    return renderComposer(
+      microphone,
+      playback,
+      showDetails ? details : undefined,
+    );
+
   return (
-    <View pointerEvents={renderComposer && !talk ? "box-none" : undefined}>
+    <View>
       {renderComposer ? (
-        talk ? (
-          <>
-            {details}
-            {renderComposer(microphone, playback)}
-          </>
-        ) : (
-          renderComposer(
-            microphone,
-            playback,
-            showDetails ? details : undefined,
-          )
-        )
+        <>
+          {details}
+          {renderComposer(microphone, playback)}
+        </>
       ) : (
         <>
           <Row style={{ justifyContent: "space-between" }}>

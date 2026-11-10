@@ -14,9 +14,16 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { savedWeeklyStory } from "../../server/src/weekly-facts";
+import {
+  wellnessPlanProgress,
+  type WellnessPlan,
+} from "../../server/src/wellness-plans";
 import { useReducedMotion } from "../Companion";
 import { MilestoneArt } from "../MilestoneCelebration";
-import { localDay, recordDay } from "../content";
+import { ASSESSMENTS, localDay, recordDay } from "../content";
+import { DaylightScenicScrim, daylightPhotoInk } from "../DaylightScenicScrim";
+import { habitIconNames } from "../habits-ui";
+import { isJournalRecord } from "../journal-record";
 import {
   adjacentJourneyDay,
   journeyAnalytics,
@@ -25,11 +32,14 @@ import {
   journeyWeek,
   latestJourneyActivity,
   type JourneyPeriod,
+  type LatestJourneyActivity,
 } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
 import { spacing, useScreenGutter } from "../layout";
 import { useListScrollRestore } from "../list-scroll";
 import { momentClockText } from "../moments";
+import { EditorialSection, SceneIntro } from "../NestedDesign";
+import { webRadioProps } from "../radio-keyboard";
 import {
   activeSeconds,
   isCompletedMoment,
@@ -37,21 +47,25 @@ import {
   type DayEntry,
 } from "../progress";
 import { useApp } from "../store";
+import { MainTabHeader, useMainTabHeaderInsets } from "../SolaceBrandHeader";
 import { isRecordId, routes, savedReflectionRoute } from "../routes";
-import { useTheme } from "../theme";
+import { artGradient, useTheme } from "../theme";
 import { reflectionPeriodLabel } from "../weekly-story";
 import { HabitJourneyEntry } from "./HabitEntryPoints";
+import { WhatHelpedCard } from "./PracticeInsights";
 import {
   AppText,
+  BotanicalBackdrop,
   Button,
   Card,
   Icon,
-  LotusMark,
+  IconButton,
   MoodPetal,
   moodPetals,
+  NestedHeader,
+  NestedState,
   Row,
   Screen,
-  ScreenHeader,
   coverImageStyle,
   useNavigationInset,
 } from "../ui";
@@ -94,9 +108,9 @@ const artwork = {
 };
 const tones = {
   light: [
-    { base: "#EAF0DD", border: "#D8E4CF", ink: "#43743F" },
-    { base: "#FBE3D6", border: "#F1CDBB", ink: "#AE543B" },
-    { base: "#F1E5F6", border: "#E6D3F0", ink: "#704293" },
+    { base: "#F2F6F1", border: "#D7E3D8", ink: "#3F654C" },
+    { base: "#FCF2EF", border: "#EAD8D3", ink: "#9A4C3C" },
+    { base: "#F4EDF9", border: "#E3D6ED", ink: "#634579" },
   ],
   dark: [
     { base: "#252A30", border: "#4D6059", ink: "#B9EEA8" },
@@ -144,12 +158,16 @@ function useJourneyAnalytics(
   );
 }
 
-function useJourneyPeriod(owner?: string) {
+function useJourneyPeriod(owner?: string, requested?: JourneyPeriod) {
   const key = owner ? "solace.journey.period." + owner : null;
-  const [period, setPeriod] = useState<JourneyPeriod>("week");
+  const [period, setPeriod] = useState<JourneyPeriod>(requested ?? "week");
   const chosen = useRef(false);
   useEffect(() => {
     if (!key) return;
+    if (requested) {
+      setPeriod(requested);
+      return;
+    }
     let active = true;
     chosen.current = false;
     AsyncStorage.getItem(key)
@@ -165,7 +183,7 @@ function useJourneyPeriod(owner?: string) {
     return () => {
       active = false;
     };
-  }, [key]);
+  }, [key, requested]);
   return {
     period,
     selectPeriod(value: JourneyPeriod) {
@@ -215,8 +233,8 @@ function PeriodControl({
         styles.segments,
         isAndroid && styles.androidSegments,
         {
-          backgroundColor: resolved === "dark" ? "#393048E6" : "#FFF8F0E8",
-          borderColor: colors.border,
+          backgroundColor: resolved === "dark" ? "#393048E6" : colors.surface,
+          borderColor: resolved === "dark" ? colors.border : colors.heroBorder,
         },
       ]}
     >
@@ -244,6 +262,7 @@ function PeriodControl({
         <Pressable
           key={id}
           accessibilityRole="radio"
+          {...webRadioProps(id === period)}
           accessibilityLabel={label}
           accessibilityState={{ checked: id === period }}
           aria-checked={id === period}
@@ -251,7 +270,7 @@ function PeriodControl({
           style={styles.segment}
         >
           <AppText
-            variant={id === period ? "label" : "caption"}
+            variant="label"
             color={id === period && width > 6 ? ink : colors.text}
             style={styles.segmentLabel}
           >
@@ -363,99 +382,172 @@ function activityDestination({ record, collection }: DayEntry) {
   }
 }
 
+function describeLatestActivity(activity: LatestJourneyActivity | DayEntry): {
+  title: string;
+  type: string;
+  icon: string;
+  tone: "sage" | "lavender" | "peach";
+} {
+  if (activity.collection === "habitProgress") {
+    return {
+      title: activity.habit.name,
+      type: "Habit completion",
+      icon:
+        habitIconNames[activity.habit.icon]?.name ?? "checkmark-circle-outline",
+      tone: activity.habit.color ?? "sage",
+    };
+  }
+  const { record, collection } = activity;
+  const title = activityTitle(activity);
+  switch (collection) {
+    case "checkins":
+      return {
+        title,
+        type: "Mood check-in",
+        icon: "leaf-outline",
+        tone: "sage",
+      };
+    case "reflections":
+      return isJournalRecord(record)
+        ? {
+            title,
+            type: "Journal entry",
+            icon: "book-outline",
+            tone: "lavender",
+          }
+        : {
+            title,
+            type: "Reflection",
+            icon: "create-outline",
+            tone: "lavender",
+          };
+    case "assessments": {
+      const assessment = ASSESSMENTS.find(
+        ({ id }) => id === (record.assessmentType || record.type),
+      );
+      return {
+        title: record.title || assessment?.title || title,
+        type: "Reflective check-in",
+        icon: assessment?.icon ?? "clipboard-outline",
+        tone: "lavender",
+      };
+    }
+    case "sessions": {
+      if (record.type === "resource")
+        return {
+          title: record.title || "Saved guide",
+          type: "Guide completed",
+          icon: "book-outline",
+          tone: "sage",
+        };
+      const guided =
+        [
+          "Explore",
+          "Today",
+          "Solace chat",
+          "My Journal",
+          "Wellness plan",
+        ].includes(record.source) ||
+        (record.kind !== "generated" &&
+          ["breathing", "grounding"].includes(record.type));
+      return guided
+        ? {
+            title,
+            type: "Guided practice",
+            icon: "trail-sign-outline",
+            tone: "sage",
+          }
+        : {
+            title,
+            type: "Solace Moment",
+            icon: "flower-outline",
+            tone: "peach",
+          };
+    }
+  }
+}
+
 function LatestActivity({
   activity,
+  panel,
+  muted,
+  today,
 }: {
-  activity: DayEntry & { day: string };
+  activity?: LatestJourneyActivity;
+  panel: { backgroundColor: string; borderColor: string };
+  muted: string;
+  today: string;
 }) {
   const app = useApp();
   const { colors } = useTheme();
-  const destination = activityDestination(activity);
-  if (!destination) return null;
-  const { record, collection, day } = activity;
-  const title = activityTitle(activity);
-  const practice = collection === "sessions";
-  const checkin = collection === "checkins";
-  const seconds = practice ? activeSeconds(record) : 0;
-  const date = formatDay(day, { month: "short", day: "numeric" }).replace(
-    /\s+/g,
-    "\u00A0",
-  );
-  const type = practice
-    ? "Moment"
-    : checkin
-      ? "Mood check-in"
-      : "Journal entry";
+  const display = activity && describeLatestActivity(activity);
+  const destination =
+    activity?.collection === "habitProgress"
+      ? {
+          name: routes.habitDetails,
+          params: { id: activity.habit.id, day: activity.day },
+        }
+      : activity && activityDestination(activity);
+  const date =
+    activity &&
+    formatDay(activity.day, {
+      month: "short",
+      day: "numeric",
+      year:
+        activity.day.slice(0, 4) !== today.slice(0, 4) ? "numeric" : undefined,
+    }).replace(/\s+/g, "\u00A0");
   const detail = [
-    type,
-    seconds ? `${momentClockText(seconds)} active` : "",
+    display?.type,
     date,
-    record.localOnly ? "Waiting to sync" : "",
+    activity && "localOnly" in activity.record && activity.record.localOnly
+      ? "Waiting to sync"
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");
+  const tone = display?.tone ?? "sage";
+  const style = [styles.panel, panel, styles.latest];
+  const content = (
+    <Row style={styles.latestRow}>
+      <View
+        style={[
+          styles.latestIcon,
+          { backgroundColor: colors[`${tone}Surface`] },
+        ]}
+        aria-hidden
+      >
+        <Icon
+          name={display?.icon ?? "time-outline"}
+          color={colors[`${tone}Text`]}
+          size={21}
+        />
+      </View>
+      <View style={styles.latestCopy}>
+        <AppText variant="caption" color={muted}>
+          Latest activity
+        </AppText>
+        <AppText variant="heading" style={styles.latestTitle}>
+          {display?.title ?? "No activity yet"}
+        </AppText>
+        <AppText variant="caption" color={muted}>
+          {detail || "Saved activity appears here."}
+        </AppText>
+      </View>
+      {destination && <Icon name="chevron-forward" size={18} color={muted} />}
+    </Row>
+  );
+  if (!display || !destination) return <View style={style}>{content}</View>;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open latest activity, ${title}. ${detail}`}
+      accessibilityLabel={`Open latest activity, ${display.title}. ${detail}`}
       onPress={() => app.navigate(destination.name, destination.params)}
       style={({ pressed }) => [
-        styles.panel,
-        styles.latest,
-        {
-          backgroundColor: pressed ? colors.surface2 : colors.surface,
-          borderColor: colors.border,
-        },
+        ...style,
+        pressed && { borderColor: colors.lavenderText },
       ]}
     >
-      <Row>
-        <View
-          style={[
-            styles.latestIcon,
-            {
-              backgroundColor: practice
-                ? colors.peachSurface
-                : checkin
-                  ? colors.sageSurface
-                  : colors.lavenderSurface,
-            },
-          ]}
-        >
-          <Icon
-            name={
-              practice
-                ? "flower-outline"
-                : checkin
-                  ? "leaf-outline"
-                  : "book-outline"
-            }
-            color={
-              practice
-                ? colors.peachText
-                : checkin
-                  ? colors.sageText
-                  : colors.lavenderText
-            }
-            size={21}
-          />
-        </View>
-        <View style={styles.latestCopy}>
-          <AppText variant="caption" color={colors.muted}>
-            Latest activity
-          </AppText>
-          <AppText
-            variant="heading"
-            numberOfLines={2}
-            style={styles.latestTitle}
-          >
-            {title}
-          </AppText>
-          <AppText variant="caption" color={colors.muted}>
-            {detail}
-          </AppText>
-        </View>
-        <Icon name="chevron-forward" size={18} color={colors.muted} />
-      </Row>
+      {content}
     </Pressable>
   );
 }
@@ -483,38 +575,67 @@ export function JourneyCheckinScreen() {
       )
     : [];
   return (
-    <Screen title="Mood check-in" back={app.back}>
+    <Screen variant="nested" title="Mood check-in" back={app.back}>
       {checkin ? (
-        <Card style={{ gap: spacing.row }}>
-          <Row>
-            {petal && (
+        <View style={styles.recordPage}>
+          <View
+            style={[
+              styles.recordCover,
+              { backgroundColor: colors.sageSurface },
+            ]}
+          >
+            <BotanicalBackdrop style={styles.recordBotanical} />
+            {petal ? (
               <MoodPetal source={petal.image} style={styles.checkinPetal} />
+            ) : (
+              <Icon name="leaf-outline" size={36} color={colors.sageText} />
             )}
-            <View style={styles.latestCopy}>
-              <AppText variant="heading">{mood}</AppText>
+            <View style={styles.recordHeadline}>
+              <AppText variant="display" accessibilityRole="header">
+                {mood}
+              </AppText>
               {day && (
                 <AppText variant="caption" color={colors.muted}>
                   {formatDay(day)}
                 </AppText>
               )}
+              {checkin.localOnly && (
+                <AppText variant="caption" color={colors.sageText}>
+                  Waiting to sync
+                </AppText>
+              )}
             </View>
-          </Row>
-          {checkin.localOnly && (
-            <AppText variant="caption" color={colors.muted}>
-              Waiting to sync
+          </View>
+          <View style={[styles.recordNote, { borderColor: colors.border }]}>
+            <EditorialSection title="What you noticed" />
+            <AppText color={note ? colors.text : colors.muted}>
+              {note || "You saved this check-in without a note."}
             </AppText>
-          )}
-          {!!tags.length && (
-            <AppText variant="caption" color={colors.muted}>
-              {tags.join(" · ")}
-            </AppText>
-          )}
-          {!!note && <AppText>{note}</AppText>}
-        </Card>
+            {!!tags.length && (
+              <View style={styles.recordTags}>
+                {tags.map((tag, index) => (
+                  <View
+                    key={`${tag}-${index}`}
+                    style={[
+                      styles.recordTag,
+                      { backgroundColor: colors.lavenderSurface },
+                    ]}
+                  >
+                    <AppText variant="caption" color={colors.lavenderText}>
+                      {tag}
+                    </AppText>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        </View>
       ) : (
-        <AppText color={colors.muted}>
-          This check-in is no longer available.
-        </AppText>
+        <NestedState
+          title="Check-in unavailable"
+          description="This check-in is no longer available."
+          icon="leaf-outline"
+        />
       )}
     </Screen>
   );
@@ -530,15 +651,11 @@ function HistoryEntry({
   const app = useApp();
   const { colors } = useTheme();
   const { record, collection } = entry;
-  const title = activityTitle(entry);
-  const icon =
-    collection === "checkins"
-      ? "sunny-outline"
-      : collection === "sessions"
-        ? "leaf-outline"
-        : collection === "reflections"
-          ? "create-outline"
-          : "clipboard-outline";
+  const { title, type, icon, tone } = describeLatestActivity(entry);
+  const typeLabel =
+    collection === "sessions" && record.type === "resource" && !record.completed
+      ? "Saved guide"
+      : type;
   const seconds = collection === "sessions" ? activeSeconds(record) : 0;
   const detail =
     collection === "sessions"
@@ -564,32 +681,49 @@ function HistoryEntry({
         app.navigate(destination.name, destination.params);
       }
     : undefined;
-  return (
+  const content = (
+    <Row style={styles.historyEntryRow}>
+      <View
+        style={[
+          styles.historyIcon,
+          { backgroundColor: colors[`${tone}Surface`] },
+        ]}
+      >
+        <Icon name={icon} size={19} color={colors[`${tone}Text`]} />
+      </View>
+      <View style={styles.historyEntryCopy}>
+        <AppText variant="heading" style={styles.historyEntryTitle}>
+          {title}
+        </AppText>
+        <AppText variant="caption" color={colors[`${tone}Text`]}>
+          {typeLabel}
+        </AppText>
+        <AppText variant="caption" color={colors.muted} numberOfLines={3}>
+          {subtitle}
+        </AppText>
+      </View>
+      {open && (
+        <View style={styles.historyChevron}>
+          <Icon name="chevron-forward" size={17} color={colors.muted} />
+        </View>
+      )}
+    </Row>
+  );
+  const surface = [styles.historyEntry, { borderColor: colors.border }];
+  return open ? (
     <Pressable
-      accessibilityRole={open ? "button" : undefined}
+      accessibilityRole="button"
       accessibilityLabel={`${title}. ${subtitle}`}
-      disabled={!open}
       onPress={open}
-      style={({ pressed }) => ({
-        paddingVertical: 14,
-        borderBottomWidth: 0.75,
-        borderBottomColor: colors.border,
-        opacity: pressed ? 0.7 : 1,
-      })}
+      style={({ pressed }) => [
+        surface,
+        pressed && { backgroundColor: colors.surface },
+      ]}
     >
-      <Row style={{ alignItems: "flex-start" }}>
-        <View style={{ width: 34, paddingTop: 2 }}>
-          <Icon name={icon} size={21} color={colors.muted} />
-        </View>
-        <View style={{ flex: 1, gap: 4 }}>
-          <AppText variant="label">{title}</AppText>
-          <AppText variant="caption" color={colors.muted} numberOfLines={3}>
-            {subtitle}
-          </AppText>
-        </View>
-        {open && <Icon name="chevron-forward" size={17} color={colors.muted} />}
-      </Row>
+      {content}
     </Pressable>
+  ) : (
+    <View style={surface}>{content}</View>
   );
 }
 
@@ -599,7 +733,7 @@ type HistoryRow =
 
 export function JourneyActivityScreen() {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const gutter = useScreenGutter();
   const { bottom } = useSafeAreaInsets();
   const bottomClearance = Math.max(useNavigationInset(), bottom);
@@ -665,10 +799,14 @@ export function JourneyActivityScreen() {
     [day, days, limit],
   );
   const listScroll = useListScrollRestore<HistoryRow>(historyY);
+  const totalEntries = days.reduce(
+    (count, item) => count + item.entries.length,
+    0,
+  );
   const rememberPosition = () =>
     app.setParams({ historyLimit: limit, historyY: listScroll.offset.current });
   return (
-    <Screen scroll={false} style={styles.historyShell}>
+    <Screen variant="nested" scroll={false} style={styles.historyShell}>
       <FlatList<HistoryRow>
         {...listScroll.props}
         data={rows}
@@ -685,17 +823,17 @@ export function JourneyActivityScreen() {
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <>
-            <ScreenHeader title={title} back={app.back} />
-            {startDay && endDay && (
-              <AppText
-                variant="caption"
-                color={colors.muted}
-                style={styles.detailIntro}
-              >
-                {formatDay(startDay, { month: "short", day: "numeric" })} –{" "}
-                {formatDay(endDay)}
-              </AppText>
-            )}
+            <NestedHeader title="Journey" onBack={app.back} />
+            <SceneIntro
+              image={artwork[resolved].hero}
+              title={title}
+              description={
+                startDay && endDay
+                  ? `${formatDay(startDay, { month: "short", day: "numeric" })} – ${formatDay(endDay)}`
+                  : undefined
+              }
+              meta={`${totalEntries} saved ${totalEntries === 1 ? "entry" : "entries"}`}
+            />
             {filter === "story" && (
               <>
                 <AppText
@@ -719,20 +857,33 @@ export function JourneyActivityScreen() {
           </>
         }
         ListEmptyComponent={
-          <View style={{ gap: 14 }}>
-            <AppText color={colors.muted}>
-              There’s no saved activity here yet. You can make a little space
-              whenever you’re ready.
-            </AppText>
+          <NestedState
+            title="A quiet stretch"
+            description="There’s no saved activity here yet. You can make a little space whenever you’re ready."
+            icon={practices ? "flower-outline" : "time-outline"}
+          >
             <Button
               title={practices ? "Explore practices" : "Check in with yourself"}
               onPress={() => app.navigate(practices ? "explore" : "checkin")}
             />
-          </View>
+          </NestedState>
         }
         renderItem={({ item }) =>
           "day" in item ? (
-            <AppText variant="heading">{formatDay(item.day)}</AppText>
+            <Row style={[styles.historyDate, { borderColor: colors.border }]}>
+              <Icon
+                name="calendar-outline"
+                size={17}
+                color={colors.lavenderText}
+              />
+              <AppText
+                variant="heading"
+                accessibilityRole="header"
+                style={styles.historyDateText}
+              >
+                {formatDay(item.day)}
+              </AppText>
+            </Row>
           ) : (
             <View style={item.last && styles.historyDayEnd}>
               <HistoryEntry entry={item.entry} onOpen={rememberPosition} />
@@ -755,7 +906,7 @@ export function JourneyActivityScreen() {
 
 export function JourneyMilestonesScreen() {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const now = useJourneyClock();
   const analytics = useJourneyAnalytics(app.data, now);
   const milestone = analytics.milestones.find(
@@ -775,9 +926,6 @@ export function JourneyMilestonesScreen() {
     setError("");
     try {
       await app.save("preferences", {
-        environment: "forest",
-        ambientEnabled: false,
-        ...preferences,
         id: "wellness",
         streaksEnabled: value,
       });
@@ -792,41 +940,135 @@ export function JourneyMilestonesScreen() {
   }
   if (milestone)
     return (
-      <Screen title={milestone.title} back={app.back}>
-        <View style={styles.milestoneDetail}>
-          <MilestoneArt {...milestone} />
-          <AppText variant="heading">
-            {milestone.earned
-              ? "A little milestone earned"
-              : "Still ahead of you"}
+      <Screen variant="nested" title="Little milestones" back={app.back}>
+        <View
+          style={[
+            styles.milestoneDetail,
+            {
+              backgroundColor: milestone.earned
+                ? colors.sageSurface
+                : colors.surface,
+            },
+          ]}
+        >
+          <BotanicalBackdrop style={styles.recordBotanical} />
+          <MilestoneArt {...milestone} size={108} />
+          <AppText
+            variant="display"
+            accessibilityRole="header"
+            style={styles.center}
+          >
+            {milestone.title}
           </AppText>
-          <AppText color={colors.muted} style={styles.center}>
-            {milestone.description}
-          </AppText>
-          {milestone.earnedDay && (
-            <AppText variant="label">
-              Earned {formatDay(milestone.earnedDay)}
+          <View
+            style={[
+              styles.recordTag,
+              {
+                backgroundColor: milestone.earned
+                  ? colors.surface
+                  : colors.lavenderSurface,
+              },
+            ]}
+          >
+            <AppText
+              variant="label"
+              color={milestone.earned ? colors.sageText : colors.lavenderText}
+              style={styles.center}
+            >
+              {milestone.earnedDay
+                ? `Earned ${formatDay(milestone.earnedDay)}`
+                : milestone.earned
+                  ? "Earned"
+                  : "Still ahead of you"}
             </AppText>
-          )}
+          </View>
+        </View>
+        <View style={styles.milestoneRule}>
+          <EditorialSection
+            title={
+              milestone.earned ? "What you made time for" : "How to reach it"
+            }
+          />
+          <AppText color={colors.muted}>{milestone.description}</AppText>
         </View>
       </Screen>
     );
+  const earned = analytics.milestones.filter((item) => item.earned);
+  const ahead = analytics.milestones.filter((item) => !item.earned);
+  const groups = [
+    { title: "Already yours", items: earned },
+    { title: "Still ahead", items: ahead },
+  ];
   return (
-    <Screen title="Little milestones" back={app.back}>
-      <Row style={{ marginBottom: 12 }}>
-        <View style={styles.flex}>
-          <AppText variant="label">Show check-in streaks</AppText>
-          <AppText variant="caption" color={colors.muted}>
-            Optional. Quiet days never erase your history.
-          </AppText>
-        </View>
-        <Switch
-          accessibilityLabel="Show check-in streaks"
-          disabled={saving}
-          value={streaks}
-          onValueChange={setStreaks}
-        />
-      </Row>
+    <Screen variant="nested" title="Journey" back={app.back}>
+      <SceneIntro
+        image={artwork[resolved].reflection}
+        title="Little milestones"
+        description="Remember the time you have made for yourself."
+        meta={`${earned.length} of ${analytics.milestones.length} earned`}
+      />
+      {groups.map(
+        ({ title, items }) =>
+          !!items.length && (
+            <View key={title} style={styles.milestoneGroup}>
+              <EditorialSection title={title} />
+              {items.map((item) => (
+                <Pressable
+                  key={item.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    item.title + (item.earned ? ", earned" : ", locked")
+                  }
+                  onPress={() =>
+                    app.navigate("journey-milestones", { id: item.id })
+                  }
+                  style={({ pressed }) => [
+                    styles.milestoneEntry,
+                    { borderColor: colors.border },
+                    item.earned && { backgroundColor: colors.sageSurface },
+                    pressed && { opacity: 0.74 },
+                  ]}
+                >
+                  <MilestoneArt {...item} size={48} />
+                  <View style={styles.historyEntryCopy}>
+                    <AppText variant="heading" style={styles.historyEntryTitle}>
+                      {item.title}
+                    </AppText>
+                    <AppText variant="caption" color={colors.muted}>
+                      {item.earnedDay
+                        ? "Earned " + formatDay(item.earnedDay)
+                        : item.description}
+                    </AppText>
+                  </View>
+                  <Icon
+                    name={
+                      item.earned ? "chevron-forward" : "lock-closed-outline"
+                    }
+                    color={item.earned ? colors.sageText : colors.muted}
+                    size={17}
+                  />
+                </Pressable>
+              ))}
+            </View>
+          ),
+      )}
+      <Card style={styles.streakCard}>
+        <Row>
+          <View style={styles.flex}>
+            <AppText variant="label">Show check-in streaks</AppText>
+            <AppText variant="caption" color={colors.muted}>
+              Optional. Quiet days never erase your history.
+            </AppText>
+          </View>
+          <Switch
+            accessibilityLabel="Show check-in streaks"
+            disabled={saving}
+            value={streaks}
+            trackColor={{ false: colors.border, true: colors.primary }}
+            onValueChange={setStreaks}
+          />
+        </Row>
+      </Card>
       {error ? (
         <AppText accessibilityRole="alert" color={colors.danger}>
           {error}
@@ -837,43 +1079,6 @@ export function JourneyMilestonesScreen() {
           {journeySummary(app.data, now).streak} consecutive check-in days
         </AppText>
       )}
-      {analytics.milestones.map((item) => (
-        <Pressable
-          key={item.id}
-          accessibilityRole="button"
-          accessibilityLabel={
-            item.title + (item.earned ? ", earned" : ", locked")
-          }
-          onPress={() => app.navigate("journey-milestones", { id: item.id })}
-        >
-          <Row
-            style={[
-              styles.entryRow,
-              {
-                borderBottomWidth: StyleSheet.hairlineWidth,
-                borderBottomColor: colors.border,
-              },
-            ]}
-          >
-            <MilestoneArt {...item} size={46} />
-            <View style={styles.flex}>
-              <AppText variant="label">{item.title}</AppText>
-              <AppText variant="caption" color={colors.muted}>
-                {item.earnedDay
-                  ? "Earned " + formatDay(item.earnedDay)
-                  : item.description}
-              </AppText>
-            </View>
-            <Icon
-              name={
-                item.earned ? "checkmark-circle-outline" : "lock-closed-outline"
-              }
-              color={colors.muted}
-              size={17}
-            />
-          </Row>
-        </Pressable>
-      ))}
     </Screen>
   );
 }
@@ -881,11 +1086,13 @@ export function JourneyScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
-  const { top } = useSafeAreaInsets();
+  const headerInsets = useMainTabHeaderInsets();
   const { width, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
   const large = fontScale > 1.25;
   const compact = width < 360;
+  const storyReadingCoverage = large ? 82 : compact ? 73 : 64;
+  const storyReadingWidth = `${storyReadingCoverage}%` as const;
   const reflowMilestones = width < 390 || large;
   const now = useJourneyClock();
   const today = localDay(now);
@@ -894,13 +1101,23 @@ export function JourneyScreen() {
     typeof requestedDay === "string" && requestedDay < today
       ? requestedDay
       : today;
-  const { period, selectPeriod } = useJourneyPeriod(app.user?.id);
+  const requestedPeriod = periods.find(
+    ({ id }) => id === app.params.period,
+  )?.id;
+  const { period, selectPeriod } = useJourneyPeriod(
+    app.user?.id,
+    requestedPeriod,
+  );
   const [options, setOptions] = useState(false);
   const analytics = useJourneyAnalytics(app.data, now);
-  const latest = useMemo(() => latestJourneyActivity(analytics), [analytics]);
   const report = useMemo(
     () => journeyReport(analytics, period, selectedDay),
     [analytics, period, selectedDay],
+  );
+  const { habits, habitProgress } = app.data;
+  const latest = useMemo(
+    () => latestJourneyActivity(analytics, report, habits, habitProgress, now),
+    [analytics, report, habits, habitProgress, now],
   );
   const days = useMemo(
     () => journeyCalendar(analytics, period, selectedDay),
@@ -913,14 +1130,33 @@ export function JourneyScreen() {
     () => (goal ? journeyGoalProgress(goal, app.data, now) : null),
     [goal, app.data, now],
   );
+  const savedPlans = useMemo(() => {
+    const plans = app.data.plans.filter(
+      (item) =>
+        item.type === "wellness" &&
+        isRecordId(item.id) &&
+        Array.isArray(item.tasks) &&
+        item.tasks.length,
+    ) as WellnessPlan[];
+    return plans
+      .sort((a, b) =>
+        String(b.updatedAt ?? b.createdAt ?? "").localeCompare(
+          String(a.updatedAt ?? a.createdAt ?? ""),
+        ),
+      )
+      .map((plan) => ({
+        plan,
+        ...wellnessPlanProgress(plan, app.data.sessions),
+      }));
+  }, [app.data.plans, app.data.sessions]);
   const panel = {
-    backgroundColor: dark ? "#211A2E" : "#FFF8F0",
-    borderColor: dark ? "#59476D" : colors.heroBorder,
+    backgroundColor: dark ? "#211A2E" : colors.surface,
+    borderColor: dark ? "#59476D" : colors.border,
   };
   const muted = dark ? "#E0D2E8" : colors.heroMuted;
   const selectedInk = dark ? "#22162E" : colors.primaryText;
   const selectedBase = dark ? "#E2B7F3" : colors.primary;
-  const progressInk = dark ? "#D9B3F0" : colors.primary;
+  const progressInk = dark ? "#D9B3F0" : colors.accent;
   const progressTrack = dark ? "#51405F" : colors.border;
   const periodName = period === "week" ? "week" : "month";
   const selectedWeek = journeyWeek(selectedDay);
@@ -952,11 +1188,7 @@ export function JourneyScreen() {
   return (
     <Screen edgeToEdgeTop style={styles.screen}>
       <View
-        style={[
-          styles.hero,
-          isAndroid && styles.androidHero,
-          { paddingTop: top + 3, paddingHorizontal: gutter },
-        ]}
+        style={[styles.hero, isAndroid && styles.androidHero, headerInsets]}
       >
         <Image
           source={artwork[resolved].hero}
@@ -970,57 +1202,44 @@ export function JourneyScreen() {
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            {
-              backgroundImage: dark
-                ? "linear-gradient(90deg, #151020F5 0%, #1710249E 47%, #17102400 87%)"
-                : "linear-gradient(90deg, #FBF0E8 0%, #FBF0E8BA 48%, #FBF0E800 86%)",
-            },
+            dark
+              ? {
+                  backgroundImage:
+                    "linear-gradient(90deg, #151020F5 0%, #1710249E 47%, #17102400 87%)",
+                }
+              : artGradient(
+                  `linear-gradient(90deg, ${colors.bg} 0%, ${colors.bg}ED 32%, ${colors.bg}9C 56%, ${colors.bg}00 90%)`,
+                ),
           ]}
         />
         <View
           pointerEvents="none"
           style={[
             styles.heroFade,
-            {
-              backgroundImage:
-                "linear-gradient(180deg, " +
-                colors.bg +
-                "00 0%, " +
-                colors.bg +
-                " 100%)",
-            },
+            dark
+              ? {
+                  backgroundImage:
+                    "linear-gradient(180deg, " +
+                    colors.bg +
+                    "00 0%, " +
+                    colors.bg +
+                    " 100%)",
+                }
+              : artGradient(
+                  `linear-gradient(180deg, ${colors.bg}00 0%, ${colors.bg} 100%)`,
+                ),
           ]}
         />
-        <Row style={styles.masthead}>
-          <Row style={styles.brand}>
-            <LotusMark size={27} />
-            <AppText variant="heading" style={styles.wordmark}>
-              Solace
-            </AppText>
-          </Row>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Journey options"
-            accessibilityState={{ expanded: options }}
+        <MainTabHeader>
+          <IconButton
+            name={options ? "close" : "ellipsis-horizontal"}
+            label="Journey options"
+            expanded={options}
             onPress={() => setOptions((value) => !value)}
-            style={styles.iconTarget}
-          >
-            <View
-              style={[
-                styles.optionsDisc,
-                {
-                  backgroundColor: dark ? "#42334DC9" : "#FFF8F0EB",
-                  borderColor: panel.borderColor,
-                },
-              ]}
-            >
-              <Icon
-                name={options ? "close" : "ellipsis-horizontal"}
-                size={17}
-              />
-            </View>
-          </Pressable>
-        </Row>
+            size={48}
+            appearance="outlined"
+          />
+        </MainTabHeader>
         <AppText
           variant="display"
           accessibilityRole="header"
@@ -1059,7 +1278,12 @@ export function JourneyScreen() {
             />
           </View>
         )}
-        {latest && <LatestActivity activity={latest} />}
+        <LatestActivity
+          activity={latest}
+          panel={panel}
+          muted={muted}
+          today={today}
+        />
         <Row style={[styles.metricRow, large && styles.wrap]}>
           {metrics.map((metric, index) => {
             const tone = tones[resolved][index];
@@ -1122,23 +1346,28 @@ export function JourneyScreen() {
                     </AppText>
                   )}
                 </Row>
-                <AppText variant="caption" style={styles.metricLabel}>
-                  {metric.label}
-                </AppText>
                 <AppText
                   variant="caption"
-                  color={
-                    typeof change === "number" && change > 0
-                      ? dark
-                        ? "#C2E6AE"
-                        : "#386537"
-                      : muted
-                  }
-                  style={styles.metricNote}
+                  color={dark ? undefined : colors.muted}
+                  style={styles.metricLabel}
                 >
-                  {comparison ||
-                    (period === "all" ? "Lifetime" : "No earlier activity")}
+                  {metric.label}
                 </AppText>
+                {comparison && (
+                  <AppText
+                    variant="caption"
+                    color={
+                      typeof change === "number" && change > 0
+                        ? dark
+                          ? "#C2E6AE"
+                          : "#386537"
+                        : muted
+                    }
+                    style={styles.metricNote}
+                  >
+                    {comparison}
+                  </AppText>
+                )}
               </Pressable>
             );
           })}
@@ -1189,7 +1418,7 @@ export function JourneyScreen() {
               />
             </Pressable>
           </Row>
-          <Row style={styles.weekdays}>
+          <View aria-hidden style={styles.weekdays}>
             {["M", "T", "W", "T", "F", "S", "S"].map((value, index) => (
               <AppText
                 key={index}
@@ -1200,17 +1429,23 @@ export function JourneyScreen() {
                 {value}
               </AppText>
             ))}
-          </Row>
+          </View>
           <View style={styles.calendarGrid}>
             {days.map((day, index) => {
               if (!day)
                 return <View key={"blank-" + index} style={styles.dayCell} />;
               const selected = day.key === selectedDay;
+              const marks = selected
+                ? dark
+                  ? ["#38543F", "#7A4B33", "#694077"]
+                  : ["#365E43", "#8C422C", "#553570"]
+                : dark
+                  ? ["#ABE995", "#FFE89B", "#F2B8F3"]
+                  : ["#4A7655", "#9B542F", "#765295"];
               const indicators = [
-                day.checkins > 0 && (dark ? "#ABE995" : "#59904C"),
-                day.moments > 0 && (dark ? "#FFE89B" : "#B97842"),
-                day.reflections + day.assessments > 0 &&
-                  (dark ? "#F2B8F3" : "#8E57A3"),
+                day.checkins > 0 && marks[0],
+                day.moments > 0 && marks[1],
+                day.reflections + day.assessments > 0 && marks[2],
               ];
               const description = [
                 counted(day.checkins, "mood check-in"),
@@ -1239,13 +1474,19 @@ export function JourneyScreen() {
                         backgroundColor: selected
                           ? selectedBase
                           : "transparent",
-                        opacity: day.future ? 0.55 : pressed ? 0.72 : 1,
+                        opacity: day.future && dark ? 0.55 : pressed ? 0.72 : 1,
                       },
                     ]}
                   >
                     <AppText
                       variant={selected ? "label" : "caption"}
-                      color={selected ? selectedInk : colors.text}
+                      color={
+                        selected
+                          ? selectedInk
+                          : day.future && !dark
+                            ? colors.muted
+                            : colors.text
+                      }
                       style={styles.dayNumber}
                     >
                       {day.day}
@@ -1293,36 +1534,46 @@ export function JourneyScreen() {
             fadeDuration={0}
             pointerEvents="none"
           />
-          <View
-            pointerEvents="none"
+          {dark ? (
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFill,
+                {
+                  backgroundImage:
+                    "linear-gradient(90deg, #23192E 0%, #23192EED 55%, #23192E38 100%)",
+                },
+              ]}
+            />
+          ) : (
+            <DaylightScenicScrim coverage={storyReadingCoverage} />
+          )}
+          <Row
             style={[
-              StyleSheet.absoluteFill,
-              {
-                backgroundImage: dark
-                  ? "linear-gradient(90deg, #23192E 0%, #23192EED 55%, #23192E38 100%)"
-                  : "linear-gradient(90deg, #FFF2E3 0%, #FFF2E3F5 55%, #FFF2E338 100%)",
-              },
+              styles.reflectionHeading,
+              !dark && { width: storyReadingWidth },
             ]}
-          />
-          <Row style={styles.reflectionHeading}>
+          >
             <Icon
               name="sparkles-outline"
-              color={dark ? "#FFD69A" : colors.primary}
+              color={dark ? "#FFD69A" : daylightPhotoInk.detail}
               size={17}
             />
             <AppText
               variant="heading"
               accessibilityRole="header"
+              color={dark ? undefined : daylightPhotoInk.title}
               style={[styles.sectionTitle, styles.flex]}
             >
               Your weekly story
             </AppText>
           </Row>
           <AppText
-            color={colors.text}
+            color={dark ? colors.text : daylightPhotoInk.detail}
             style={[
               styles.reflectionCopy,
               (large || compact) && styles.fullCopy,
+              !dark && { width: storyReadingWidth },
             ]}
           >
             {reflectionPeriodLabel({
@@ -1341,14 +1592,14 @@ export function JourneyScreen() {
             style={({ pressed }) => [
               styles.reflectButton,
               {
-                backgroundColor: dark ? "#FFD1AE" : colors.primary,
+                backgroundColor: colors.lavenderAction,
                 opacity: pressed ? 0.75 : 1,
               },
             ]}
           >
             <AppText
               variant="label"
-              color={dark ? "#281C27" : colors.primaryText}
+              color={colors.lavenderActionText}
               style={styles.reflectLabel}
             >
               {savedStory ? "Reopen weekly story" : "Look back on my week"}
@@ -1356,10 +1607,11 @@ export function JourneyScreen() {
             <Icon
               name="arrow-forward"
               size={15}
-              color={dark ? "#281C27" : colors.primaryText}
+              color={colors.lavenderActionText}
             />
           </Pressable>
         </View>
+        <WhatHelpedCard now={now} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
@@ -1401,7 +1653,7 @@ export function JourneyScreen() {
                 ? goal.title + (goal.active === false ? " · Paused" : "")
                 : "Set a target that feels right for you."}
             </AppText>
-            {progress && goal?.active !== false && (
+            {progress && goal?.active !== false && large && (
               <>
                 <View
                   style={[
@@ -1419,15 +1671,13 @@ export function JourneyScreen() {
                     ]}
                   />
                 </View>
-                {large && (
-                  <AppText
-                    variant="caption"
-                    color={muted}
-                    style={styles.goalCopy}
-                  >
-                    {progress.percentage}% complete
-                  </AppText>
-                )}
+                <AppText
+                  variant="caption"
+                  color={muted}
+                  style={styles.goalCopy}
+                >
+                  {progress.percentage}% complete
+                </AppText>
               </>
             )}
           </View>
@@ -1449,7 +1699,75 @@ export function JourneyScreen() {
           style={[styles.panel, panel]}
           mutedColor={muted}
         />
-        <View>
+        {savedPlans.length > 0 && (
+          <View style={[styles.panel, panel, styles.planPanel]}>
+            <Row style={styles.planHeading}>
+              <Icon name="calendar-outline" color={progressInk} size={18} />
+              <AppText
+                variant="heading"
+                accessibilityRole="header"
+                style={[styles.sectionTitle, styles.flex]}
+              >
+                Wellness plan progress
+              </AppText>
+            </Row>
+            {savedPlans.map(({ plan, completed, total }) => {
+              const title = plan.title || "Your wellness plan";
+              const label = `${completed} of ${total} days complete`;
+              return (
+                <Pressable
+                  key={plan.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${title}, ${label}`}
+                  onPress={() =>
+                    app.navigate(
+                      plan.programId
+                        ? routes.guidedProgram
+                        : routes.wellnessPlan,
+                      { id: plan.programId ?? plan.id },
+                    )
+                  }
+                  style={({ pressed }) => [
+                    styles.planRow,
+                    {
+                      borderTopColor: panel.borderColor,
+                      opacity: pressed ? 0.75 : 1,
+                    },
+                  ]}
+                >
+                  <View style={styles.flex}>
+                    <AppText variant="label">{title}</AppText>
+                    <AppText
+                      variant="caption"
+                      color={muted}
+                      style={{ marginTop: 3 }}
+                    >
+                      {label}
+                    </AppText>
+                    <View
+                      style={[
+                        styles.progressTrack,
+                        { backgroundColor: progressTrack },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {
+                            width: `${(completed / total) * 100}%`,
+                            backgroundColor: progressInk,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                  <Icon name="chevron-forward" size={17} />
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        <View style={[styles.panel, panel, styles.story]}>
           <Row style={styles.sectionHead}>
             <AppText
               variant="heading"
@@ -1504,25 +1822,32 @@ export function JourneyScreen() {
                       size={23}
                       color={item.earned ? tone.ink : muted}
                     />
+                    <View
+                      style={[
+                        styles.badgeStatus,
+                        { backgroundColor: panel.backgroundColor },
+                      ]}
+                    >
+                      <Icon
+                        name={
+                          item.earned
+                            ? "checkmark-circle"
+                            : "lock-closed-outline"
+                        }
+                        size={14}
+                        color={
+                          item.earned
+                            ? dark
+                              ? "#BAEDAA"
+                              : "#347145"
+                            : colors.muted
+                        }
+                      />
+                    </View>
                   </View>
                   <AppText variant="caption" style={styles.badgeLabel}>
                     {item.title}
                   </AppText>
-                  <View style={styles.badgeStatus}>
-                    <Icon
-                      name={
-                        item.earned ? "checkmark-circle" : "lock-closed-outline"
-                      }
-                      size={14}
-                      color={
-                        item.earned
-                          ? dark
-                            ? "#BAEDAA"
-                            : "#347145"
-                          : colors.muted
-                      }
-                    />
-                  </View>
                 </Pressable>
               );
             })}
@@ -1581,20 +1906,9 @@ const styles = StyleSheet.create({
   hero: { paddingBottom: spacing.card, overflow: "hidden" },
   androidHero: { paddingBottom: spacing.row },
   heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 49 },
-  masthead: { justifyContent: "space-between", gap: 8 },
-  brand: { gap: 7 },
-  wordmark: { fontSize: 20, lineHeight: 25 },
   iconTarget: {
     width: 48,
     minHeight: 48,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  optionsDisc: {
-    width: 33,
-    height: 33,
-    borderRadius: 17,
-    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1617,6 +1931,7 @@ const styles = StyleSheet.create({
   },
   segment: {
     flex: 1,
+    minWidth: 0,
     minHeight: 48,
     justifyContent: "center",
     alignItems: "center",
@@ -1634,7 +1949,8 @@ const styles = StyleSheet.create({
   body: { gap: spacing.card },
   androidBody: { gap: spacing.row },
   panel: { borderWidth: 1, borderRadius: 17, overflow: "hidden" },
-  latest: { padding: spacing.row, minHeight: 76, justifyContent: "center" },
+  latest: { padding: spacing.card, minHeight: 104, justifyContent: "center" },
+  latestRow: { gap: spacing.row },
   latestIcon: {
     width: 42,
     height: 42,
@@ -1644,7 +1960,7 @@ const styles = StyleSheet.create({
   },
   latestCopy: { flex: 1, minWidth: 0, gap: 2 },
   latestTitle: { fontSize: 23, lineHeight: 27 },
-  checkinPetal: { width: 52, height: 52 },
+  checkinPetal: { width: 74, height: 74 },
   options: { padding: spacing.compact, gap: 4 },
   metricRow: { gap: spacing.compact, alignItems: "stretch" },
   metric: {
@@ -1657,12 +1973,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.row,
     gap: 4,
     alignItems: "center",
+    justifyContent: "center",
   },
   androidMetric: {
     minHeight: 92,
     paddingVertical: spacing.compact,
     gap: 3,
-    justifyContent: "center",
   },
   wrap: { flexWrap: "wrap" },
   largeTile: { flexBasis: "45%", flexGrow: 1 },
@@ -1689,7 +2005,7 @@ const styles = StyleSheet.create({
   compactCalendar: { paddingHorizontal: 4 },
   calendarHead: { justifyContent: "space-between", gap: 4 },
   month: { flex: 1, textAlign: "center", fontSize: 20, lineHeight: 25 },
-  weekdays: { marginBottom: 4 },
+  weekdays: { flexDirection: "row", marginBottom: 4 },
   weekday: { flex: 1, textAlign: "center", fontSize: 11, lineHeight: 15 },
   calendarGrid: { flexDirection: "row", flexWrap: "wrap" },
   dayCell: { width: "14.2857%", padding: 1 },
@@ -1730,6 +2046,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.compact,
   },
   reflectLabel: { fontSize: 13, lineHeight: 18, flexShrink: 1 },
+  planPanel: { paddingHorizontal: 15 },
+  planHeading: { paddingVertical: 12, gap: 8 },
+  planRow: {
+    minHeight: 54,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   goal: {
     minHeight: 74,
     flexDirection: "row",
@@ -1808,7 +2134,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   badgeLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
-  badgeStatus: { marginTop: "auto", minHeight: 18, justifyContent: "center" },
+  badgeStatus: {
+    position: "absolute",
+    right: -5,
+    bottom: -5,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   story: { padding: spacing.card, gap: spacing.compact },
   storyRow: { gap: 0, alignItems: "stretch" },
   storyItem: {
@@ -1830,8 +2165,81 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 0,
   },
-  historyDayEnd: { marginBottom: 14 },
-  entryRow: { minHeight: 48, paddingVertical: 8 },
-  milestoneDetail: { alignItems: "center", paddingVertical: 24, gap: 12 },
+  recordPage: { gap: spacing.section },
+  recordCover: {
+    minHeight: 168,
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 20,
+    padding: spacing.card,
+    gap: spacing.row,
+    overflow: "hidden",
+  },
+  recordHeadline: { flex: 1, minWidth: 0, gap: 4 },
+  recordBotanical: {
+    width: 208,
+    height: 208,
+    top: -42,
+    right: -30,
+    opacity: 0.34,
+  },
+  recordNote: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: spacing.card,
+    gap: spacing.compact,
+  },
+  recordTags: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  recordTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    maxWidth: "100%",
+  },
+  historyDayEnd: { marginBottom: spacing.section },
+  historyDate: {
+    paddingBottom: spacing.compact,
+    gap: spacing.compact,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  historyDateText: { flex: 1, minWidth: 0, fontSize: 22, lineHeight: 26 },
+  historyEntry: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderRadius: 2,
+  },
+  historyEntryRow: {
+    minHeight: 66,
+    paddingVertical: spacing.row,
+    alignItems: "flex-start",
+  },
+  historyEntryCopy: { flex: 1, minWidth: 0, gap: 2 },
+  historyEntryTitle: { fontSize: 22, lineHeight: 27 },
+  historyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyChevron: { alignSelf: "center" },
+  streakCard: { marginBottom: spacing.row },
+  milestoneGroup: { gap: 4, marginBottom: spacing.section },
+  milestoneEntry: {
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+    borderRadius: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: spacing.compact,
+    paddingHorizontal: 6,
+  },
+  milestoneDetail: {
+    alignItems: "center",
+    borderRadius: 20,
+    overflow: "hidden",
+    padding: spacing.section,
+    gap: spacing.row,
+  },
+  milestoneRule: { marginTop: spacing.section },
   center: { textAlign: "center" },
 });

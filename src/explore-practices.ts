@@ -1,4 +1,5 @@
 import type { SolaceMoment } from "../server/src/moment-contract";
+import { routes } from "./routes";
 
 export const practiceDurations = [3, 5, 10] as const;
 type PracticeDuration = (typeof practiceDurations)[number];
@@ -142,8 +143,16 @@ export const practiceFocuses = {
 export type PracticeFocus = keyof typeof practiceFocuses;
 
 export function createExplorePractice(
+  focus: "breathe",
+  minutes: 1 | PracticeDuration,
+): SolaceMoment;
+export function createExplorePractice(
   focus: PracticeFocus,
   minutes: PracticeDuration,
+): SolaceMoment;
+export function createExplorePractice(
+  focus: PracticeFocus,
+  minutes: PracticeDuration | 1,
 ): SolaceMoment {
   const {
     title,
@@ -156,12 +165,15 @@ export function createExplorePractice(
   } = practiceFocuses[focus];
   const durationSec = minutes * 60;
   const durations = [durationSec / 5, durationSec / 2, (durationSec * 3) / 10];
+  const quickReset = focus === "breathe" && minutes === 1;
   return {
     version: 1,
     id: `explore-${focus}-${minutes}`,
     type,
-    title,
-    description,
+    title: quickReset ? "One-minute breathing reset" : title,
+    description: quickReset
+      ? "Take a minute to breathe at a comfortable pace."
+      : description,
     durationSec,
     environment,
     breathing,
@@ -176,9 +188,9 @@ export function createExplorePractice(
 export const exploreShortcuts = [
   {
     title: "Guided Programs",
-    detail: "Small steps for the next three days.",
+    detail: "Short practices to follow over a few days.",
     icon: "map-outline",
-    route: "plan",
+    route: routes.guidedPrograms,
     tone: "lavender",
   },
   {

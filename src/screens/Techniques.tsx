@@ -1,16 +1,18 @@
 import React, { useRef } from "react";
 import {
   Image,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing, useScreenGutter } from "../layout";
+import { webRadioProps } from "../radio-keyboard";
 import { isRecordId, routes } from "../routes";
 import { useApp } from "../store";
+import { techniqueArtwork } from "../technique-artwork";
 import {
   getTechnique,
   listTechniques,
@@ -19,14 +21,16 @@ import {
   type TechniqueCategory,
 } from "../techniques";
 import { artGradient, useTheme } from "../theme";
-import { AppText, Button, coverImageStyle, Icon, Screen } from "../ui";
+import {
+  AppText,
+  Button,
+  coverImageStyle,
+  Icon,
+  IconButton,
+  NestedState,
+  Screen,
+} from "../ui";
 
-const artwork = {
-  breathe: require("../../assets/guided-breathe.jpg"),
-  ground: require("../../assets/guided-ground.jpg"),
-  reflect: require("../../assets/guided-reflect.jpg"),
-  sleep: require("../../assets/guided-rest.jpg"),
-};
 const artworkOrder = ["breathe", "ground", "sleep", "reflect"] as const;
 
 function durationLabel(technique: Technique) {
@@ -43,33 +47,11 @@ function restoredOffset(value: unknown) {
     : 0;
 }
 
-function TechniqueHeader({ title, back }: { title: string; back: () => void }) {
-  return (
-    <View style={styles.header}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Go back"
-        onPress={back}
-        style={styles.back}
-      >
-        <Icon name="chevron-back" size={24} />
-      </Pressable>
-      <AppText
-        variant="title"
-        accessibilityRole="header"
-        style={styles.headerTitle}
-      >
-        {title}
-      </AppText>
-    </View>
-  );
-}
-
 export function TechniquesScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
-  const gutter = spacing.card;
+  const gutter = useScreenGutter();
   const dark = resolved === "dark";
   const category =
     techniqueCategories.find((item) => item === app.params.category) ?? "All";
@@ -99,11 +81,13 @@ export function TechniquesScreen() {
           ...results.filter((entry) => !highlights.includes(entry)),
         ]
       : results;
+  const [lead, ...remaining] = list;
   return (
     <Screen
       edgeToEdgeTop
+      variant="nested"
       heroStatusBar={dark ? "light" : "dark"}
-      style={{ paddingTop: top + 17, paddingHorizontal: gutter }}
+      style={{ paddingTop: top + spacing.screenTop }}
       scrollRef={scroll}
       onScroll={(event) => {
         offset.current = Math.max(0, event.nativeEvent.contentOffset.y);
@@ -114,26 +98,29 @@ export function TechniquesScreen() {
         restoreScroll.current = 0;
       }}
     >
-      <View pointerEvents="none" style={styles.botanicalFrame}>
-        <Image
-          accessible={false}
-          source={require("../../assets/botanical-compact.png")}
-          resizeMode="contain"
-          fadeDuration={0}
-          style={[styles.botanical, { opacity: dark ? 0.58 : 0.24 }]}
-        />
+      <IconButton
+        name="chevron-back"
+        label="Go back"
+        onPress={app.back}
+        appearance="outlined"
+        size={48}
+      />
+      <View style={styles.catalogHeader}>
+        <AppText variant="display" accessibilityRole="header">
+          Guided techniques
+        </AppText>
+        <AppText color={colors.muted}>
+          Short practices for moments when you need a little support.
+        </AppText>
       </View>
-      <TechniqueHeader title="Guided techniques" back={app.back} />
-      <AppText color={colors.muted} style={styles.subtitle}>
-        Short practices for moments when you need a little support.
-      </AppText>
       <ScrollView
         ref={chips}
         accessibilityRole="radiogroup"
+        accessibilityLabel="Filter guided techniques"
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={[styles.filters, { paddingHorizontal: gutter }]}
-        style={{ marginHorizontal: -gutter, marginTop: 20, marginBottom: 16 }}
+        style={{ marginHorizontal: -gutter, marginBottom: spacing.card }}
         onScroll={(event) => {
           chipOffset.current = Math.max(0, event.nativeEvent.contentOffset.x);
         }}
@@ -150,6 +137,7 @@ export function TechniquesScreen() {
             <Pressable
               key={item}
               accessibilityRole="radio"
+              {...webRadioProps(selected)}
               accessibilityState={{ checked: selected }}
               aria-checked={selected}
               onPress={() => filter(item)}
@@ -170,7 +158,7 @@ export function TechniquesScreen() {
                     borderColor: selected
                       ? dark
                         ? "#E3BDF6"
-                        : colors.lavender
+                        : colors.lavenderText
                       : colors.border,
                   },
                 ]}
@@ -192,8 +180,57 @@ export function TechniquesScreen() {
           );
         })}
       </ScrollView>
+      {lead && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${lead.title}, ${durationLabel(lead)}, ${paceLabel(lead)}, ${lead.label}`}
+          accessibilityHint={lead.description}
+          onPress={() => open(lead)}
+          style={({ pressed }) => [styles.lead, pressed && styles.pressed]}
+        >
+          <Image
+            accessible={false}
+            source={techniqueArtwork[lead.artwork]}
+            resizeMode="cover"
+            resizeMethod={dark ? "resize" : "scale"}
+            fadeDuration={0}
+            style={coverImageStyle}
+          />
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              dark ? sceneScrim : daylightSceneScrim,
+            ]}
+          />
+          <View style={styles.leadBody}>
+            <View style={styles.tileCopy}>
+              <AppText variant="title" color={sceneInk}>
+                {lead.title}
+              </AppText>
+              <AppText color={sceneInk} variant="caption">
+                {durationLabel(lead)} · {paceLabel(lead)}
+              </AppText>
+            </View>
+            <View style={styles.sceneArrow}>
+              <Icon name="arrow-forward" size={20} color={sceneInk} />
+            </View>
+          </View>
+        </Pressable>
+      )}
       <View style={styles.list}>
-        {list.map((technique) => (
+        {remaining.length > 0 && (
+          <AppText
+            variant="heading"
+            accessibilityRole="header"
+            style={styles.listTitle}
+          >
+            {category === "All"
+              ? "Explore the library"
+              : `More for ${category.toLowerCase()}`}
+          </AppText>
+        )}
+        {remaining.map((technique) => (
           <Pressable
             key={technique.id}
             accessibilityRole="button"
@@ -202,7 +239,7 @@ export function TechniquesScreen() {
             onPress={() => open(technique)}
             style={({ pressed }) => [
               styles.tile,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              { borderColor: colors.border },
               pressed && styles.pressed,
             ]}
           >
@@ -214,7 +251,7 @@ export function TechniquesScreen() {
             >
               <Image
                 accessible={false}
-                source={artwork[technique.artwork]}
+                source={techniqueArtwork[technique.artwork]}
                 resizeMode="cover"
                 fadeDuration={0}
                 style={coverImageStyle}
@@ -223,9 +260,6 @@ export function TechniquesScreen() {
             <View style={styles.tileCopy}>
               <AppText variant="heading" style={styles.tileTitle}>
                 {technique.title}
-              </AppText>
-              <AppText variant="caption" color={colors.muted}>
-                {technique.description}
               </AppText>
               <AppText
                 variant="caption"
@@ -249,19 +283,24 @@ export function TechniqueDetailScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
   const { top } = useSafeAreaInsets();
-  const gutter = useScreenGutter();
+  const { height, fontScale } = useWindowDimensions();
   const dark = resolved === "dark";
+  const artworkHeight = Math.min(268, Math.max(176, height * 0.34));
   const opening = useRef(false);
   const technique = getTechnique(app.params.id);
   if (!technique) {
     return (
-      <Screen title="Technique" back={app.back}>
-        <AppText color={colors.muted}>This practice is unavailable.</AppText>
-        <Button
-          title="Browse techniques"
-          onPress={() => app.navigate(routes.techniques)}
-          style={styles.action}
-        />
+      <Screen variant="nested" title="Technique" back={app.back}>
+        <NestedState
+          title="Practice unavailable"
+          description="Choose another practice from the techniques library."
+          icon="compass-outline"
+        >
+          <Button
+            title="Browse techniques"
+            onPress={() => app.navigate(routes.techniques)}
+          />
+        </NestedState>
       </Screen>
     );
   }
@@ -277,51 +316,50 @@ export function TechniqueDetailScreen() {
   return (
     <Screen
       edgeToEdgeTop
+      variant="nested"
       heroStatusBar={dark ? "light" : "dark"}
-      style={{ paddingTop: top + 12, flexGrow: 1 }}
+      style={{ paddingTop: top + spacing.row }}
     >
-      <View
-        pointerEvents="none"
-        style={[styles.hero, { backgroundColor: colors.bg, height: top + 282 }]}
-      >
+      <View style={[styles.detailHero, { minHeight: artworkHeight }]}>
         <Image
           accessible={false}
-          source={artwork[technique.artwork]}
+          source={techniqueArtwork[technique.artwork]}
           resizeMode="cover"
+          resizeMethod={dark ? "resize" : "scale"}
           fadeDuration={0}
           style={coverImageStyle}
         />
         <View
+          pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            artGradient(
-              `linear-gradient(180deg, ${dark ? "#151222E8" : "#FBF0E8F5"} 0%, ${dark ? "#1512221A" : "#FBF0E833"} 29%, #15122200 52%, ${colors.bg} 100%)`,
-            ),
+            dark ? sceneScrim : daylightSceneScrim,
           ]}
         />
-      </View>
-      <View
-        style={[
-          styles.heroHeader,
-          { marginHorizontal: -gutter, paddingHorizontal: gutter },
-        ]}
-      >
-        <TechniqueHeader title="Technique" back={app.back} />
-      </View>
-      <View style={styles.detailIntro}>
-        <AppText variant="title" accessibilityRole="header">
+        <View style={styles.detailBack}>
+          <IconButton
+            name="chevron-back"
+            label="Go back"
+            onPress={app.back}
+            appearance="outlined"
+            size={48}
+          />
+        </View>
+        <AppText
+          variant={fontScale > 1.35 ? "title" : "display"}
+          color={sceneInk}
+          accessibilityRole="header"
+          style={styles.detailTitle}
+        >
           {technique.title}
         </AppText>
-        <AppText color={colors.muted} style={styles.description}>
-          {technique.description}
-        </AppText>
       </View>
-      <View style={styles.metadata}>
+      <View style={[styles.metadata, { borderColor: colors.border }]}>
         {(
           [
             ["time-outline", durationLabel(technique)],
             [
-              technique.selfPaced ? "hand-left-outline" : "timer-outline",
+              technique.selfPaced ? "hand-left-outline" : "hourglass-outline",
               paceLabel(technique),
             ],
             ["leaf-outline", technique.label],
@@ -331,24 +369,19 @@ export function TechniqueDetailScreen() {
             key={label}
             style={[
               styles.badge,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              !dark && styles.daylightBadge,
+              !dark && { backgroundColor: colors.lavenderSurface },
             ]}
           >
-            <Icon
-              name={icon}
-              size={15}
-              color={icon === "leaf-outline" ? colors.accent : colors.muted}
-            />
+            <Icon name={icon} size={15} color={colors.lavenderText} />
             <AppText variant="caption">{label}</AppText>
           </View>
         ))}
       </View>
-      <View
-        style={[
-          styles.guidance,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
+      <AppText color={colors.muted} style={styles.description}>
+        {technique.description}
+      </AppText>
+      <View style={styles.guidance}>
         <AppText variant="heading" accessibilityRole="header">
           What you’ll do
         </AppText>
@@ -357,15 +390,20 @@ export function TechniqueDetailScreen() {
           ...(technique.activity.type === "breathing"
             ? ["Keep a comfortable pace"]
             : []),
-        ].map((step) => (
-          <View style={styles.step} key={step}>
+        ].map((step, index) => (
+          <View
+            style={[styles.step, { borderColor: colors.border }]}
+            key={step}
+          >
             <View
               style={[
                 styles.stepNumber,
                 { backgroundColor: colors.lavenderSurface },
               ]}
             >
-              <Icon name="checkmark" size={14} color={colors.lavenderText} />
+              <AppText variant="caption" color={colors.lavenderText}>
+                {index + 1}
+              </AppText>
             </View>
             <AppText variant="caption" style={{ flex: 1 }}>
               {step}
@@ -373,7 +411,6 @@ export function TechniqueDetailScreen() {
           </View>
         ))}
       </View>
-      <View style={styles.actionSpace} />
       <Button
         title="Start practice"
         icon="play"
@@ -392,33 +429,23 @@ export function TechniqueDetailScreen() {
   );
 }
 
+const sceneInk = "#FFF5FF";
+const sceneScrim = artGradient(
+  "linear-gradient(180deg, #160F2A0A 10%, #160F2A10 32%, #180F2CD9 75%, #130C22F5 100%)",
+);
+const daylightSceneScrim = artGradient(
+  "linear-gradient(180deg, transparent 38%, #281B3560 62%, #24192BE8 91%, #24192BF6 100%)",
+);
+
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 7 },
-  headerTitle: {
-    flex: 1,
-    fontSize: 34,
-    lineHeight: Platform.OS === "android" ? 43 : 38,
-  },
-  back: { width: 44, minHeight: 44, justifyContent: "center", marginLeft: -9 },
-  subtitle: { marginLeft: 42, marginTop: 5, maxWidth: 240, paddingRight: 10 },
-  botanicalFrame: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 145,
-    overflow: "hidden",
-  },
-  botanical: {
-    position: "absolute",
-    top: -58,
-    right: -30,
-    width: 150,
-    height: 185,
-    transform: [{ rotate: "17deg" }],
+  daylightBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  catalogHeader: {
+    gap: spacing.compact,
+    marginTop: spacing.row,
+    marginBottom: spacing.row,
   },
   filters: { alignItems: "center", gap: spacing.compact },
-  filterTouch: { justifyContent: "center", minHeight: 44 },
+  filterTouch: { justifyContent: "center", minHeight: 48 },
   filter: {
     minHeight: 34,
     justifyContent: "center",
@@ -428,48 +455,84 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   pressed: { opacity: 0.75 },
-  list: { gap: 10 },
-  tile: {
-    minHeight: 104,
-    flexDirection: "row",
-    alignItems: "stretch",
-    borderRadius: 15,
-    borderWidth: 1,
+  lead: {
+    minHeight: 178,
+    borderRadius: 20,
     overflow: "hidden",
+    justifyContent: "flex-end",
+    backgroundColor: "#221631",
   },
-  tileArt: { width: "37%", maxWidth: 156, overflow: "hidden" },
+  leadBody: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.row,
+    padding: spacing.card,
+    paddingTop: 62,
+  },
+  sceneArrow: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EBCEFF30",
+    borderColor: "#EBCEFF56",
+    borderWidth: 1,
+  },
+  list: { marginTop: spacing.section },
+  listTitle: { marginBottom: spacing.compact },
+  tile: {
+    minHeight: 76,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: spacing.compact,
+  },
+  tileArt: { width: 68, height: 57, borderRadius: 11, overflow: "hidden" },
   tileCopy: {
     flex: 1,
     justifyContent: "center",
-    paddingVertical: 9,
-    paddingLeft: 11,
+    minWidth: 0,
     gap: 1,
   },
-  tileTitle: { fontSize: 25, lineHeight: Platform.OS === "android" ? 32 : 28 },
+  tileTitle: { fontSize: 23, lineHeight: 28 },
   tileMeta: { marginTop: 3 },
   chevron: { justifyContent: "center", paddingHorizontal: spacing.compact },
-  hero: { position: "absolute", left: 0, right: 0, top: 0, overflow: "hidden" },
-  heroHeader: { minHeight: 47 },
-  detailIntro: { marginTop: 173 },
-  description: { marginTop: 4 },
+  detailHero: {
+    overflow: "hidden",
+    borderRadius: 22,
+    justifyContent: "space-between",
+    backgroundColor: "#221631",
+    padding: spacing.card,
+  },
+  detailBack: { alignSelf: "flex-start" },
+  detailTitle: { marginTop: 52 },
+  description: { marginTop: spacing.row },
   metadata: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.compact,
-    marginTop: 20,
-    marginBottom: 20,
+    marginTop: spacing.compact,
+    paddingVertical: spacing.compact,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   badge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    borderRadius: 20,
-    borderWidth: 1,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
+    paddingRight: spacing.compact,
+    paddingVertical: 5,
   },
-  guidance: { gap: 11, borderWidth: 1, borderRadius: 18, padding: 16 },
-  step: { minHeight: 31, flexDirection: "row", alignItems: "center", gap: 10 },
+  guidance: { marginTop: spacing.section, gap: 2 },
+  step: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: spacing.compact,
+  },
   stepNumber: {
     width: 25,
     height: 25,
@@ -477,6 +540,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  action: { marginTop: spacing.row },
-  actionSpace: { flexGrow: 1 },
+  action: { marginTop: spacing.section },
 });

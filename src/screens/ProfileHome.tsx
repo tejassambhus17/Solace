@@ -7,11 +7,12 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing, useScreenGutter } from "../layout";
 import { routes } from "../routes";
+import { MainTabHeader, useMainTabHeaderInsets } from "../SolaceBrandHeader";
 import { useApp } from "../store";
-import { useTheme } from "../theme";
+import { artGradient, useTheme } from "../theme";
+import { useReminderDelivery } from "../useReminderPermission";
 import {
   AppText,
   BotanicalBackdrop,
@@ -57,17 +58,40 @@ export default function ProfileHome() {
   const { colors, resolved } = useTheme();
   const { width, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
-  const { top } = useSafeAreaInsets();
+  const { paddingTop, paddingLeft, paddingRight } = useMainTabHeaderInsets();
   const dark = resolved === "dark";
   const compact = width < 390 || fontScale > 1.2;
-  const stackHero = fontScale > 1.35;
+  const inlineBadges = compact || (!dark && width < 410);
+  const stackHero = fontScale > 1.35 || (width < 350 && fontScale > 1.15);
   const avatar = app.user?.avatar;
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const avatarSize = compact ? 62 : android ? 68 : 80;
-  const canvas = dark ? "#0B0912" : colors.bg;
+  const stackedDaylightArtwork =
+    !dark && stackHero
+      ? {
+          bottom: "auto" as const,
+          height:
+            avatarSize +
+            (android ? spacing.compact : spacing.card) +
+            spacing.row,
+        }
+      : undefined;
+  const canvas = colors.bg;
   const muted = dark ? "#DDCFDF" : colors.muted;
   const groupBorder = dark ? "#54465D" : colors.border;
-  const hasReminders = app.data.reminders.some((reminder) => reminder.enabled);
+  const enabledReminders = app.data.reminders.filter(
+    (reminder) => reminder.enabled,
+  );
+  const hasReminders = enabledReminders.length > 0;
+  const [{ permission: reminderPermission, scheduled }] = useReminderDelivery(
+    app.route === "profile",
+    String(app.user?.id ?? ""),
+  );
+  const scheduledCount = enabledReminders.filter((reminder) =>
+    scheduled.has(String(reminder.id)),
+  ).length;
+  const allScheduled =
+    hasReminders && scheduledCount === enabledReminders.length;
   const memoryCount = app.data.memories.length;
   const groups: { title: string; icon: string; links: ProfileLink[] }[] = [
     {
@@ -76,13 +100,28 @@ export default function ProfileHome() {
       links: [
         {
           title: "Gentle reminders",
-          subtitle: "Set reminders for mindful pauses.",
+          subtitle:
+            hasReminders && reminderPermission === "blocked"
+              ? "Allow notifications to deliver reminders."
+              : reminderPermission === "allowed" &&
+                  hasReminders &&
+                  !allScheduled
+                ? "Restore saved reminders on this device."
+                : "Set reminders for mindful pauses.",
           icon: "notifications-outline",
           tone: "peach",
           route: "reminders",
           badge: {
-            label: hasReminders ? "On" : "Off",
-            tone: hasReminders ? "sage" : "lavender",
+            label: !hasReminders
+              ? "Off"
+              : allScheduled
+                ? "On"
+                : reminderPermission === "blocked"
+                  ? "Blocked"
+                  : scheduledCount
+                    ? "Partial"
+                    : "Saved",
+            tone: allScheduled ? "sage" : "lavender",
           },
         },
         {
@@ -102,6 +141,13 @@ export default function ProfileHome() {
             label: `${memoryCount} ${memoryCount === 1 ? "item" : "items"}`,
             tone: "lavender",
           },
+        },
+        {
+          title: "Your Wellness Goals",
+          subtitle: "Choose what you’d like Solace to help you explore.",
+          icon: "flag-outline",
+          tone: "lavender",
+          route: routes.wellnessGoals,
         },
         {
           title: "Appearance & preferences",
@@ -150,19 +196,14 @@ export default function ProfileHome() {
   return (
     <Screen
       edgeToEdge
-      style={[styles.screen, { paddingTop: top + 5 }]}
+      style={[styles.screen, { paddingTop }]}
       contentContainerStyle={{ backgroundColor: canvas }}
     >
-      <View style={{ paddingHorizontal: gutter }}>
+      <View style={{ paddingLeft, paddingRight }}>
         <BotanicalBackdrop
-          style={[styles.botanical, { opacity: dark ? 0.23 : 0.49 }]}
+          style={[styles.botanical, { opacity: dark ? 0.23 : 0.27 }]}
         />
-        <Row style={styles.masthead}>
-          <LotusMark size={29} />
-          <AppText variant="heading" style={styles.brand}>
-            Solace
-          </AppText>
-        </Row>
+        <MainTabHeader style={styles.masthead} />
         <Row
           style={[
             styles.hero,
@@ -175,7 +216,7 @@ export default function ProfileHome() {
         >
           <Image
             source={profileArt[resolved].header}
-            style={coverImageStyle}
+            style={[coverImageStyle, stackedDaylightArtwork]}
             resizeMode="cover"
             fadeDuration={0}
             accessible={false}
@@ -186,11 +227,17 @@ export default function ProfileHome() {
             pointerEvents="none"
             style={[
               StyleSheet.absoluteFill,
-              {
-                backgroundImage: dark
-                  ? "linear-gradient(90deg, #1C1527 0%, #1C152799 54%, #1C152700 91%)"
-                  : "linear-gradient(90deg, #FAEEE5 0%, #FAEEE5C7 55%, #FAEEE500 92%)",
-              },
+              stackedDaylightArtwork,
+              dark
+                ? {
+                    backgroundImage:
+                      "linear-gradient(90deg, #1C1527 0%, #1C152799 54%, #1C152700 91%)",
+                  }
+                : artGradient(
+                    stackedDaylightArtwork
+                      ? `linear-gradient(180deg, ${colors.heroSurface}00 32%, ${colors.heroSurface} 100%)`
+                      : `linear-gradient(90deg, ${colors.surface}F2 0%, ${colors.surface}C7 28%, ${colors.surface}73 54%, ${colors.surface}00 82%)`,
+                  ),
             ]}
           />
           <View
@@ -200,7 +247,7 @@ export default function ProfileHome() {
                 width: avatarSize,
                 height: avatarSize,
                 borderRadius: avatarSize / 2,
-                borderColor: dark ? "#927F9C" : colors.heroBorder,
+                borderColor: dark ? "#927F9C" : colors.lavender,
                 backgroundColor: dark
                   ? colors.surface2
                   : colors.lavenderSurface,
@@ -244,12 +291,12 @@ export default function ProfileHome() {
               <Row
                 style={[
                   styles.editPill,
-                  { backgroundColor: dark ? "#F5C8B6" : "#E1E8D1" },
+                  { backgroundColor: colors.lavenderAction },
                 ]}
               >
                 <AppText
                   variant="label"
-                  color={dark ? "#2B1D2A" : colors.text}
+                  color={colors.lavenderActionText}
                   style={styles.editLabel}
                 >
                   Edit Profile
@@ -257,7 +304,7 @@ export default function ProfileHome() {
                 <Icon
                   name="arrow-forward"
                   size={16}
-                  color={dark ? "#2B1D2A" : colors.text}
+                  color={colors.lavenderActionText}
                 />
               </Row>
             </Pressable>
@@ -266,7 +313,11 @@ export default function ProfileHome() {
         {groups.map((group) => (
           <View key={group.title} style={styles.section}>
             <Row style={styles.groupHeading}>
-              <Icon name={group.icon} size={19} color={colors.sageText} />
+              <Icon
+                name={group.icon}
+                size={19}
+                color={dark ? colors.sageText : colors.accent}
+              />
               <AppText
                 variant="heading"
                 accessibilityRole="header"
@@ -296,7 +347,7 @@ export default function ProfileHome() {
                     color={badgeTone.ink}
                     style={[
                       styles.badge,
-                      compact && styles.badgeInline,
+                      inlineBadges && styles.badgeInline,
                       { backgroundColor: badgeTone.surface },
                     ]}
                   >
@@ -310,6 +361,7 @@ export default function ProfileHome() {
                       <View
                         style={[
                           styles.divider,
+                          !dark && styles.lightDivider,
                           { backgroundColor: dark ? "#514258" : colors.border },
                         ]}
                       />
@@ -346,10 +398,14 @@ export default function ProfileHome() {
                         >
                           {link.subtitle}
                         </AppText>
-                        {compact && badge}
+                        {inlineBadges && badge}
                       </View>
-                      {!compact && badge}
-                      <Icon name="chevron-forward" size={14} color={muted} />
+                      {!inlineBadges && badge}
+                      <Icon
+                        name="chevron-forward"
+                        size={14}
+                        color={dark ? muted : colors.accent}
+                      />
                     </Pressable>
                   </React.Fragment>
                 );
@@ -372,9 +428,13 @@ export default function ProfileHome() {
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            {
-              backgroundImage: `linear-gradient(180deg, ${canvas} 0%, ${canvas}00 35%, ${canvas}00 80%, ${canvas} 100%)`,
-            },
+            dark
+              ? {
+                  backgroundImage: `linear-gradient(180deg, ${canvas} 0%, ${canvas}00 35%, ${canvas}00 80%, ${canvas} 100%)`,
+                }
+              : artGradient(
+                  `linear-gradient(180deg, ${canvas} 0%, ${canvas}00 40%, ${canvas}00 87%, ${canvas} 100%)`,
+                ),
           ]}
         />
         <LotusMark size={33} />
@@ -390,11 +450,8 @@ const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0 },
   botanical: { width: 185, height: 128, right: -41, top: -20 },
   masthead: {
-    minHeight: 48,
-    gap: spacing.compact,
     marginBottom: spacing.compact,
   },
-  brand: { fontSize: 24, lineHeight: 28 },
   hero: {
     minHeight: android ? 122 : 136,
     paddingHorizontal: android ? spacing.row : spacing.card,
@@ -456,9 +513,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   linkCopy: { flex: 1, minWidth: 0, gap: 3 },
-  linkTitle: { fontSize: 19, lineHeight: 23 },
-  linkSubtitle: { fontSize: 12, lineHeight: 17 },
+  linkTitle: { fontSize: 19, lineHeight: 25 },
+  linkSubtitle: { fontSize: 13, lineHeight: 19 },
   divider: { height: StyleSheet.hairlineWidth },
+  lightDivider: {
+    marginLeft: linkIconSize + (android ? spacing.compact : spacing.row),
+  },
   badge: {
     alignSelf: "center",
     overflow: "hidden",

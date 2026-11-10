@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -28,6 +34,7 @@ import {
   Card,
   Icon,
   IconButton,
+  NestedState,
   Row,
   Screen,
 } from "../ui";
@@ -55,7 +62,7 @@ export function JournalReflectionScreen({
   const app = useApp();
   const { colors } = useTheme();
   const reducedMotion = useReducedMotion();
-  const { bottom } = useSafeAreaInsets();
+  const { bottom, top, left, right } = useSafeAreaInsets();
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const id = isRecordId(app.params.id) ? app.params.id : undefined;
   const discussOnly = app.params.intent === "discuss";
@@ -64,6 +71,7 @@ export function JournalReflectionScreen({
     : undefined;
   const body = entry ? journalShareableText(entry) : "";
   const revision = entry ? journalRevision(entry) : "";
+  const previousEntry = useRef({ id, revision });
   const sections = useMemo(() => journalExcerpts(body), [body]);
   const [section, setSection] = useState(0);
   const [consent, setConsent] = useState<Consent>();
@@ -84,7 +92,10 @@ export function JournalReflectionScreen({
       ? consent
       : undefined;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const previous = previousEntry.current;
+    if (previous.id === id && previous.revision === revision) return;
+    previousEntry.current = { id, revision };
     setSection(0);
     setResult(undefined);
     setError("");
@@ -165,6 +176,7 @@ export function JournalReflectionScreen({
 
   return (
     <Screen
+      variant="nested"
       title={discussOnly ? "Discuss with Solace" : "Reflect with Solace"}
       back={app.back}
       style={styles.screen}
@@ -172,17 +184,17 @@ export function JournalReflectionScreen({
     >
       <BotanicalBackdrop />
       {!entry || !excerpt ? (
-        <Card style={styles.section}>
-          <AppText variant="heading">Choose a saved journal entry</AppText>
-          <AppText color={colors.muted}>
-            Once your writing is saved, you can choose an excerpt to share here.
-          </AppText>
+        <NestedState
+          title="Choose a saved journal entry"
+          description="Once your writing is saved, you can choose an excerpt to share here."
+          icon="book-outline"
+        >
           <Button
             title="Back to Journal"
             variant="secondary"
             onPress={app.back}
           />
-        </Card>
+        </NestedState>
       ) : (
         <>
           <View style={styles.section}>
@@ -380,7 +392,17 @@ export function JournalReflectionScreen({
         onRequestClose={() => setConsent(undefined)}
         animationType={reducedMotion ? "none" : "fade"}
       >
-        <View style={[styles.backdrop, { backgroundColor: colors.overlay }]}>
+        <View
+          style={[
+            styles.backdrop,
+            {
+              backgroundColor: colors.overlay,
+              paddingTop: top + spacing.row,
+              paddingLeft: left,
+              paddingRight: right,
+            },
+          ]}
+        >
           <Pressable
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
@@ -389,23 +411,38 @@ export function JournalReflectionScreen({
           />
           <View
             accessibilityViewIsModal
-            style={[styles.sheet, { backgroundColor: colors.surface }]}
+            style={[
+              styles.sheet,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
           >
+            <Row style={styles.sheetHeader}>
+              <AppText
+                variant="heading"
+                accessibilityRole="header"
+                style={styles.flex}
+              >
+                Share this excerpt?
+              </AppText>
+              <IconButton
+                name="close-outline"
+                label="Close sharing confirmation"
+                onPress={() => setConsent(undefined)}
+              />
+            </Row>
             <ScrollView
+              style={styles.sheetBody}
               contentContainerStyle={[
                 styles.section,
                 {
-                  padding: spacing.section,
-                  paddingBottom: spacing.section + bottom,
+                  paddingHorizontal: spacing.section,
+                  paddingBottom: Math.max(spacing.section, bottom),
                 },
               ]}
             >
-              <AppText variant="heading" accessibilityRole="header">
-                Share this excerpt?
-              </AppText>
               <AppText color={colors.muted}>
-                Solace sends only this excerpt to its configured AI service.
-                Your journal and AI memory stay separate.
+                When live AI is enabled, Solace sends only this excerpt to
+                OpenAI. Your journal and AI memory stay separate.
               </AppText>
               {activeConsent && (
                 <View
@@ -486,9 +523,17 @@ const styles = StyleSheet.create({
   sheet: {
     width: "100%",
     maxWidth: 600,
-    maxHeight: "86%",
+    maxHeight: "100%",
+    borderWidth: StyleSheet.hairlineWidth,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     overflow: "hidden",
   },
+  sheetHeader: {
+    gap: spacing.row,
+    paddingHorizontal: spacing.section,
+    paddingVertical: spacing.compact,
+    flexShrink: 0,
+  },
+  sheetBody: { flexGrow: 0, flexShrink: 1 },
 });

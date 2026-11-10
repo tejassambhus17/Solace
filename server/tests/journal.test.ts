@@ -6,6 +6,13 @@ import { test } from "node:test";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import { Store } from "../src/database.js";
+import {
+  journalTagLimitMessage,
+  journalTagsFromText,
+  MAX_JOURNAL_TAG_LENGTH,
+  MAX_JOURNAL_TAGS,
+} from "../src/journal-contract.js";
+import { parseRecord } from "../src/validation.js";
 
 const api = (store: Store) =>
   createApp({
@@ -18,6 +25,30 @@ const api = (store: Store) =>
     rateLimits: false,
   });
 const reflections = "/api/records/reflections";
+
+test("Journal tag guidance agrees with the record validator and preserves input for correction", () => {
+  const body = { kind: "journal", text: "My journal entry." };
+  const longest = "a".repeat(MAX_JOURNAL_TAG_LENGTH);
+  const tags = journalTagsFromText(`  rest, , ${longest}, rest  `);
+  assert.deepEqual(tags, ["rest", longest]);
+  assert.equal(journalTagLimitMessage(tags), "");
+  assert.deepEqual(parseRecord("reflections", { ...body, tags }).tags, tags);
+
+  const tooLong = journalTagsFromText(longest + "a");
+  assert.equal(tooLong[0].length, MAX_JOURNAL_TAG_LENGTH + 1);
+  assert.match(journalTagLimitMessage(tooLong), /80 characters/);
+  assert.throws(() => parseRecord("reflections", { ...body, tags: tooLong }));
+
+  const full = Array.from({ length: MAX_JOURNAL_TAGS }, (_, i) => `tag ${i}`);
+  assert.equal(journalTagLimitMessage(full), "");
+  assert.deepEqual(
+    parseRecord("reflections", { ...body, tags: full }).tags,
+    full,
+  );
+  const tooMany = [...full, "one more"];
+  assert.match(journalTagLimitMessage(tooMany), /up to 30 tags/);
+  assert.throws(() => parseRecord("reflections", { ...body, tags: tooMany }));
+});
 
 test("private journal entries preserve long multiline text, retry safely, and survive reopening the database", async () => {
   const directory = mkdtempSync(join(tmpdir(), "solace-journal-test-"));

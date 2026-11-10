@@ -6,7 +6,10 @@ import { Store } from "./database.js";
 import { createApp } from "./app.js";
 import { readServerConfig } from "./config.js";
 import { provider } from "./ai.js";
+import { openAIUsageSnapshot } from "./openai-service.js";
 import { recoveryMailerFromEnv } from "./password-recovery.js";
+
+const SHUTDOWN_TIMEOUT_MS = 35_000;
 
 async function start() {
   // Source and compiled entry points both live one directory below server/.
@@ -63,6 +66,7 @@ async function start() {
       store,
       trustProxyHops: configuration.trustProxyHops,
       ai: configuration.ai,
+      realtime: configuration.realtime,
       googleOAuth: configuration.googleOAuth,
       allowedOrigins: configuration.allowedOrigins,
       recoveryMailer: recoveryMailerFromEnv(process.env),
@@ -83,6 +87,16 @@ async function start() {
   console.log(
     `Solace API ready on port ${port}. AI mode: ${provider(configuration.ai) === "live" ? "live provider" : "offline companion"}.`,
   );
+  let lastUsage = "[]";
+  const reportUsage = () => {
+    const usage = JSON.stringify(openAIUsageSnapshot());
+    if (usage === lastUsage) return;
+    lastUsage = usage;
+    console.info("Solace OpenAI aggregate usage", usage);
+  };
+  const usageTimer = configuration.logOpenAIUsage
+    ? setInterval(reportUsage, 60_000).unref()
+    : undefined;
   if (process.send && process.connected)
     process.send(
       {
@@ -99,10 +113,32 @@ async function start() {
   const close = () => {
     if (closing) return;
     closing = true;
-    void closeListener().then(() => {
+    clearInterval(usageTimer);
+    const deadline = setTimeout(() => {
+      console.error("Solace API shutdown timed out.");
+      server.closeAllConnections();
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
+    void (async () => {
+      const drained = await Promise.allSettled([
+        closeListener(),
+        application?.locals.closeRealtime?.(),
+      ]);
+      if (configuration.logOpenAIUsage) reportUsage();
       store!.close();
-      process.exit(0);
-    });
+      if (drained.some((result) => result.status === "rejected"))
+        throw new Error("Cleanup did not finish.");
+    })().then(
+      () => {
+        clearTimeout(deadline);
+        process.exit(0);
+      },
+      () => {
+        clearTimeout(deadline);
+        console.error("Solace API could not finish a clean shutdown.");
+        process.exit(1);
+      },
+    );
   };
   process.on("SIGINT", close);
   process.on("SIGTERM", close);

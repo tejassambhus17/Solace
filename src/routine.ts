@@ -1,6 +1,7 @@
 import { localDay, recordDay } from "./content";
 import { createExplorePractice } from "./explore-practices";
 import { isCompletedMoment, journeyRecords } from "./progress";
+import { wellnessGoalPriority } from "./wellness-recommendations";
 import {
   ritualActivities,
   ritualDurations,
@@ -16,6 +17,7 @@ type RoutineSource =
   | "preference"
   | "feedback"
   | "goal"
+  | "wellness-goal"
   | "user-choice";
 export type RoutineSuggestion = {
   activity: RitualActivity;
@@ -67,6 +69,25 @@ const practiceFocus = {
   reflection: "reflect",
   rest: "rest",
 } as const;
+const wellnessGoalPractice = {
+  calm: {
+    activity: "breathing",
+    reason: "This short breathing practice fits your goal to feel calmer.",
+  },
+  sleep: {
+    activity: "rest",
+    reason: "This quiet practice fits your goal to make more room for rest.",
+  },
+  feelings: {
+    activity: "reflection",
+    reason: "This guided reflection makes space to notice how you feel.",
+  },
+  focus: {
+    activity: "grounding",
+    reason:
+      "This grounding practice gives your attention something simple to return to.",
+  },
+} as const;
 
 function customizeActivity(
   activity: RitualActivity,
@@ -102,8 +123,7 @@ const newest = (records: RecordItem[]) =>
   [...records].sort((a, b) =>
     String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
   );
-/** Curated on this device. This helper does not call AI or inspect conversations.
- * Saved preferences and past feedback are consulted only with global consent. */
+/** Curated on this device from check-ins, explicit goals, and approved preferences. */
 export function pickDailyRoutine(
   data: {
     checkins?: RecordItem[];
@@ -236,6 +256,15 @@ export function pickDailyRoutine(
           source = "goal";
         }
       }
+    }
+  }
+  if (source === "curated" || source === "time-of-day") {
+    const goal = wellnessGoalPriority(user?.wellnessGoals, now).find(
+      (goal) => goal !== "habits",
+    );
+    if (goal) {
+      ({ activity, reason } = wellnessGoalPractice[goal]);
+      source = "wellness-goal";
     }
   }
   if (settings.activity) {

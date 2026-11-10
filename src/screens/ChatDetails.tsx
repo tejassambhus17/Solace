@@ -27,10 +27,12 @@ export function companionSendError(error: unknown) {
 
 export const ChatScene = React.memo(function ChatScene({
   height,
+  canvas,
 }: {
   height: number;
+  canvas: string;
 }) {
-  const { colors, resolved } = useTheme();
+  const { resolved } = useTheme();
   const dark = resolved === "dark";
   return (
     <View
@@ -38,7 +40,7 @@ export const ChatScene = React.memo(function ChatScene({
         styles.scene,
         {
           height,
-          backgroundColor: colors.bg,
+          backgroundColor: canvas,
         },
       ]}
     >
@@ -59,7 +61,9 @@ export const ChatScene = React.memo(function ChatScene({
           style={[
             StyleSheet.absoluteFill,
             artGradient(
-              `linear-gradient(180deg, ${colors.bg} 0%, transparent 16%, transparent 72%, ${colors.bg} 100%)`,
+              dark
+                ? `linear-gradient(180deg, ${canvas} 0%, transparent 16%, transparent 72%, ${canvas} 100%)`
+                : `linear-gradient(180deg, ${canvas} 0%, ${canvas}00 7%, ${canvas}00 89%, ${canvas} 100%)`,
             ),
           ]}
         />
@@ -212,6 +216,7 @@ export const ChatBubble = React.memo(function ChatBubble({
   avatar = false,
   avatarState = "idle",
   intro = false,
+  playback,
 }: {
   children: string;
   user?: boolean;
@@ -220,6 +225,7 @@ export const ChatBubble = React.memo(function ChatBubble({
   avatar?: boolean;
   avatarState?: CompanionState;
   intro?: boolean;
+  playback?: React.ReactNode;
 }) {
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
@@ -244,37 +250,32 @@ export const ChatBubble = React.memo(function ChatBubble({
             styles.bubble,
             intro && styles.introBubble,
             {
-              backgroundColor: user
-                ? dark
-                  ? colors.lavenderSurface
-                  : "#35533F"
-                : dark
-                  ? colors.surface
-                  : "#FFF7EDF5",
+              backgroundColor: user ? colors.lavenderSurface : colors.surface,
               borderColor: dark
                 ? intro
                   ? "#775C73"
                   : colors.border
                 : user
-                  ? "#99AE8C"
+                  ? colors.lavender
                   : colors.border,
             },
           ]}
         >
           <AppText
             selectable
-            color={user && !dark ? "#FFF9EE" : colors.text}
+            color={colors.text}
             style={intro && styles.introText}
           >
             {children}
           </AppText>
         </View>
-        {(label || time) && (
+        {(label || time || !!playback) && (
           <Row
             style={[
               styles.turnMeta,
               user && styles.userMeta,
-              { backgroundColor: colors.bg },
+              !!playback && styles.playbackMeta,
+              !dark && { backgroundColor: colors.bg },
             ]}
           >
             {label && (
@@ -302,6 +303,7 @@ export const ChatBubble = React.memo(function ChatBubble({
                 size={14}
               />
             )}
+            {playback}
           </Row>
         )}
       </View>
@@ -402,7 +404,7 @@ export function ChatResetCard({
   onPress: () => void;
   disabled: boolean;
 }) {
-  const { resolved } = useTheme();
+  const { colors, resolved } = useTheme();
   const source =
     resolved === "dark"
       ? require("../../assets/redesign-guided-dark.jpg")
@@ -423,7 +425,9 @@ export function ChatResetCard({
         style={[
           StyleSheet.absoluteFill,
           artGradient(
-            "linear-gradient(90deg, #20192CDE 0%, #241B38AA 45%, #322B1B09 100%)",
+            resolved === "dark"
+              ? "linear-gradient(90deg, #20192CDE 0%, #241B38AA 45%, #322B1B09 100%)"
+              : "linear-gradient(90deg, #20192CF0 0%, #241B38A8 50%, #322B1B00 86%)",
           ),
         ]}
       />
@@ -453,12 +457,13 @@ export function ChatResetCard({
           style={({ pressed }) => [
             styles.resetButton,
             {
+              backgroundColor: colors.lavenderAction,
               opacity: disabled ? 0.5 : pressed ? 0.76 : 1,
             },
           ]}
         >
-          <Icon name="play" size={15} color="#2D2042" />
-          <AppText variant="label" color="#2D2042">
+          <Icon name="play" size={15} color={colors.lavenderActionText} />
+          <AppText variant="label" color={colors.lavenderActionText}>
             Start Now
           </AppText>
         </Pressable>
@@ -523,6 +528,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   userMeta: { alignSelf: "flex-end" },
+  playbackMeta: { flexWrap: "wrap" },
   replyLabel: { fontSize: 11, lineHeight: 16 },
   moodContext: { marginLeft: 42, fontSize: 12, lineHeight: 17 },
   replies: { gap: 7, alignItems: "stretch" },
@@ -567,6 +573,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 24,
     gap: 8,
-    backgroundColor: "#FFDDC2",
   },
 });

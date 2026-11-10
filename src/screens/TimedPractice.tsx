@@ -14,12 +14,12 @@ import {
   timedPracticeFocuses,
 } from "../../server/src/timed-practice-contract";
 import { spacing, useScreenGutter } from "../layout";
+import { webRadioProps } from "../radio-keyboard";
 import { momentClockText } from "../moments";
 import { routes } from "../routes";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
-import { AppText, Icon, Screen, coverImageStyle } from "../ui";
-import { ExploreFeatureHeader } from "./ExploreFeatureHeader";
+import { AppText, Icon, IconButton, Screen, coverImageStyle } from "../ui";
 
 const focusOptions = {
   calm: {
@@ -59,12 +59,16 @@ function PracticeSection({
   icon: string;
   children: React.ReactNode;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   return (
     <View style={styles.section}>
       <View style={styles.sectionIntro}>
         <View style={styles.sectionIcon}>
-          <Icon name={icon} color={colors.sageText} size={21} />
+          <Icon
+            name={icon}
+            color={resolved === "dark" ? colors.sageText : colors.accent}
+            size={21}
+          />
         </View>
         <View style={styles.copy}>
           <AppText variant="heading" accessibilityRole="header">
@@ -96,8 +100,6 @@ export function TimedPracticeScreen() {
   const chosenFocus = focusOptions[focus];
   const fourFocuses = availableWidth >= 340 && fontScale <= 1.12;
   const fourDurations = availableWidth >= 296 && fontScale <= 1.2;
-  const inlinePreview =
-    availableWidth >= 336 && fontScale <= 1.12 && minutes === 5;
   const focusRows = fourFocuses
     ? [timedPracticeFocuses]
     : [timedPracticeFocuses.slice(0, 2), timedPracticeFocuses.slice(2)];
@@ -107,7 +109,8 @@ export function TimedPracticeScreen() {
   const dark = resolved === "dark";
   const selectedFill = dark ? colors.lavenderSurface : colors.primary;
   const selectedInk = dark ? colors.lavenderText : colors.primaryText;
-  const selectedBorder = dark ? colors.lavender : colors.primary;
+  const selectedBorder = dark ? colors.lavender : colors.accent;
+  const detailInk = dark ? colors.sageText : colors.accent;
   const startLock = useRef(false);
 
   function start() {
@@ -124,11 +127,7 @@ export function TimedPracticeScreen() {
   const artwork = (
     <View
       pointerEvents="none"
-      style={[
-        styles.thumbnail,
-        inlinePreview && styles.inlineThumbnail,
-        { backgroundColor: colors.sageSurface },
-      ]}
+      style={[styles.thumbnail, { backgroundColor: colors.sageSurface }]}
     >
       <Icon name={chosenFocus.icon} color={colors.sageText} size={24} />
       <Image
@@ -147,7 +146,7 @@ export function TimedPracticeScreen() {
       <AppText variant="heading" style={styles.previewTitle}>
         {activity.title}
       </AppText>
-      <AppText variant="label" color={colors.sageText}>
+      <AppText variant="label" color={detailInk}>
         {minutes} minutes · {chosenFocus.label}
       </AppText>
       <AppText variant="caption" color={colors.muted}>
@@ -171,8 +170,10 @@ export function TimedPracticeScreen() {
               style={[
                 styles.dot,
                 {
-                  backgroundColor: colors.sageText,
-                  borderColor: colors.sageSurface,
+                  backgroundColor: detailInk,
+                  borderColor: dark
+                    ? colors.sageSurface
+                    : colors.lavenderSurface,
                 },
               ]}
             />
@@ -189,13 +190,47 @@ export function TimedPracticeScreen() {
   );
 
   return (
-    <Screen edgeToEdgeTop style={styles.screen}>
-      <ExploreFeatureHeader
-        title="Build a Timed Practice"
-        subtitle="Create a focused, guided session that fits your time and need."
-        onBack={app.back}
-      />
+    <Screen variant="nested" style={styles.screen}>
       <View style={[styles.content, { paddingHorizontal: gutter }]}>
+        <View style={styles.arrival}>
+          <IconButton
+            name="chevron-back"
+            label="Back"
+            appearance="outlined"
+            size={48}
+            onPress={app.back}
+          />
+          <AppText variant="title" accessibilityRole="header">
+            Build a Timed Practice
+          </AppText>
+          <AppText color={colors.muted}>
+            Choose a focus and a little time. We’ll put the steps together.
+          </AppText>
+          <View
+            style={[
+              styles.recipe,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.lavenderSurface,
+              },
+            ]}
+          >
+            <View style={styles.durationValue}>
+              <AppText variant="display" color={colors.lavenderText}>
+                {minutes}
+              </AppText>
+              <AppText variant="caption" color={colors.lavenderText}>
+                minutes
+              </AppText>
+            </View>
+            <View style={[styles.recipeCopy, { borderColor: colors.border }]}>
+              <AppText variant="heading">{activity.title}</AppText>
+              <AppText variant="caption" color={colors.muted}>
+                {chosenFocus.label} · {activity.steps.length} steps
+              </AppText>
+            </View>
+          </View>
+        </View>
         <PracticeSection
           title="Choose your focus"
           subtitle="What do you need most right now?"
@@ -215,6 +250,7 @@ export function TimedPracticeScreen() {
                     <Pressable
                       key={value}
                       accessibilityRole="radio"
+                      {...webRadioProps(selected)}
                       accessibilityLabel={option.label}
                       accessibilityHint={option.hint}
                       accessibilityState={{ checked: selected }}
@@ -251,7 +287,7 @@ export function TimedPracticeScreen() {
                       <Icon
                         name={option.icon}
                         size={25}
-                        color={selected ? selectedInk : colors.sageText}
+                        color={selected ? selectedInk : detailInk}
                       />
                       <AppText
                         variant="label"
@@ -260,19 +296,15 @@ export function TimedPracticeScreen() {
                       >
                         {option.label}
                       </AppText>
-                      <AppText
-                        variant="caption"
-                        color={selected ? selectedInk : colors.muted}
-                        style={styles.centered}
-                      >
-                        {option.hint}
-                      </AppText>
                     </Pressable>
                   );
                 })}
               </View>
             ))}
           </View>
+          <AppText variant="caption" color={colors.muted}>
+            {chosenFocus.hint}
+          </AppText>
         </PracticeSection>
 
         <PracticeSection
@@ -293,6 +325,7 @@ export function TimedPracticeScreen() {
                     <Pressable
                       key={value}
                       accessibilityRole="radio"
+                      {...webRadioProps(selected)}
                       accessibilityLabel={`${value} min`}
                       accessibilityState={{ checked: selected }}
                       aria-checked={selected}
@@ -334,27 +367,14 @@ export function TimedPracticeScreen() {
             testID="timed-practice-preview"
             style={[
               styles.preview,
-              inlinePreview && styles.inlinePreview,
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
-            {inlinePreview ? (
-              <>
-                {artwork}
-                <View style={styles.previewCopy}>
-                  {summary}
-                  {timeline}
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.previewIntro}>
-                  {artwork}
-                  {summary}
-                </View>
-                {timeline}
-              </>
-            )}
+            <View style={[styles.previewIntro, { borderColor: colors.border }]}>
+              {artwork}
+              {summary}
+            </View>
+            {timeline}
           </View>
           <Pressable
             accessibilityRole="button"
@@ -381,8 +401,26 @@ export function TimedPracticeScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: 0, paddingTop: 0 },
+  screen: { paddingHorizontal: 0, paddingTop: spacing.row },
   content: { gap: spacing.section },
+  arrival: { gap: spacing.compact },
+  recipe: {
+    marginTop: spacing.compact,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: spacing.row,
+    gap: spacing.row,
+  },
+  durationValue: { minWidth: 70, alignItems: "center" },
+  recipeCopy: {
+    flex: 1,
+    minWidth: 0,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    paddingLeft: spacing.row,
+    gap: 2,
+  },
   section: { gap: spacing.row },
   sectionIntro: {
     flexDirection: "row",
@@ -396,7 +434,7 @@ const styles = StyleSheet.create({
   focusOption: {
     flex: 1,
     minWidth: 0,
-    minHeight: 104,
+    minHeight: 73,
     paddingHorizontal: spacing.compact,
     paddingTop: spacing.card,
     paddingBottom: spacing.row,
@@ -406,7 +444,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
   },
-  smallFocusOption: { minHeight: 120, paddingHorizontal: 5 },
+  smallFocusOption: { paddingHorizontal: 5 },
   centered: { textAlign: "center" },
   check: {
     position: "absolute",
@@ -435,13 +473,13 @@ const styles = StyleSheet.create({
     padding: spacing.row,
     gap: spacing.row,
   },
-  inlinePreview: { flexDirection: "row" },
   previewIntro: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.row,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: spacing.row,
   },
-  previewCopy: { flex: 1, minWidth: 0, gap: spacing.compact },
   previewTitle: { fontSize: 23, lineHeight: 28 },
   thumbnail: {
     width: 66,
@@ -450,12 +488,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-  },
-  inlineThumbnail: {
-    width: 86,
-    height: "auto",
-    minHeight: 116,
-    alignSelf: "stretch",
   },
   timeline: { alignSelf: "stretch" },
   step: {

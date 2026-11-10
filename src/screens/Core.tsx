@@ -12,7 +12,6 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   type NativeScrollEvent,
@@ -30,6 +29,8 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useApp, type Item } from "../store";
 import { routes } from "../routes";
+import { useChatKeyboard } from "../chat-keyboard";
+import { beginVoiceTiming } from "../realtime-timing";
 import { useGoogleAuth } from "../google-auth";
 import { useReducedMotion } from "../Companion";
 import type { AuthPage } from "../onboarding-state";
@@ -41,11 +42,12 @@ import {
   ChatComposerInput,
   chatControlSize,
 } from "../ChatComposer";
-import { useTheme } from "../theme";
-import { createChatPractice } from "../chat-practices";
+import { darkColors, useTheme } from "../theme";
+import { shortChatPracticeReason } from "../chat-practices";
+import { getTechnique } from "../techniques";
+import { techniqueArtwork } from "../technique-artwork";
 import { describeChatExplanation } from "../../server/src/chat-evidence";
 import {
-  chatPractices,
   isChatPracticeId,
   type ChatAction,
 } from "../../server/src/chat-practice";
@@ -60,7 +62,13 @@ import {
   CompanionAction,
   companionSendError,
 } from "./ChatDetails";
+import { CompanionConversationMenu } from "./CompanionConversationMenu";
+import {
+  CompanionActionCard,
+  useCompanionActions,
+} from "./CompanionAppActions";
 import { RecommendationExplanation } from "./RecommendationExplanation";
+import { SolaceRecommendationCard } from "./SolaceRecommendationCard";
 import { HabitAssistant, habitIntention } from "./HabitAssistant";
 import type { HabitAiIntent } from "../../server/src/habit-ai-contract";
 import { GoogleAuthAction } from "./GoogleAuthAction";
@@ -74,6 +82,8 @@ import {
   Card,
   Icon,
   Input,
+  NestedHeader,
+  NestedState,
   Row,
   Screen,
   useNavigationInset,
@@ -388,6 +398,7 @@ type ChatMessage = {
   support?: boolean;
   safety?: boolean;
   action?: ChatAction;
+  appAction?: unknown;
 };
 
 const emptyMessages: ChatMessage[] = [];
@@ -398,26 +409,38 @@ export function ChatScreen({
   scrollMemory: Map<string, number>;
 }) {
   const app = useApp();
+  const actions = useCompanionActions(app);
   const navigationInset = useNavigationInset();
   const { colors, resolved } = useTheme();
   const reduceMotion = useReducedMotion();
-  const { width, height, fontScale } = useWindowDimensions();
-  const { top, bottom } = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const { bottom } = useSafeAreaInsets();
   const gutter = Math.max(12, useScreenGutter() - 6);
   const [contentOpacity] = useState(() => new Animated.Value(1));
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
-  const [showComposerMenu, setShowComposerMenu] = useState(false);
-  const [showExplanation, setShowExplanation] = useState(false);
+  const [explainedActionKey, setExplainedActionKey] = useState<string>();
   const [composerHeight, setComposerHeight] = useState(chatControlSize);
   const [transcriptHeight, setTranscriptHeight] = useState(0);
-  // The rail measurement includes its bottom safe area. When the keyboard
-  // hides the rail, KeyboardAvoidingView handles the remaining overlap.
+  // iOS keeps the rail inset as the resting anchor while the dock moves.
+  // Android clears the inset when the resize keyboard hides the rail.
   const composerBottom =
     spacing.compact + (navigationInset ? Math.max(navigationInset, bottom) : 0);
+  const keyboard = useChatKeyboard(
+    height,
+    composerBottom - spacing.compact,
+    reduceMotion,
+  );
+  const keyboardTransform =
+    Platform.OS === "ios"
+      ? { transform: [{ translateY: keyboard.translateY }] }
+      : undefined;
   const transcriptClearance = composerBottom + composerHeight + spacing.row;
   const accessoryHeight = Math.max(
     chatControlSize,
-    Math.min(248, Math.round((transcriptHeight || height) * 0.55)),
+    Math.min(
+      248,
+      Math.round(((transcriptHeight || height) - keyboard.lift) * 0.55),
+    ),
   );
   const [habitAssistant, setHabitAssistant] = useState<{
     initialPrompt: string;
@@ -425,6 +448,7 @@ export function ChatScreen({
     initialHabitId?: string;
   }>();
   const dark = resolved === "dark";
+  const canvas = dark ? darkColors.bg : colors.bg;
   const sceneHeight = Math.min(225, Math.round(width * 0.5));
   const id = typeof app.params?.id === "string" ? app.params.id : undefined;
   const draftKey = id || "new";
@@ -448,6 +472,7 @@ export function ChatScreen({
   const [failure, setFailure] = useState<{
     message: string;
     retryText?: string;
+    prompt?: boolean;
   }>();
   const sending = useRef(false);
   const openingReset = useRef(false);
@@ -459,8 +484,7 @@ export function ChatScreen({
     setPending("");
     setVoiceState("idle");
     setShowHeaderMenu(false);
-    setShowComposerMenu(false);
-    setShowExplanation(false);
+    setExplainedActionKey(undefined);
     setHabitAssistant(undefined);
     return () => {
       mounted.current = false;
@@ -470,8 +494,7 @@ export function ChatScreen({
   useEffect(() => {
     setFailure(undefined);
     setShowHeaderMenu(false);
-    setShowComposerMenu(false);
-    setShowExplanation(false);
+    setExplainedActionKey(undefined);
     setHabitAssistant(undefined);
   }, [id]);
   const requestedHabitIntent = app.params.habitAssistant;
@@ -508,27 +531,26 @@ export function ChatScreen({
   );
   const lastUser = messages.findLast((message) => message.role === "user");
   const habitPrompt = String(lastUser?.content ?? "").slice(0, 1200);
-  const habitIntent = habitIntention(habitPrompt);
+  const habitIntent = lastAssistant?.appAction
+    ? undefined
+    : habitIntention(habitPrompt);
   const openHabitAssistant = useCallback((initialPrompt: string) => {
     Keyboard.dismiss();
-    setShowComposerMenu(false);
     setHabitAssistant({
       initialPrompt,
       initialIntent: habitIntention(initialPrompt) ?? "suggest",
     });
   }, []);
-  const momentContext = {
-    feeling: String(lastUser?.content || "").slice(0, 1200),
-    conversationId: id,
-  };
   const action = lastAssistant?.action;
   const actionKey = lastAssistant?.id ?? String(messages.length);
   const showSupport =
     lastAssistant?.support === true || lastAssistant?.safety === true;
   const voiceBusy = voiceState === "listening" || voiceState === "thinking";
-  const activityDisabled = !!pending || voiceBusy;
+  const activityDisabled = !!pending || voiceBusy || actions.busy;
   const sendDisabled = !input.trim() || activityDisabled;
-  const canRetry = !!failure?.retryText && failure.retryText === input.trim();
+  const canRetry =
+    !!failure?.retryText &&
+    (failure.prompt || failure.retryText === input.trim());
   const fresh = messages.length === 0 && !pending;
   const previousFresh = useRef(fresh);
   useEffect(() => {
@@ -553,7 +575,7 @@ export function ChatScreen({
       !showSupport &&
       dismissedPractice !== actionKey &&
       isChatPracticeId(practice)
-        ? createChatPractice(practice)
+        ? getTechnique(practice)
         : undefined,
     [pending, showSupport, dismissedPractice, actionKey, practice],
   );
@@ -569,6 +591,17 @@ export function ChatScreen({
         : undefined,
     [recommendation, action, app.user?.personalization, app.data],
   );
+  const recommendationReason = useMemo(() => {
+    if (!explanation || !lastAssistant || !isChatPracticeId(practice))
+      return undefined;
+    const assistantIndex = messages.lastIndexOf(lastAssistant);
+    const preceding = messages[assistantIndex - 1];
+    return shortChatPracticeReason(
+      practice,
+      explanation,
+      preceding?.role === "user" ? preceding.content : "",
+    );
+  }, [explanation, lastAssistant, messages, practice]);
   const today = localDay();
   const mood = useMemo(
     () =>
@@ -579,14 +612,6 @@ export function ChatScreen({
         )[0]?.mood,
     [app.data.checkins, today],
   );
-  function startReset() {
-    setShowComposerMenu(false);
-    app.navigate(routes.technique, {
-      id: "breathing",
-      source: "chat",
-      conversationId: id,
-    });
-  }
   function playReset() {
     if (openingReset.current) return;
     openingReset.current = true;
@@ -597,35 +622,21 @@ export function ChatScreen({
       conversationId: id,
     });
   }
-  function startReflection() {
-    setShowComposerMenu(false);
-    app.navigate("reflection", { source: "solace-chat", conversationId: id });
-  }
-  function openMoments() {
-    setShowComposerMenu(false);
-    app.navigate("moments", momentContext);
-  }
   function writeDraft(text: string) {
     inputRef.current = text;
     if (failure && failure.retryText !== text.trim()) setFailure(undefined);
     if (context) app.setParams({ context: "" });
     app.setChatDraft(draftKey, text);
   }
-  function preparePrompt(prompt: string) {
-    const draft = inputRef.current;
-    const next = draft.trim() ? `${draft}\n${prompt}` : prompt;
-    if (!draft.includes(prompt) && next.length <= 4000) writeDraft(next);
-    composerInput.current?.focus();
-  }
   function startConversation() {
     Keyboard.dismiss();
     const start = () => {
+      actions.close();
       welcomeScroll.current?.scrollTo({ y: 0, animated: false });
       firstReplyId.current = undefined;
       setNewThreadVersion((previous) => previous + 1);
       app.setParams({ id: undefined, context: "" });
       setFailure(undefined);
-      setShowComposerMenu(false);
     };
     if (!id && inputRef.current.trim()) {
       confirmAction(
@@ -641,118 +652,76 @@ export function ChatScreen({
     }
     start();
   }
-  async function send() {
-    const submitted = inputRef.current;
+  async function send(prompt?: string) {
+    const draft = inputRef.current;
+    const submitted = prompt ?? draft;
     const text = submitted.trim();
-    if (!text || sendDisabled || sending.current) return;
+    if (!text || activityDisabled || sending.current) return;
     sending.current = true;
-    setShowComposerMenu(false);
-    writeDraft(submitted);
+    if (!prompt) writeDraft(submitted);
     setPending(text);
     setFailure(undefined);
     try {
       const result = await app.chat(text, id);
       // The first reply assigns a server ID. Keep the same native composer
       // and recorder for this thread so assigning that ID cannot blur typing.
-      if (!id) firstReplyId.current = result.conversation.id;
-      app.setChatDraft(draftKey, "", submitted);
+      if (!id) {
+        firstReplyId.current = result.conversation.id;
+        if (
+          prompt &&
+          draft &&
+          !latestApp.current.chatDrafts[result.conversation.id]
+        ) {
+          app.setChatDraft(result.conversation.id, draft);
+          app.setChatDraft(draftKey, "", draft);
+        }
+      }
+      if (!prompt) app.setChatDraft(draftKey, "", submitted);
       app.setParams({ id: result.conversation.id, context: "" });
+      if (mounted.current) {
+        if (
+          result.appAction?.kind !== "confirm" &&
+          result.appAction?.kind !== "cancel"
+        )
+          actions.cancelPending();
+        actions.receive(result.appAction, result.conversation.id);
+      }
     } catch (e) {
       if (mounted.current)
         setFailure({
           message: companionSendError(e),
           retryText: text,
+          prompt: !!prompt,
         });
     } finally {
       sending.current = false;
       if (mounted.current) setPending("");
     }
   }
-  function chatActions(playback: React.ReactNode) {
-    if (!showComposerMenu) return null;
-    return (
-      <View
-        style={[
-          chatStyles.composerMenu,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
-        <AppText variant="label" style={chatStyles.menuTitle}>
-          Chat actions
-        </AppText>
-        <View style={chatStyles.menuActions}>
-          {[
-            {
-              label: "Guided Breath",
-              icon: "leaf-outline",
-              action: startReset,
-            },
-            {
-              label: "Solace Moments",
-              icon: "sparkles-outline",
-              action: openMoments,
-            },
-            {
-              label: "Write a reflection",
-              icon: "book-outline",
-              action: startReflection,
-            },
-            {
-              label: "Plan a habit",
-              icon: "leaf-outline",
-              action: () =>
-                openHabitAssistant(inputRef.current.trim() || habitPrompt),
-            },
-            {
-              label: "Find support",
-              icon: "heart-outline",
-              action: () => app.navigate("support"),
-            },
-          ].map(({ label, icon, action }) => (
-            <Pressable
-              key={label}
-              accessibilityRole="button"
-              onPress={() => {
-                setShowComposerMenu(false);
-                action();
-              }}
-              style={({ pressed }) => [
-                chatStyles.menuAction,
-                { backgroundColor: pressed ? colors.surface2 : colors.bg },
-              ]}
-            >
-              <Icon name={icon} size={17} color={colors.primary} />
-              <AppText variant="caption" style={chatStyles.menuLabel}>
-                {label}
-              </AppText>
-            </Pressable>
-          ))}
-        </View>
-        {!!playback && (
-          <Row style={chatStyles.playbackAction}>
-            <AppText variant="caption" color={colors.muted}>
-              Latest reply
-            </AppText>
-            {playback}
-          </Row>
-        )}
-      </View>
-    );
+  function openLiveVoice() {
+    if (activityDisabled) return;
+    beginVoiceTiming();
+    Keyboard.dismiss();
+    app.navigate(routes.voice, {
+      id,
+      autoStart: true,
+      originCheckinId: app.params.originCheckinId,
+    });
   }
   const avatarState = pending ? "thinking" : voiceState;
   const header = (
     <View style={[chatStyles.header, { paddingHorizontal: gutter - 5 }]}>
       <View style={chatStyles.headerEdge}>
-        {app.canGoBack ? (
-          <ChatHeaderButton
-            icon="chevron-back"
-            label={app.params.fromJournal ? "Back to Journal" : "Go back"}
-            disabled={false}
-            onPress={app.back}
-          />
-        ) : (
-          <ChatAvatar size={34} state={avatarState} />
-        )}
+        <ChatHeaderButton
+          icon="chevron-back"
+          label={app.params.fromJournal ? "Back to Journal" : "Back to Solace"}
+          disabled={false}
+          variant="filled"
+          onPress={() => {
+            Keyboard.dismiss();
+            app.back();
+          }}
+        />
       </View>
       <View style={chatStyles.headerBrand}>
         <AppText
@@ -763,7 +732,7 @@ export function ChatScreen({
           Solace Companion
         </AppText>
         <Row style={chatStyles.brandBadge}>
-          {app.canGoBack ? (
+          {app.params.fromJournal ? (
             <ChatAvatar size={17} state={avatarState} />
           ) : (
             <View
@@ -791,30 +760,13 @@ export function ChatScreen({
           expanded={showHeaderMenu}
           onPress={() => {
             Keyboard.dismiss();
-            setShowComposerMenu(false);
             setShowHeaderMenu(true);
           }}
         />
       </View>
     </View>
   );
-  const headerActions = [
-    {
-      label: "Conversation history",
-      icon: "time-outline",
-      action: () => app.navigate(routes.history),
-    },
-    {
-      label: "Start a voice conversation",
-      icon: "headset-outline",
-      action: () => app.navigate(routes.voice, { id }),
-    },
-    {
-      label: "Create a Solace Moment",
-      icon: "sparkles-outline",
-      action: openMoments,
-    },
-  ];
+  const visibleActions = actions.prompt ? actions : undefined;
   const transcriptFooter = useMemo(
     () => (
       <View style={chatStyles.transcriptFooter}>
@@ -853,72 +805,42 @@ export function ChatScreen({
             style={{ alignSelf: "flex-start" }}
           />
         )}
-        {recommendation && action && (
-          <Card style={{ backgroundColor: colors.surface2 }}>
-            <Row
-              style={{ gap: spacing.compact, marginBottom: spacing.compact }}
-            >
-              <Icon name={chatPractices[action.type].icon} size={18} />
-              <AppText variant="caption" color={colors.muted}>
-                Suggested technique · {recommendation.durationSec / 60} min
-              </AppText>
-            </Row>
-            <AppText variant="heading">{recommendation.title}</AppText>
-            <AppText
-              color={colors.muted}
-              style={{ marginTop: spacing.compact }}
-            >
-              {recommendation.description}
-            </AppText>
-            <Row
-              style={{
-                flexWrap: "wrap",
-                gap: spacing.compact,
-                marginTop: spacing.card,
-              }}
-            >
-              <Button
-                title="View technique"
-                icon="arrow-forward"
-                onPress={() => {
-                  Keyboard.dismiss();
-                  latestApp.current.navigate(routes.technique, {
-                    id: action.type,
-                    source: "chat",
-                    conversationId: id,
-                  });
-                }}
-                disabled={activityDisabled}
-                style={{ minHeight: 48 }}
-              />
-              <Button
-                title="Not now"
-                variant="ghost"
-                onPress={() =>
-                  latestApp.current.setParams({ dismissedPractice: actionKey })
-                }
-                style={{ minHeight: 48 }}
-              />
-            </Row>
-            <Button
-              title="Why Solace suggested this"
-              variant="ghost"
-              icon="information-circle-outline"
-              onPress={() => {
-                Keyboard.dismiss();
-                setShowExplanation(true);
-              }}
-              style={{ alignSelf: "flex-start", minHeight: 48 }}
-            />
-          </Card>
+        {recommendation && recommendationReason && (
+          <SolaceRecommendationCard
+            key={actionKey}
+            title={recommendation.title}
+            description={recommendation.description}
+            durationSec={recommendation.activity.durationSec}
+            selfPaced={recommendation.selfPaced}
+            artwork={techniqueArtwork[recommendation.artwork]}
+            reason={recommendationReason}
+            disabled={activityDisabled}
+            onStart={() => {
+              Keyboard.dismiss();
+              latestApp.current.navigate(routes.momentPlayer, {
+                techniqueId: recommendation.id,
+                source: "chat",
+                ...(id ? { conversationId: id } : {}),
+                originCheckinId: latestApp.current.params.originCheckinId,
+              });
+            }}
+            onDismiss={() =>
+              latestApp.current.setParams({ dismissedPractice: actionKey })
+            }
+            onExplain={() => {
+              Keyboard.dismiss();
+              setExplainedActionKey(actionKey);
+            }}
+          />
         )}
+        {!!visibleActions && <CompanionActionCard actions={visibleActions} />}
       </View>
     ),
     [
       pending,
       showSupport,
       recommendation,
-      action,
+      recommendationReason,
       colors,
       id,
       activityDisabled,
@@ -927,6 +849,7 @@ export function ChatScreen({
       habitPrompt,
       lastAssistant,
       openHabitAssistant,
+      visibleActions,
     ],
   );
   const failurePanel = failure && (
@@ -945,15 +868,19 @@ export function ChatScreen({
       </AppText>
       {canRetry && (
         <>
-          <AppText variant="caption" color={colors.muted}>
-            Your draft is still in the composer.
-          </AppText>
+          {!failure.prompt && (
+            <AppText variant="caption" color={colors.muted}>
+              Your draft is still in the composer.
+            </AppText>
+          )}
           <CompanionAction
             label="Retry message"
             onPress={() => {
-              if (inputRef.current.trim() === failure.retryText) void send();
+              if (failure.prompt) void send(failure.retryText);
+              else if (inputRef.current.trim() === failure.retryText)
+                void send();
             }}
-            disabled={sendDisabled}
+            disabled={activityDisabled}
             style={[
               chatStyles.retryAction,
               { backgroundColor: colors.lavenderSurface },
@@ -972,98 +899,32 @@ export function ChatScreen({
       )}
     </View>
   );
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      behavior={Platform.OS === "web" ? undefined : "padding"}
-    >
+  const chatContent = (
+    <>
       {habitAssistant && (
         <HabitAssistant
           {...habitAssistant}
           onClose={() => setHabitAssistant(undefined)}
         />
       )}
-      {showExplanation && recommendation && explanation && (
+      {explainedActionKey === actionKey && recommendation && explanation && (
         <RecommendationExplanation
           open
           title={recommendation.title}
           reason={explanation.reason}
           basis={explanation.basis}
-          onClose={() => setShowExplanation(false)}
+          onClose={() => setExplainedActionKey(undefined)}
           onManage={() => {
-            setShowExplanation(false);
+            setExplainedActionKey(undefined);
             app.navigate(routes.memory);
           }}
         />
       )}
       <StatusBar style={dark ? "light" : "dark"} />
-      <Modal
-        visible={showHeaderMenu}
-        transparent
-        animationType={reduceMotion ? "none" : "fade"}
-        onRequestClose={() => setShowHeaderMenu(false)}
+      <SafeAreaView
+        edges={["top"]}
+        style={{ flex: 1, backgroundColor: colors.bg }}
       >
-        <View style={chatStyles.modal}>
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            aria-hidden
-            onStartShouldSetResponder={() => true}
-            onResponderRelease={() => setShowHeaderMenu(false)}
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: colors.overlay },
-            ]}
-          />
-          <View
-            accessibilityViewIsModal
-            style={[
-              chatStyles.headerMenu,
-              {
-                top: top + 48,
-                right: gutter,
-                width: Math.min(280, width - 2 * gutter),
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-              },
-            ]}
-          >
-            <Row style={chatStyles.headerMenuTitle}>
-              <AppText variant="label" accessibilityRole="header">
-                Companion options
-              </AppText>
-              <ChatHeaderButton
-                icon="close-outline"
-                label="Close companion options"
-                disabled={false}
-                onPress={() => setShowHeaderMenu(false)}
-              />
-            </Row>
-            <ScrollView keyboardShouldPersistTaps="handled" bounces={false}>
-              {headerActions.map(({ label, icon, action }) => {
-                return (
-                  <CompanionAction
-                    key={label}
-                    label={label}
-                    disabled={activityDisabled}
-                    onPress={() => {
-                      setShowHeaderMenu(false);
-                      action();
-                    }}
-                    style={chatStyles.headerMenuAction}
-                  >
-                    <Icon name={icon} size={18} color={colors.lavenderText} />
-                    <AppText variant="label" style={chatStyles.headerMenuLabel}>
-                      {label}
-                    </AppText>
-                  </CompanionAction>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-      <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         <View
           style={[
             !fresh && chatStyles.compactHeader,
@@ -1071,49 +932,6 @@ export function ChatScreen({
           ]}
         >
           {header}
-          <Row
-            style={[chatStyles.headerShortcuts, { paddingHorizontal: gutter }]}
-          >
-            <CompanionAction
-              label="New conversation"
-              disabled={activityDisabled}
-              onPress={startConversation}
-              style={[
-                chatStyles.headerShortcut,
-                {
-                  backgroundColor: colors.lavenderSurface,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              <Icon name="add-outline" size={18} color={colors.lavenderText} />
-              <AppText
-                variant="label"
-                color={colors.lavenderText}
-                style={chatStyles.shortcutLabel}
-              >
-                {width < 360 || fontScale > 1.25
-                  ? "New chat"
-                  : "New conversation"}
-              </AppText>
-            </CompanionAction>
-            <CompanionAction
-              label="My Journal"
-              onPress={() => {
-                Keyboard.dismiss();
-                app.switchSolaceMode("journal");
-              }}
-              style={[
-                chatStyles.headerShortcut,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <Icon name="book-outline" size={17} color={colors.text} />
-              <AppText variant="label" style={chatStyles.shortcutLabel}>
-                My Journal
-              </AppText>
-            </CompanionAction>
-          </Row>
           {!!conversation?.journalSource && (
             <AppText
               variant="caption"
@@ -1127,89 +945,130 @@ export function ChatScreen({
             </AppText>
           )}
         </View>
-        <Animated.View
-          style={[chatStyles.transcript, { opacity: contentOpacity }]}
-          onLayout={({ nativeEvent }) =>
-            setTranscriptHeight(Math.ceil(nativeEvent.layout.height))
+        <CompanionConversationMenu
+          open={showHeaderMenu}
+          gutter={gutter}
+          reducedMotion={reduceMotion}
+          disabled={activityDisabled}
+          onClose={() => setShowHeaderMenu(false)}
+          onNewConversation={startConversation}
+          onHistory={() => app.navigate(routes.history)}
+        />
+        <VoiceControls
+          key={`${app.user?.id}-${voiceKey}`}
+          disabled={!!pending}
+          reply={
+            lastAssistant && {
+              text: lastAssistant.content,
+              id: lastAssistant.id,
+              conversationId: id,
+              provider: lastAssistant.provider,
+              sensitive: lastAssistant.support || lastAssistant.safety,
+            }
           }
-        >
-          {fresh ? (
-            <ScrollView
-              ref={welcomeScroll}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={[
-                chatStyles.welcomeScroll,
-                { paddingBottom: transcriptClearance - spacing.row },
-              ]}
-            >
-              <ChatScene height={sceneHeight} />
-              <View style={[chatStyles.welcome, { paddingHorizontal: gutter }]}>
-                <ChatWelcome
-                  name={app.user?.name}
-                  mood={mood}
-                  state={voiceState}
-                />
-                <ChatQuickReplies
-                  disabled={activityDisabled}
-                  onPrompt={preparePrompt}
-                />
-                <ChatResetCard
-                  onPress={playReset}
-                  disabled={activityDisabled}
-                />
+          onState={setVoiceState}
+          onTranscript={(text) => {
+            const before = inputRef.current;
+            const combined = `${before}${before.trim() ? "\n" : ""}${text}`;
+            if (combined.length > 4000) {
+              setFailure({
+                message:
+                  "Shorten your draft to make room for this transcript. Your transcript is kept above.",
+              });
+              return false;
+            }
+            writeDraft(combined);
+            setFailure(undefined);
+            return true;
+          }}
+          renderComposer={(microphone, playback, voiceDetails) => (
+            <>
+              <View
+                style={[
+                  chatStyles.transcript,
+                  Platform.OS === "ios" && chatStyles.transcriptClip,
+                  { backgroundColor: canvas },
+                ]}
+              >
+                <Animated.View
+                  style={[
+                    chatStyles.transcript,
+                    { opacity: contentOpacity },
+                    !fresh && keyboardTransform,
+                  ]}
+                  onLayout={({ nativeEvent }) =>
+                    setTranscriptHeight(Math.ceil(nativeEvent.layout.height))
+                  }
+                >
+                  {fresh ? (
+                    <ScrollView
+                      ref={welcomeScroll}
+                      keyboardShouldPersistTaps="handled"
+                      showsVerticalScrollIndicator={false}
+                      contentContainerStyle={[
+                        chatStyles.welcomeScroll,
+                        {
+                          paddingBottom:
+                            transcriptClearance - spacing.row + keyboard.lift,
+                        },
+                      ]}
+                    >
+                      <ChatScene height={sceneHeight} canvas={canvas} />
+                      <View
+                        style={[
+                          chatStyles.welcome,
+                          { paddingHorizontal: gutter },
+                        ]}
+                      >
+                        <ChatWelcome
+                          name={app.user?.name}
+                          mood={mood}
+                          state={voiceState}
+                        />
+                        <ChatQuickReplies
+                          disabled={activityDisabled}
+                          onPrompt={(prompt) => void send(prompt)}
+                        />
+                        <ChatResetCard
+                          onPress={playReset}
+                          disabled={activityDisabled}
+                        />
+                      </View>
+                    </ScrollView>
+                  ) : (
+                    <ChatTranscript
+                      key={draftKey}
+                      conversationKey={draftKey}
+                      clearance={transcriptClearance}
+                      keyboardLift={keyboard.lift}
+                      footer={transcriptFooter}
+                      gutter={gutter}
+                      messages={messages}
+                      playback={playback}
+                      playbackMessage={lastAssistant}
+                      reduceMotion={reduceMotion}
+                      scrollMemory={scrollMemory}
+                    />
+                  )}
+                </Animated.View>
               </View>
-            </ScrollView>
-          ) : (
-            <ChatTranscript
-              key={draftKey}
-              conversationKey={draftKey}
-              clearance={transcriptClearance}
-              footer={transcriptFooter}
-              gutter={gutter}
-              messages={messages}
-              reduceMotion={reduceMotion}
-              scrollMemory={scrollMemory}
-            />
-          )}
-        </Animated.View>
-        <View
-          pointerEvents="box-none"
-          testID="floating-chat-composer"
-          onLayout={({ nativeEvent }) =>
-            setComposerHeight(Math.ceil(nativeEvent.layout.height))
-          }
-          style={[
-            chatStyles.composer,
-            {
-              bottom: composerBottom,
-              left: gutter,
-              right: gutter,
-            },
-          ]}
-        >
-          <VoiceControls
-            key={`${app.user?.id}-${voiceKey}`}
-            disabled={!!pending}
-            reply={String(lastAssistant?.content || "")}
-            onState={setVoiceState}
-            onTranscript={(text) => {
-              const before = inputRef.current;
-              const combined = `${before}${before.trim() ? "\n" : ""}${text}`;
-              if (combined.length > 4000) {
-                setFailure({
-                  message:
-                    "Shorten your draft to make room for this transcript. Your transcript is kept above.",
-                });
-                return false;
-              }
-              writeDraft(combined);
-              setFailure(undefined);
-              return true;
-            }}
-            renderComposer={(microphone, playback, voiceDetails) => (
-              <>
-                {(failurePanel || voiceDetails || showComposerMenu) && (
+              <Animated.View
+                pointerEvents="box-none"
+                testID="floating-chat-composer"
+                onLayout={({ nativeEvent }) =>
+                  setComposerHeight(Math.ceil(nativeEvent.layout.height))
+                }
+                style={[
+                  chatStyles.composer,
+                  {
+                    bottom: composerBottom,
+                    left: gutter,
+                    right: gutter,
+                  },
+                  keyboardTransform,
+                ]}
+              >
+                {(failurePanel || voiceDetails) && (
                   <ScrollView
                     keyboardShouldPersistTaps="handled"
                     nestedScrollEnabled
@@ -1232,52 +1091,57 @@ export function ChatScreen({
                         {voiceDetails}
                       </View>
                     )}
-                    {chatActions(playback)}
                   </ScrollView>
                 )}
                 <View pointerEvents="box-none" style={chatStyles.composerRow}>
-                  <ChatComposerControl
-                    icon={showComposerMenu ? "close" : "add"}
-                    label={
-                      showComposerMenu
-                        ? "Close chat actions"
-                        : "More chat actions"
-                    }
-                    tone={showComposerMenu ? "selected" : "quiet"}
-                    expanded={showComposerMenu}
-                    disabled={activityDisabled}
-                    onPress={() => {
-                      if (!showComposerMenu) Keyboard.dismiss();
-                      setShowComposerMenu((open) => !open);
-                    }}
-                  />
+                  {microphone}
                   <ChatComposerInput
                     inputRef={composerInput}
                     value={input}
                     onChangeText={writeDraft}
-                    onFocus={() => setShowComposerMenu(false)}
                     editable={!pending}
                   />
-                  {microphone}
                   <ChatComposerControl
                     icon="send-outline"
                     label="Send message"
                     tone="primary"
-                    onPress={send}
+                    onPress={() => void send()}
                     disabled={sendDisabled}
                     busy={!!pending}
                   />
+                  <ChatComposerControl
+                    icon="waveform"
+                    label="Live Voice"
+                    hint="Starts a live spoken conversation."
+                    tone="live"
+                    disabled={activityDisabled}
+                    onPress={openLiveVoice}
+                  />
                 </View>
-              </>
-            )}
-          />
-        </View>
+              </Animated.View>
+            </>
+          )}
+        />
       </SafeAreaView>
+    </>
+  );
+  const frame = { flex: 1, backgroundColor: colors.bg };
+  return Platform.OS === "android" ? (
+    <KeyboardAvoidingView style={frame} behavior="padding">
+      {chatContent}
     </KeyboardAvoidingView>
+  ) : (
+    <View style={frame}>{chatContent}</View>
   );
 }
 
-function renderChatMessage({ item }: { item: ChatMessage }) {
+function renderChatMessage({
+  item,
+  playback,
+}: {
+  item: ChatMessage;
+  playback?: React.ReactNode;
+}) {
   const label =
     item.support || item.safety
       ? "Support guidance"
@@ -1292,6 +1156,7 @@ function renderChatMessage({ item }: { item: ChatMessage }) {
       avatar={item.role === "assistant"}
       label={label}
       createdAt={item.createdAt}
+      playback={playback}
     >
       {String(item.content ?? "")}
     </ChatBubble>
@@ -1311,17 +1176,23 @@ const transcriptPosition = {
 const ChatTranscript = React.memo(function ChatTranscript({
   conversationKey,
   clearance,
+  keyboardLift,
   footer,
   gutter,
   messages,
+  playback,
+  playbackMessage,
   reduceMotion,
   scrollMemory,
 }: {
   conversationKey: string;
   clearance: number;
+  keyboardLift: number;
   footer: React.ReactElement;
   gutter: number;
   messages: ChatMessage[];
+  playback?: React.ReactNode;
+  playbackMessage?: ChatMessage;
   reduceMotion: boolean;
   scrollMemory: Map<string, number>;
 }) {
@@ -1333,6 +1204,14 @@ const ChatTranscript = React.memo(function ChatTranscript({
     (message: ChatMessage, index: number) =>
       message.id ?? `legacy-${messages.length - index - 1}`,
     [messages.length],
+  );
+  const renderItem = useCallback(
+    ({ item }: { item: ChatMessage }) =>
+      renderChatMessage({
+        item,
+        playback: item === playbackMessage ? playback : undefined,
+      }),
+    [playback, playbackMessage],
   );
   const following = useRef(restoreOffset.current === undefined);
   const jumpingToLatest = useRef(false);
@@ -1383,7 +1262,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
         ref={list}
         data={newestFirst}
         inverted
-        renderItem={renderChatMessage}
+        renderItem={renderItem}
         keyExtractor={messageKey}
         ItemSeparatorComponent={MessageSpacing}
         ListHeaderComponent={footer}
@@ -1406,7 +1285,13 @@ const ChatTranscript = React.memo(function ChatTranscript({
         onScroll={trackScroll}
         contentContainerStyle={[
           chatStyles.conversation,
-          { paddingHorizontal: gutter, paddingTop: clearance },
+          {
+            paddingHorizontal: gutter,
+            paddingTop: clearance,
+            // The inverted list moves with the composer. Its far edge needs
+            // room to scroll older messages back below the clipped header.
+            paddingBottom: chatStyles.conversation.paddingBottom + keyboardLift,
+          },
         ]}
       />
       {showLatest && (
@@ -1458,46 +1343,6 @@ const chatStyles = StyleSheet.create({
   },
   narrowTitle: { fontSize: 21, lineHeight: 26 },
   compactHeader: { borderBottomWidth: StyleSheet.hairlineWidth },
-  headerShortcuts: { gap: 8, paddingBottom: spacing.compact },
-  headerShortcut: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 14,
-  },
-  shortcutLabel: {
-    flexShrink: 1,
-    textAlign: "center",
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  modal: { flex: 1 },
-  headerMenu: {
-    position: "absolute",
-    maxHeight: "78%",
-    borderRadius: 17,
-    borderWidth: 1,
-    paddingHorizontal: spacing.compact,
-    paddingBottom: spacing.compact,
-  },
-  headerMenuTitle: { justifyContent: "space-between", paddingLeft: 8 },
-  headerMenuAction: {
-    minHeight: 46,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 9,
-  },
-  headerMenuLabel: { flexShrink: 1 },
   welcomeScroll: { flexGrow: 1 },
   welcome: {
     flexGrow: 1,
@@ -1506,6 +1351,7 @@ const chatStyles = StyleSheet.create({
     gap: 10,
   },
   transcript: { flex: 1 },
+  transcriptClip: { overflow: "hidden" },
   conversation: {
     flexGrow: 1,
     justifyContent: "flex-end",
@@ -1545,31 +1391,6 @@ const chatStyles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 14,
   },
-  composerMenu: {
-    padding: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    boxShadow: "0 8px 22px #271C131A",
-  },
-  menuTitle: { marginBottom: 8 },
-  menuActions: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  menuAction: {
-    flexGrow: 1,
-    flexBasis: "46%",
-    flexDirection: "row",
-    alignItems: "center",
-    minHeight: 44,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 12,
-    gap: 6,
-  },
-  menuLabel: { flexShrink: 1 },
-  playbackAction: {
-    justifyContent: "space-between",
-    paddingLeft: 9,
-    marginTop: 4,
-  },
   composerRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
 });
 
@@ -1577,6 +1398,8 @@ export function HistoryScreen() {
   const app = useApp();
   const { colors } = useTheme();
   const gutter = useScreenGutter();
+  const { width, fontScale } = useWindowDimensions();
+  const stackActions = (width - 2 * gutter) / fontScale < 275;
   const { bottom } = useSafeAreaInsets();
   const navigationInset = useNavigationInset();
   const [query, setQuery] = useState("");
@@ -1659,21 +1482,12 @@ export function HistoryScreen() {
   }
   const historyHeader = (
     <>
-      <Row
-        style={{
-          justifyContent: "space-between",
-          marginBottom: 24,
-          marginLeft: -10,
-        }}
-      >
-        <IconButton name="arrow-back" label="Go back" onPress={app.back} />
-        <BrandMark />
-      </Row>
-      <AppText variant="title">Your conversations</AppText>
-      <AppText color={colors.muted} style={{ marginTop: 8, marginBottom: 22 }}>
-        A private space for your thoughts. Find a conversation, or begin again.
-      </AppText>
-      <View style={{ position: "relative", marginBottom: 12 }}>
+      <NestedHeader
+        title="Your conversations"
+        onBack={app.back}
+        subtitle="A private space for your thoughts. Find a conversation, or begin again."
+      />
+      <View style={historyStyles.search}>
         <Input
           accessibilityLabel="Search conversations"
           placeholder="Search titles and messages"
@@ -1685,12 +1499,12 @@ export function HistoryScreen() {
         />
         <View
           pointerEvents="none"
-          style={{ position: "absolute", left: 15, top: 17 }}
+          style={[historyStyles.searchControl, { left: 15 }]}
         >
           <Icon name="search-outline" size={20} color={colors.muted} />
         </View>
         {!!query && (
-          <View style={{ position: "absolute", right: 5, top: 5 }}>
+          <View style={[historyStyles.searchControl, { right: 5 }]}>
             <IconButton
               name="close"
               label="Clear conversation search"
@@ -1729,42 +1543,27 @@ export function HistoryScreen() {
     </>
   );
   const emptyHistory = (
-    <View style={{ alignItems: "center", paddingVertical: 32 }}>
-      <Icon
-        name={search ? "search-outline" : "chatbubbles-outline"}
-        size={32}
-        color={colors.muted}
-      />
-      <AppText variant="heading" style={{ marginTop: 14 }}>
-        {search ? "No conversations found" : "A fresh beginning"}
-      </AppText>
-      <AppText
-        color={colors.muted}
-        style={{ marginTop: 8, textAlign: "center", maxWidth: 280 }}
-      >
-        {search
+    <NestedState
+      icon={search ? "search-outline" : "chatbubbles-outline"}
+      title={search ? "No conversations found" : "A fresh beginning"}
+      description={
+        search
           ? "Try a different word from a title or message."
-          : "Your conversations will be here whenever you want to return."}
-      </AppText>
+          : "Your conversations will be here whenever you want to return."
+      }
+    >
       {!!search && (
         <Button
           title="Clear search"
           variant="ghost"
           onPress={() => setQuery("")}
-          style={{ marginTop: 12 }}
         />
       )}
-    </View>
+    </NestedState>
   );
   function renderConversation({ item: c }: { item: Item }) {
     return (
-      <View
-        style={{
-          paddingVertical: 18,
-          borderBottomWidth: 0.75,
-          borderBottomColor: colors.border,
-        }}
-      >
+      <Card style={historyStyles.conversation}>
         {editing === c.id ? (
           <View style={{ gap: 12 }}>
             <AppText variant="label">Conversation name</AppText>
@@ -1777,12 +1576,17 @@ export function HistoryScreen() {
               autoFocus
               onSubmitEditing={() => rename(String(c.id))}
             />
-            <Row>
+            <View
+              style={[
+                historyStyles.editActions,
+                stackActions && historyStyles.stackedActions,
+              ]}
+            >
               <Button
                 title="Save name"
                 loading={saving}
                 onPress={() => rename(String(c.id))}
-                style={{ flex: 1 }}
+                style={stackActions ? undefined : historyStyles.editButton}
               />
               <Button
                 title="Cancel"
@@ -1792,9 +1596,9 @@ export function HistoryScreen() {
                   setEditing(null);
                   setFailure("");
                 }}
-                style={{ flex: 1 }}
+                style={stackActions ? undefined : historyStyles.editButton}
               />
-            </Row>
+            </View>
           </View>
         ) : (
           <>
@@ -1811,8 +1615,7 @@ export function HistoryScreen() {
               >
                 <AppText
                   variant="heading"
-                  numberOfLines={2}
-                  style={{ fontSize: 25, lineHeight: 28 }}
+                  numberOfLines={stackActions ? undefined : 2}
                 >
                   {c.title || "A conversation"}
                 </AppText>
@@ -1881,7 +1684,7 @@ export function HistoryScreen() {
             )}
           </>
         )}
-      </View>
+      </Card>
     );
   }
   const loadMore =
@@ -1903,7 +1706,7 @@ export function HistoryScreen() {
     ) : null;
   return (
     <SafeAreaView
-      edges={["top"]}
+      edges={["top", "left", "right"]}
       style={{ flex: 1, backgroundColor: colors.bg }}
     >
       <FlatList
@@ -1933,3 +1736,17 @@ export function HistoryScreen() {
 function conversationKey(conversation: Item) {
   return String(conversation.id);
 }
+
+const historyStyles = StyleSheet.create({
+  search: { position: "relative", marginBottom: spacing.row },
+  searchControl: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+  },
+  conversation: { marginBottom: spacing.row, padding: spacing.card },
+  editActions: { flexDirection: "row", gap: spacing.compact },
+  stackedActions: { flexDirection: "column" },
+  editButton: { flex: 1 },
+});

@@ -54,11 +54,13 @@ export function EnvironmentScene({
   active = false,
   children,
   style,
+  scenic = false,
 }: {
   environment: MomentEnvironment;
   active?: boolean;
   children?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
+  scenic?: boolean;
 }) {
   const { resolved } = useTheme();
   const dark = resolved === "dark";
@@ -91,6 +93,7 @@ export function EnvironmentScene({
         environment={environment}
         active={active}
         dark={dark}
+        scenic={scenic}
       />
       {children}
     </View>
@@ -101,10 +104,12 @@ const EnvironmentArtwork = React.memo(function EnvironmentArtwork({
   environment,
   active,
   dark,
+  scenic,
 }: {
   environment: MomentEnvironment;
   active: boolean;
   dark: boolean;
+  scenic: boolean;
 }) {
   const reduced = useReducedMotion();
   const [drift] = useState(() => new Animated.Value(0));
@@ -130,6 +135,14 @@ const EnvironmentArtwork = React.memo(function EnvironmentArtwork({
     animation.start();
     return () => animation.stop();
   }, [active, drift, reduced]);
+  const daytimeScene =
+    !dark && scenic
+      ? environment === "forest"
+        ? require("../assets/redesign-guided-light.jpg")
+        : environment === "twilight"
+          ? require("../assets/redesign-explore-feature-light.jpg")
+          : null
+      : null;
   return (
     <View
       pointerEvents="none"
@@ -139,7 +152,29 @@ const EnvironmentArtwork = React.memo(function EnvironmentArtwork({
       aria-hidden
       style={StyleSheet.absoluteFill}
     >
-      {environment === "forest" ? (
+      {daytimeScene ? (
+        <Animated.Image
+          source={daytimeScene}
+          resizeMode="cover"
+          resizeMethod="scale"
+          fadeDuration={0}
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              width: "100%",
+              height: "100%",
+              transform: [
+                {
+                  scale: drift.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 1.045],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      ) : environment === "forest" ? (
         <>
           <Animated.View
             style={[

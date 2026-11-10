@@ -115,7 +115,7 @@ export async function weeklyReflection(
   config: AIConfig,
   summary: ReturnType<typeof weeklyFacts>,
   signal?: AbortSignal,
-  canFallback?: () => boolean,
+  canRetry?: () => boolean,
 ) {
   const { facts, period } = summary;
   const hasData = hasWeeklyActivity(facts);
@@ -139,7 +139,7 @@ export async function weeklyReflection(
       jsonSchema,
       "Write one optional, gentle reflection question from the supplied participation counts. Start with What, Which, or How and end with a single question mark. Keep it under 180 characters and use no other sentence-ending punctuation. For example: What would you like to make a little room for next? Ask what the person noticed or wants to make room for without judging participation. Do not repeat or introduce numbers or dates, summarize private writing, invent memories, or make claims about mood, health, diagnosis, reasons or outcomes. Avoid wording about patterns, trends, improvement, decline, treatment, better or worse, and avoid should or must.",
       counts,
-      { maxTokens: 250, signal, canFallback },
+      { maxTokens: 250, signal, canRetry },
     );
     const parsed = schema.safeParse(output);
     if (

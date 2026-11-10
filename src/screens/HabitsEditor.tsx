@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { Animated, Platform, StyleSheet, Switch, View } from "react-native";
 import {
   habitCategories,
@@ -10,6 +10,7 @@ import {
   type HabitSchedule,
 } from "../../server/src/habit-contract";
 import { useReducedMotion } from "../Companion";
+import { spacing } from "../layout";
 import {
   blankHabit,
   habitCategoryLabels,
@@ -18,11 +19,24 @@ import {
   HabitChoice,
   HabitIconBadge,
   reminderLabel,
+  scheduleLabel,
 } from "../habits-ui";
+import { useTabResetGuard } from "../navigation-reset";
 import { routes } from "../routes";
 import { newChatRequestId, useApp } from "../store";
 import { useTheme } from "../theme";
-import { AppText, Button, Card, Icon, Input, Screen } from "../ui";
+import { formatReminderTime, validReminderTime } from "../reminder-time";
+import { switchColors } from "../switch-colors";
+import {
+  AppText,
+  BotanicalBackdrop,
+  Button,
+  Card,
+  Icon,
+  Input,
+  Row,
+  Screen,
+} from "../ui";
 
 const goalOptions = [
   { type: "completion", label: "Once" },
@@ -73,15 +87,17 @@ export function HabitFormSection({
 }) {
   const { colors } = useTheme();
   return (
-    <View style={styles.section}>
-      <AppText variant="heading" accessibilityRole="header">
-        {title}
-      </AppText>
-      {description && (
-        <AppText variant="caption" color={colors.muted}>
-          {description}
+    <View style={[styles.formSection, { borderColor: colors.border }]}>
+      <View style={styles.sectionHeading}>
+        <AppText variant="heading" accessibilityRole="header">
+          {title}
         </AppText>
-      )}
+        {!!description && (
+          <AppText variant="caption" color={colors.muted}>
+            {description}
+          </AppText>
+        )}
+      </View>
       {children}
     </View>
   );
@@ -115,6 +131,7 @@ export function ReminderFields({
           accessibilityLabel="Remind me"
           disabled={disabled}
           value={enabled}
+          {...switchColors(colors, enabled)}
           onValueChange={onToggle}
         />
       </View>
@@ -127,7 +144,8 @@ export function ReminderFields({
             autoCorrect={false}
             maxLength={5}
             value={value}
-            onChangeText={onChange}
+            onChangeText={(value) => onChange(formatReminderTime(value))}
+            keyboardType="number-pad"
             editable={!disabled}
           />
           <AppText variant="caption" color={colors.muted}>
@@ -139,18 +157,16 @@ export function ReminderFields({
   );
 }
 
-export function validReminderTime(value: string) {
-  return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.trim());
-}
-
 export function HabitsEditor({
   habit,
   suggestion,
   suggestionRevision,
+  embedded = false,
 }: {
   habit?: Habit;
   suggestion?: HabitDraft;
   suggestionRevision?: number;
+  embedded?: boolean;
 }) {
   const app = useApp();
   const { colors } = useTheme();
@@ -160,9 +176,8 @@ export function HabitsEditor({
     typeof suggestionRevision === "number" &&
     suggestionRevision !== habit.revision;
   const acceptedSuggestion = staleSuggestion ? undefined : suggestion;
-  const [initial] = useState(
-    () => acceptedSuggestion ?? (habit ? habitAsDraft(habit) : blankHabit),
-  );
+  const [original] = useState(() => (habit ? habitAsDraft(habit) : blankHabit));
+  const [initial] = useState(() => acceptedSuggestion ?? original);
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description ?? "");
   const [category, setCategory] = useState(initial.category);
@@ -200,8 +215,38 @@ export function HabitsEditor({
   const [arrival] = useState(() => new Animated.Value(1));
   const [identity] = useState(newChatRequestId);
   const [expectedRevision] = useState(habit?.revision);
+  const originalGoal = original.goal;
+  const originalSchedule = original.schedule;
+  useTabResetGuard(
+    busy ||
+      (!saved &&
+        (name.trim() !== original.name ||
+          description.trim() !== (original.description ?? "") ||
+          category !== original.category ||
+          icon !== original.icon ||
+          color !== original.color ||
+          goalType !== originalGoal.type ||
+          (goalType !== "completion" &&
+            originalGoal.type !== "completion" &&
+            target !== String(originalGoal.target)) ||
+          (goalType === "quantity" &&
+            originalGoal.type === "quantity" &&
+            unit.trim() !== originalGoal.unit) ||
+          (goalType === "duration" &&
+            linked !== (original.activity === "breathing")) ||
+          scheduleType !== originalSchedule.type ||
+          (scheduleType === "weekdays" &&
+            originalSchedule.type === "weekdays" &&
+            (days.length !== originalSchedule.days.length ||
+              originalSchedule.days.some((day) => !days.includes(day)))) ||
+          (scheduleType === "weekly" &&
+            originalSchedule.type === "weekly" &&
+            weeklyTarget !== String(originalSchedule.daysPerWeek)) ||
+          (reminder ? reminderTime.trim() : null) !== original.reminderTime)),
+    busy ? "saving" : "dirty",
+  );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -212,7 +257,7 @@ export function HabitsEditor({
   function finish() {
     if (didFinish.current) return;
     didFinish.current = true;
-    if (habit) app.back();
+    if (habit || embedded) app.back();
     else {
       app.back();
       app.navigate(routes.habits);
@@ -292,12 +337,12 @@ export function HabitsEditor({
             draft,
           })
         : await app.createHabit(draft, identity);
-      if (!mounted.current) return;
       setSaved(true);
       if (result.reminderNotice) {
         setReminderNotice(result.reminderNotice);
         return;
       }
+      if (!mounted.current) return;
       if (reduceMotion) {
         finish();
         return;
@@ -313,19 +358,23 @@ export function HabitsEditor({
         if (finished && mounted.current) finish();
       });
     } catch (cause) {
-      if (mounted.current)
-        setError(
-          textFor(cause, "Your habit could not be saved. You can try again."),
-        );
+      setError(
+        textFor(cause, "Your habit could not be saved. You can try again."),
+      );
     } finally {
       working.current = false;
-      if (mounted.current) setBusy(false);
+      setBusy(false);
     }
   }
 
   if (saved) {
     return (
-      <Screen title={habit ? "Edit habit" : "Create habit"} back={app.back}>
+      <Screen
+        variant="nested"
+        edgeToEdgeTop={embedded}
+        title={embedded ? undefined : habit ? "Edit habit" : "Create habit"}
+        back={embedded ? undefined : app.back}
+      >
         <Animated.View style={{ opacity: arrival }}>
           <Card style={styles.saved}>
             <HabitIconBadge icon={icon} color={color} />
@@ -347,11 +396,23 @@ export function HabitsEditor({
   }
 
   return (
-    <Screen title={habit ? "Edit habit" : "Create habit"} back={app.back}>
+    <Screen
+      variant="nested"
+      edgeToEdgeTop={embedded}
+      title={embedded ? undefined : habit ? "Edit habit" : "Create habit"}
+      back={embedded ? undefined : app.back}
+    >
       <View style={styles.page}>
-        <View style={styles.intro}>
-          <HabitIconBadge icon={icon} color={color} size={52} />
-          <AppText variant="title" accessibilityRole="header">
+        <View
+          style={[styles.editorCover, { backgroundColor: colors.sageSurface }]}
+        >
+          <BotanicalBackdrop style={styles.coverLeaves} />
+          <HabitIconBadge icon={icon} color={color} size={44} />
+          <AppText
+            variant="display"
+            accessibilityRole="header"
+            style={styles.editorTitle}
+          >
             {habit ? "Make it work for you" : "Start with something small"}
           </AppText>
           <AppText color={colors.muted}>
@@ -492,6 +553,7 @@ export function HabitsEditor({
                     value={linked}
                     onValueChange={setLinked}
                     disabled={busy}
+                    {...switchColors(colors, linked)}
                   />
                 </View>
               )}
@@ -585,15 +647,28 @@ export function HabitsEditor({
   );
 }
 
-export function HabitReminderEditor({ habit }: { habit: Habit }) {
+export function HabitReminderEditor({
+  habit,
+  embedded = false,
+}: {
+  habit: Habit;
+  embedded?: boolean;
+}) {
   const app = useApp();
   const { colors } = useTheme();
   const [enabled, setEnabled] = useState(habit.reminderTime != null);
   const [time, setTime] = useState(habit.reminderTime ?? "08:30");
+  const [savedTime, setSavedTime] = useState(habit.reminderTime);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const guard = useRef(false);
+  const reminderTime = enabled ? time.trim() : null;
+  useTabResetGuard(
+    pending || reminderTime !== savedTime,
+    pending ? "saving" : "dirty",
+  );
+
   async function run(retry = false) {
     if (guard.current) return;
     if (!retry && enabled && !validReminderTime(time)) {
@@ -612,9 +687,10 @@ export function HabitReminderEditor({ habit }: { habit: Habit }) {
         const result = await app.editHabit(habit.id, habit.revision, {
           draft: {
             ...habitAsDraft(habit),
-            reminderTime: enabled ? time.trim() : null,
+            reminderTime,
           },
         });
+        setSavedTime(reminderTime);
         setNotice(
           result.reminderNotice ||
             (enabled ? "Reminder saved." : "Reminder turned off."),
@@ -628,30 +704,64 @@ export function HabitReminderEditor({ habit }: { habit: Habit }) {
     }
   }
   return (
-    <Screen title="Habit reminder" back={app.back}>
+    <Screen
+      variant="nested"
+      edgeToEdgeTop={embedded}
+      title={embedded ? undefined : "Habit reminder"}
+      back={embedded ? undefined : app.back}
+    >
       <View style={styles.page}>
-        <HabitIconBadge icon={habit.icon} color={habit.color} size={52} />
-        <AppText variant="title">{habit.name}</AppText>
-        <AppText color={colors.muted}>
-          {habit.status === "active"
-            ? "Choose a quiet nudge that works for your day."
-            : "This habit has no active device reminder while it is paused or archived."}
-        </AppText>
-        {!!habit.reminderTime && (
-          <View style={styles.reminderSummary}>
-            <Icon name="time-outline" color={colors.muted} size={17} />
-            <AppText variant="caption" color={colors.muted}>
-              Saved time {reminderLabel(habit.reminderTime)}
+        <View
+          style={[
+            styles.editorCover,
+            { backgroundColor: colors.lavenderSurface },
+          ]}
+        >
+          <BotanicalBackdrop style={styles.coverLeaves} />
+          <Row>
+            <Icon
+              name="notifications-outline"
+              color={colors.lavenderText}
+              size={25}
+            />
+            <AppText
+              variant="label"
+              color={colors.lavenderText}
+              style={styles.grow}
+            >
+              {habit.name}
             </AppText>
-          </View>
-        )}
-        <ReminderFields
-          enabled={enabled}
-          value={time}
-          onToggle={setEnabled}
-          onChange={setTime}
-          disabled={pending}
-        />
+          </Row>
+          <AppText
+            variant="display"
+            accessibilityRole="header"
+            style={styles.editorTitle}
+          >
+            {savedTime ? reminderLabel(savedTime) : "No reminder set"}
+          </AppText>
+          {savedTime && (
+            <AppText variant="caption" color={colors.lavenderText}>
+              Saved time ·{" "}
+              {habit.schedule.type === "weekly"
+                ? "Daily nudge for a flexible goal"
+                : scheduleLabel(habit.schedule)}
+            </AppText>
+          )}
+          <AppText color={colors.muted}>
+            {habit.status === "active"
+              ? "Choose a quiet nudge that works for your day."
+              : "This habit has no active device reminder while it is paused or archived."}
+          </AppText>
+        </View>
+        <HabitFormSection title="Delivery preferences">
+          <ReminderFields
+            enabled={enabled}
+            value={time}
+            onToggle={setEnabled}
+            onChange={setTime}
+            disabled={pending}
+          />
+        </HabitFormSection>
         {!!notice && (
           <AppText accessibilityLiveRegion="polite" color={colors.muted}>
             {notice}
@@ -681,10 +791,23 @@ export function HabitReminderEditor({ habit }: { habit: Habit }) {
 }
 
 const styles = StyleSheet.create({
-  page: { gap: 24 },
-  intro: { gap: 9 },
-  section: { gap: 10 },
-  field: { gap: 7 },
+  page: { gap: spacing.card },
+  formSection: {
+    gap: spacing.row,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: spacing.card,
+  },
+  editorCover: {
+    gap: spacing.compact,
+    padding: spacing.card,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  editorTitle: { fontSize: 35, lineHeight: 41, maxWidth: 260 },
+  coverLeaves: { top: -36, right: -22, width: 164, height: 164, opacity: 0.32 },
+  sectionHeading: { gap: 4 },
+  grow: { flex: 1, minWidth: 0 },
+  field: { gap: spacing.compact },
   choices: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
   switchRow: {
     flexDirection: "row",
@@ -694,5 +817,4 @@ const styles = StyleSheet.create({
   },
   switchCopy: { flex: 1, gap: 4 },
   saved: { alignItems: "flex-start", gap: 14 },
-  reminderSummary: { flexDirection: "row", alignItems: "center", gap: 8 },
 });

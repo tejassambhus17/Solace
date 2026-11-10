@@ -9,6 +9,15 @@ export type DeviceLockSettings = {
 };
 export type DeviceLockPolicy = DeviceLockSettings & { owner: string };
 
+export class DeviceLockError extends Error {
+  constructor(
+    message: string,
+    readonly canRetry: boolean,
+  ) {
+    super(message);
+  }
+}
+
 const policyKey = "solace.biometric.policy.v1";
 const biometricKey = "solace.biometric.proof.v1";
 const keychain = {
@@ -68,13 +77,18 @@ export async function verifyDeviceLock(owner: string, prompt: string) {
       biometricOptions(prompt),
     );
   } catch {
-    throw new Error(
-      "Biometric confirmation did not finish. Try again, or sign in again to recover access.",
+    const canRetry = (await deviceLockAvailability()) === "ready";
+    throw new DeviceLockError(
+      canRetry
+        ? "Biometric confirmation did not finish. Try again, or sign in again to recover access."
+        : "Biometrics are unavailable. Sign in again to continue.",
+      canRetry,
     );
   }
   if (proof !== owner)
-    throw new Error(
+    throw new DeviceLockError(
       "Biometrics may have changed. Sign in again to set up a new lock.",
+      false,
     );
 }
 

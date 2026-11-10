@@ -4,12 +4,18 @@ import {
   isCanonicalTimedPractice,
   isTimedPracticeId,
 } from "./timed-practice-contract.js";
+import { planFocuses, planMinutes } from "./wellness-plans.js";
 import { MESSAGE_MAX_LENGTH } from "./ai.js";
 import { chatPracticeIds } from "./chat-practice.js";
 import { chatEvidenceKinds } from "./chat-evidence.js";
 import { weeklyPeriodSchema } from "./weekly.js";
 import { ambientTracks } from "./ambient-contract.js";
 import { ritualActivities, ritualDurations } from "./ritual-contract.js";
+import { emotionalRecheckResponses } from "./practice-recheck.js";
+import {
+  MAX_JOURNAL_TAG_LENGTH,
+  MAX_JOURNAL_TAGS,
+} from "./journal-contract.js";
 import {
   goalMetrics,
   goalPeriods,
@@ -74,7 +80,10 @@ const journalEntry = base.extend({
     .enum(["Okay", "Calm", "Low", "Stressed", "Great"])
     .nullable()
     .optional(),
-  tags: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  tags: z
+    .array(z.string().trim().min(1).max(MAX_JOURNAL_TAG_LENGTH))
+    .max(MAX_JOURNAL_TAGS)
+    .optional(),
   bookmarked: z.boolean().optional(),
   weeklyPeriod: z.never().optional(),
   weeklyProvider: z.never().optional(),
@@ -112,6 +121,78 @@ const ambientMixRecord = base
     ]),
   })
   .strict();
+const planTaskRecord = z
+  .object({
+    id: shortText.optional(),
+    title: z.string().trim().min(1).max(200),
+    description: z.string().max(1000).optional(),
+    action: z.string().max(80).optional(),
+    completed: z.boolean().optional(),
+    focus: z.enum(planFocuses).optional(),
+    minutes: z.literal(planMinutes).optional(),
+  })
+  .passthrough();
+const planRecord = base
+  .extend({
+    type: z.enum(["wellness", "affirmation", "challenge"]).optional(),
+    title: z.string().max(200).optional(),
+    text: text.optional(),
+    completed: z.boolean().optional(),
+    tasks: z.array(planTaskRecord).max(100).optional(),
+    programId: idSchema.optional(),
+    goal: z.enum(planFocuses).optional(),
+    preferredFocuses: z
+      .array(z.enum(planFocuses))
+      .max(planFocuses.length)
+      .optional(),
+    dailyMinutes: z.literal(planMinutes).optional(),
+    startedAt: isoDate.optional(),
+  })
+  .superRefine((plan, context) => {
+    const tasks = plan.tasks ?? [];
+    const configured =
+      plan.programId !== undefined ||
+      plan.goal !== undefined ||
+      plan.preferredFocuses !== undefined ||
+      plan.dailyMinutes !== undefined ||
+      tasks.some(
+        (task) => task.focus !== undefined || task.minutes !== undefined,
+      );
+    if (!configured) return;
+    const invalidTask = tasks.some(
+      (task) =>
+        !idSchema.safeParse(task.id).success ||
+        task.focus === undefined ||
+        task.minutes === undefined ||
+        !!task.action ||
+        task.completed === true,
+    );
+    if (
+      plan.type !== "wellness" ||
+      !plan.title?.trim() ||
+      !tasks.length ||
+      invalidTask ||
+      new Set(tasks.map((task) => task.id)).size !== tasks.length ||
+      plan.completed === true ||
+      (plan.programId
+        ? !plan.startedAt ||
+          !!plan.goal ||
+          !!plan.preferredFocuses ||
+          !!plan.dailyMinutes
+        : !plan.goal ||
+          !plan.dailyMinutes ||
+          tasks.length !== 3 ||
+          tasks.some((task) => task.minutes !== plan.dailyMinutes) ||
+          new Set(plan.preferredFocuses).size !==
+            (plan.preferredFocuses?.length ?? 0))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["tasks"],
+        message:
+          "Choose a valid wellness plan with one registered practice per day.",
+      });
+  });
 const recordSchemas: Record<Collection, z.ZodTypeAny> = {
   preferences: z.union([
     ambientMixRecord,
@@ -247,8 +328,26 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
       .optional(),
     note: text.optional(),
     source: shortText.optional(),
+    planId: idSchema.optional(),
+    planTaskId: idSchema.optional(),
     steps: z.array(z.number().int().min(0).max(99)).max(100).optional(),
     completed: z.boolean().optional(),
+    practiceId: idSchema.optional(),
+    originCheckinId: idSchema.optional(),
+    originActionId: idSchema.optional(),
+    sourceConversationId: idSchema.nullable().optional(),
+    startedAt: isoDate.optional(),
+    endedAt: isoDate.optional(),
+    outcome: z
+      .enum(["completed", "early-exit", "interrupted", "failed"])
+      .optional(),
+    emotionalRecheck: z
+      .object({
+        response: z.enum(emotionalRecheckResponses),
+        recordedAt: isoDate,
+      })
+      .strict()
+      .optional(),
   }),
   reflections: base.extend({
     text: text.optional(),
@@ -298,26 +397,7 @@ const recordSchemas: Record<Collection, z.ZodTypeAny> = {
     notificationIds: z.array(z.string().max(200)).max(7).optional(),
     permission: z.string().max(50).optional(),
   }),
-  plans: base.extend({
-    type: z.enum(["wellness", "affirmation", "challenge"]).optional(),
-    title: z.string().max(200).optional(),
-    text: text.optional(),
-    completed: z.boolean().optional(),
-    tasks: z
-      .array(
-        z
-          .object({
-            id: shortText.optional(),
-            title: z.string().trim().min(1).max(200),
-            description: z.string().max(1000).optional(),
-            action: z.string().max(80).optional(),
-            completed: z.boolean().optional(),
-          })
-          .passthrough(),
-      )
-      .max(100)
-      .optional(),
-  }),
+  plans: planRecord,
 };
 export function parseRecord(collection: Collection, value: unknown) {
   const schema =
@@ -382,6 +462,61 @@ export function parseRecord(collection: Collection, value: unknown) {
         message: "A generated session needs its validated activity snapshot.",
       },
     ]);
+  }
+  if (
+    collection === "sessions" &&
+    (parsed.planId === undefined) !== (parsed.planTaskId === undefined)
+  )
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["planTaskId"],
+        message: "A plan completion needs both its plan and day.",
+      },
+    ]);
+  if (collection === "sessions") {
+    const issue = (path: string, message: string) => {
+      throw new z.ZodError([{ code: "custom", path: [path], message }]);
+    };
+    const seconds = Number(
+      parsed.durationSec ?? parsed.durationSeconds ?? parsed.duration ?? 0,
+    );
+    const started =
+      typeof parsed.startedAt === "string"
+        ? Date.parse(parsed.startedAt)
+        : undefined;
+    const ended =
+      typeof parsed.endedAt === "string"
+        ? Date.parse(parsed.endedAt)
+        : undefined;
+    const recheck = parsed.emotionalRecheck as
+      { recordedAt: string } | undefined;
+    if (
+      (started === undefined) !== (ended === undefined) ||
+      (started !== undefined &&
+        ended !== undefined &&
+        (ended < started || seconds * 1000 > ended - started + 1000))
+    )
+      issue(
+        "endedAt",
+        "Enter a valid start, finish, and active practice duration.",
+      );
+    if (
+      parsed.outcome !== undefined &&
+      (parsed.outcome === "completed") !== (parsed.completed === true)
+    )
+      issue("outcome", "The session result must match its completion status.");
+    if (
+      recheck &&
+      (parsed.completed !== true ||
+        parsed.type === "resource" ||
+        seconds <= 0 ||
+        (ended !== undefined && Date.parse(recheck.recordedAt) < ended))
+    )
+      issue(
+        "emotionalRecheck",
+        "A check-in after practice needs a completed practice and a later response time.",
+      );
   }
   return parsed;
 }

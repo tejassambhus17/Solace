@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/tejassambhus17/Solace/releases/download/v1.0.0/Solace-ARM64.apk"><strong>Download Android APK</strong></a>
+  <a href="https://github.com/tejassambhus17/Solace/releases/tag/v1.0.0"><strong>Download Android APK</strong></a>
   &nbsp;·&nbsp;
   <a href="https://solace-demo-240e1d22-d2e6b3cahbheh2ed.centralindia-01.azurewebsites.net">Try the web preview</a>
   &nbsp;·&nbsp;

@@ -1,15 +1,30 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   Keyboard,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
+  Switch,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { localDay } from "../content";
+import {
+  journalTagLimitMessage,
+  journalTagsFromText,
+} from "../../server/src/journal-contract";
+import { localDay, recordDay } from "../content";
+import { journalCalendarDate } from "../journal-calendar";
 import { spacing, useScreenGutter } from "../layout";
 import { useListScrollRestore } from "../list-scroll";
 import { isRecordId, routes } from "../routes";
@@ -22,17 +37,27 @@ import { artGradient, useTheme } from "../theme";
 import {
   AppText,
   Button,
+  Card,
   coverImageStyle,
   Icon,
   IconButton,
   Input,
+  LotusMark,
   MoodPetal,
   moodPetals,
+  NestedHeader,
+  NestedState,
   Row,
   Screen,
   useNavigationInset,
 } from "../ui";
 import { SolaceModeSwitcher } from "./SolaceModeSwitcher";
+import { JournalCalendar } from "./JournalCalendar";
+import { JournalEditorMetadata } from "./JournalEditorMetadata";
+import {
+  JournalEditorHeader,
+  JournalWritingSurface,
+} from "./JournalEditorSurface";
 
 const notebook = require("../../assets/redesign-explore-reflect.jpg");
 const twilightNotebook = require("../../assets/solace-journal-twilight.jpg");
@@ -65,15 +90,6 @@ const tagsOf = (record?: Item) =>
     : [];
 const failure = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
-const enteredTags = (value: string) => [
-  ...new Set(
-    value
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean),
-  ),
-];
-
 function JournalHeader({
   title,
   back,
@@ -86,17 +102,13 @@ function JournalHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <Row style={styles.header}>
-      <IconButton name="chevron-back" label={backLabel} onPress={back} />
-      <AppText
-        variant="heading"
-        accessibilityRole="header"
-        style={styles.headerTitle}
-      >
-        {title}
-      </AppText>
-      {children}
-    </Row>
+    <NestedHeader
+      title={title}
+      onBack={back}
+      ariaLabel={backLabel}
+      action={children && <Row style={styles.headerActions}>{children}</Row>}
+      style={styles.header}
+    />
   );
 }
 
@@ -324,7 +336,9 @@ function useBookmark() {
 function JournalLibrary() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
+  const compactEntries = (width - 2 * gutter) / fontScale < 245;
   const { bottom } = useSafeAreaInsets();
   const bottomClearance = Math.max(useNavigationInset(), bottom);
   const bookmark = useBookmark();
@@ -335,6 +349,12 @@ function JournalLibrary() {
   const moodOnly = app.params.moodOnly === true;
   const mood = moodOf(app.params.mood);
   const oldest = app.params.oldest === true;
+  const entryDay =
+    typeof app.params.entryDay === "string" ? app.params.entryDay : undefined;
+  const entryTitle =
+    typeof app.params.entryTitle === "string"
+      ? app.params.entryTitle
+      : undefined;
   const [showSearch, setShowSearch] = useState(!!query);
   const focusSearch = useRef(false);
   const [showFilters, setShowFilters] = useState(!!mood || oldest);
@@ -347,6 +367,11 @@ function JournalLibrary() {
       records
         .filter(
           (record) =>
+            (!entryDay || recordDay(record) === entryDay) &&
+            (!entryTitle ||
+              (typeof record.title === "string" &&
+                record.title.trim().toLocaleLowerCase() ===
+                  entryTitle.toLocaleLowerCase())) &&
             (!favorites || record.bookmarked === true) &&
             (!moodOnly || !!moodOf(record.mood)) &&
             (!mood || record.mood === mood) &&
@@ -363,7 +388,7 @@ function JournalLibrary() {
             (Date.parse(first.createdAt) || 0);
           return oldest ? -delta : delta;
         }),
-    [records, favorites, moodOnly, mood, needle, oldest],
+    [records, favorites, moodOnly, mood, needle, oldest, entryDay, entryTitle],
   );
   const open = (
     destination: string,
@@ -372,19 +397,27 @@ function JournalLibrary() {
     app.setParams({ scrollY: listScroll.offset.current });
     app.navigate(destination, params);
   };
-  const hasFilters = !!needle || !!mood || moodOnly;
+  const hasFilters =
+    !!needle || !!mood || moodOnly || !!entryDay || !!entryTitle;
   const write = () =>
     open(
       routes.journalEditor,
       hasFilters || favorites ? { revealSavedEntry: true } : undefined,
     );
   const clearFilters = () =>
-    app.setParams({ query: "", mood: null, favorites: false, moodOnly: false });
+    app.setParams({
+      query: "",
+      mood: null,
+      favorites: false,
+      moodOnly: false,
+      entryDay: null,
+      entryTitle: null,
+    });
   const header = (
     <JournalHeader
       title="My Journal"
-      back={() => app.switchSolaceMode("companion")}
-      backLabel="Back to Companion"
+      back={app.back}
+      backLabel="Back to Solace"
     >
       {records.length ? (
         <>
@@ -450,7 +483,7 @@ function JournalLibrary() {
               />
             </>
           ) : (
-            <View style={styles.heroArt}>
+            <View style={StyleSheet.absoluteFill}>
               <Image
                 source={notebook}
                 style={coverImageStyle}
@@ -519,6 +552,33 @@ function JournalLibrary() {
           <View style={styles.group}>
             {header}
             <View style={styles.group}>
+              {entryDay && (
+                <Row>
+                  <AppText style={styles.flex} variant="label">
+                    {journalCalendarDate(entryDay).toLocaleDateString(
+                      undefined,
+                      { dateStyle: "long" },
+                    )}
+                  </AppText>
+                  <JournalHeaderAction
+                    name="close"
+                    label="Clear date filter"
+                    onPress={() => app.setParams({ entryDay: null })}
+                  />
+                </Row>
+              )}
+              {entryTitle && (
+                <Row>
+                  <AppText style={styles.flex} variant="label">
+                    Title: {entryTitle}
+                  </AppText>
+                  <JournalHeaderAction
+                    name="close"
+                    label="Clear title filter"
+                    onPress={() => app.setParams({ entryTitle: null })}
+                  />
+                </Row>
+              )}
               {showSearch && (
                 <Input
                   accessibilityLabel="Search journal entries"
@@ -543,8 +603,15 @@ function JournalLibrary() {
                 {[
                   {
                     label: "All entries",
-                    selected: !favorites && !moodOnly,
-                    filters: { favorites: false, moodOnly: false, mood: null },
+                    selected:
+                      !favorites && !moodOnly && !entryDay && !entryTitle,
+                    filters: {
+                      favorites: false,
+                      moodOnly: false,
+                      mood: null,
+                      entryDay: null,
+                      entryTitle: null,
+                    },
                   },
                   {
                     label: "By mood",
@@ -654,7 +721,10 @@ function JournalLibrary() {
             >
               <Image
                 source={landscapes[resolved]}
-                style={styles.thumbnail}
+                style={[
+                  styles.thumbnail,
+                  compactEntries && styles.compactThumbnail,
+                ]}
                 resizeMode="cover"
                 accessible={false}
                 fadeDuration={0}
@@ -662,7 +732,7 @@ function JournalLibrary() {
               <View style={styles.entryCopy}>
                 <AppText
                   variant="heading"
-                  numberOfLines={2}
+                  numberOfLines={compactEntries ? undefined : 2}
                   style={styles.cardTitle}
                 >
                   {titleOf(record)}
@@ -748,11 +818,19 @@ function JournalEditor({ record }: { record?: Item }) {
   const value = draft ?? fieldsFrom(record);
   const latest = useRef(value);
   latest.current = value;
-  const [height, setHeight] = useState(188);
-  const [writingFocused, setWritingFocused] = useState(false);
-  const [showMood, setShowMood] = useState(false);
-  const [showInsightInfo, setShowInsightInfo] = useState(false);
+  const gutter = useScreenGutter();
+  const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const revealWriting = useCallback((y: number) => {
+    scroll.current?.scrollTo({
+      y: Math.max(0, y - spacing.compact),
+      animated: false,
+    });
+  }, []);
+  const [openedAt] = useState(() => new Date());
+  const [reflectAfterSave, setReflectAfterSave] = useState(false);
+  const [editingTag, setEditingTag] = useState(false);
   const [showDraftInfo, setShowDraftInfo] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedEntry, setSavedEntry] = useState<Item>();
   const [retryingDraft, setRetryingDraft] = useState(false);
@@ -766,13 +844,20 @@ function JournalEditor({ record }: { record?: Item }) {
     !record && typeof app.params.prompt === "string"
       ? app.params.prompt.trim().slice(0, 500)
       : "";
-  const open = useRef(true);
-  const tags = enteredTags(value.tags);
+  const tags = useMemo(() => journalTagsFromText(value.tags), [value.tags]);
+  const tagError = journalTagLimitMessage(tags);
+  const day = recordDay(record ?? value) ?? localDay(openedAt);
+  const date = journalCalendarDate(day).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const newDraft = app.editorDrafts["journal:new"];
+  const newDraftDay = newDraft && (recordDay(newDraft) ?? localDay(openedAt));
   const draftStatus = app.editorDraftPersistence[key];
   useLayoutEffect(() => {
-    open.current = true;
     return () => {
-      open.current = false;
       if (draftActive.current) void flush.current();
     };
   }, []);
@@ -784,9 +869,36 @@ function JournalEditor({ record }: { record?: Item }) {
     app.setEditorDraft(key, next);
     setError("");
   };
+  const writeForDay = (selectedDay: string) => {
+    const today = localDay();
+    if (selectedDay > today || (newDraftDay && newDraftDay !== selectedDay))
+      return;
+    setCalendarOpen(false);
+    if (!newDraft && selectedDay !== today) {
+      const datedDraft = {
+        ...fieldsFrom(),
+        day: selectedDay,
+        createdAt: journalCalendarDate(selectedDay).toISOString(),
+      };
+      if (!record) {
+        latest.current = datedDraft;
+        draftActive.current = true;
+      }
+      app.setEditorDraft("journal:new", datedDraft);
+    }
+    if (record) app.navigate(routes.journalEditor);
+  };
   const save = async () => {
     const current = latest.current;
-    if (savingRef.current || !current.text.trim() || record?.localOnly) return;
+    if (
+      savingRef.current ||
+      editingTag ||
+      !current.text.trim() ||
+      record?.localOnly
+    )
+      return;
+    const tags = journalTagsFromText(current.tags);
+    if (journalTagLimitMessage(tags)) return;
     savingRef.current = true;
     setSaving(true);
     setError("");
@@ -807,30 +919,28 @@ function JournalEditor({ record }: { record?: Item }) {
         "reflections",
         {
           id,
-          ...(record ? {} : { createdAt, day: localDay(new Date(createdAt)) }),
+          ...(record
+            ? {}
+            : { createdAt, day: recordDay(submitted) ?? localDay() }),
           kind: "journal",
           title: submitted.title.trim(),
           text: submitted.text,
           mood: moodOf(submitted.mood) ?? null,
-          tags: enteredTags(submitted.tags),
+          tags,
           bookmarked: submitted.bookmarked === "yes",
         },
         { key, value: submitted },
       );
       app.setEditorDraft(key, null, submitted);
       draftActive.current = false;
-      if (open.current) setSavedEntry(saved);
+      setSavedEntry(saved);
     } catch (error) {
-      if (open.current)
-        setError(
-          failure(
-            error,
-            "Couldn’t save this entry. Your writing is still here.",
-          ),
-        );
+      setError(
+        failure(error, "Couldn’t save this entry. Your writing is still here."),
+      );
     } finally {
       savingRef.current = false;
-      if (open.current) setSaving(false);
+      setSaving(false);
     }
   };
   if (savedEntry) {
@@ -855,8 +965,22 @@ function JournalEditor({ record }: { record?: Item }) {
                 : "Entry saved"}
           </AppText>
           <JournalEntrySyncStatus record={confirmed} />
+          {reflectAfterSave &&
+            !confirmed.localOnly &&
+            isRecordId(confirmed.id) && (
+              <Button
+                title="Choose an excerpt"
+                icon="sparkles-outline"
+                onPress={() =>
+                  app.navigate(routes.journalReflect, { id: confirmed.id })
+                }
+              />
+            )}
           <Button
             title={revealEntry ? "View entry" : "Done"}
+            variant={
+              reflectAfterSave && !confirmed.localOnly ? "secondary" : "primary"
+            }
             onPress={() => {
               app.back();
               if (revealEntry && isRecordId(confirmed.id))
@@ -867,20 +991,54 @@ function JournalEditor({ record }: { record?: Item }) {
       </Screen>
     );
   }
+  const saveTitle = saving
+    ? "Saving entry"
+    : error
+      ? "Retry save"
+      : "Save entry";
+  const saveDisabled =
+    saving ||
+    editingTag ||
+    !value.text.trim() ||
+    !!tagError ||
+    !!record?.localOnly;
   return (
-    <Screen style={[styles.screen, styles.editor]}>
-      <JournalHeader
-        title={record ? "Edit Journal Entry" : "New Journal Entry"}
+    <Screen
+      edgeToEdgeTop
+      variant="nested"
+      heroStatusBar="light"
+      scrollRef={scroll}
+      style={[styles.screen, styles.editor]}
+    >
+      <JournalEditorHeader
+        date={date}
+        gutter={gutter}
         back={app.back}
-      >
-        <JournalHeaderAction
-          name="ellipsis-horizontal"
-          label={
-            showDraftInfo ? "Hide draft information" : "Show draft information"
-          }
-          onPress={() => setShowDraftInfo(!showDraftInfo)}
+        expanded={showDraftInfo}
+        onDraftInfo={() => setShowDraftInfo(!showDraftInfo)}
+        onOpenCalendar={
+          saving
+            ? undefined
+            : () => {
+                Keyboard.dismiss();
+                setCalendarOpen(true);
+              }
+        }
+      />
+      {calendarOpen && (
+        <JournalCalendar
+          day={day}
+          records={app.data.reflections}
+          newDraftDay={newDraftDay}
+          offline={!!app.offlineError}
+          onClose={() => setCalendarOpen(false)}
+          onOpenEntry={(id) => {
+            setCalendarOpen(false);
+            app.navigate(routes.journalEntry, { id });
+          }}
+          onWrite={writeForDay}
         />
-      </JournalHeader>
+      )}
       {showDraftInfo && (
         <View
           style={[
@@ -914,186 +1072,50 @@ function JournalEditor({ record }: { record?: Item }) {
           <AppText>{prompt}</AppText>
         </View>
       )}
-      <View
+      <JournalWritingSurface
+        title={value.title}
+        text={value.text}
+        disabled={saving}
+        onTitleChange={(title) => change("title", title)}
+        onTextChange={(text) => change("text", text)}
+        onReveal={revealWriting}
+      />
+      <JournalEditorMetadata
+        mood={value.mood}
+        tags={tags}
+        disabled={saving}
+        onMoodChange={(mood) => change("mood", mood)}
+        onTagsChange={(next) => change("tags", next.join(", "))}
+        onEditingTagChange={setEditingTag}
+      />
+      <Row
         style={[
-          styles.writingPanel,
-          {
-            backgroundColor: colors.surface,
-            borderColor: writingFocused ? colors.primary : colors.border,
-          },
-        ]}
-      >
-        <Input
-          accessibilityLabel="Entry title, optional"
-          placeholder="Title (optional)"
-          value={value.title}
-          onFocus={() => setWritingFocused(true)}
-          onBlur={() => setWritingFocused(false)}
-          onChangeText={(text) => change("title", text)}
-          maxLength={240}
-          editable={!saving}
-          style={[styles.titleInput, { backgroundColor: colors.surface }]}
-        />
-        <View style={[styles.divider, { backgroundColor: colors.border }]} />
-        <Input
-          accessibilityLabel="Journal entry"
-          placeholder="What’s on your mind?"
-          value={value.text}
-          onFocus={() => setWritingFocused(true)}
-          onBlur={() => setWritingFocused(false)}
-          onChangeText={(text) => change("text", text)}
-          multiline
-          scrollEnabled={false}
-          textAlignVertical="top"
-          editable={!saving}
-          onContentSizeChange={({ nativeEvent }) =>
-            setHeight(Math.max(188, Math.ceil(nativeEvent.contentSize.height)))
-          }
-          style={[
-            styles.bodyInput,
-            { minHeight: height, backgroundColor: colors.surface },
-          ]}
-        />
-      </View>
-      <View
-        style={[
-          styles.metaPanel,
+          styles.reflectPanel,
           { backgroundColor: colors.surface, borderColor: colors.border },
         ]}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Choose mood"
-          accessibilityState={{ expanded: showMood, disabled: saving }}
+        <View
+          style={[styles.reflectMark, { backgroundColor: colors.peachSurface }]}
+        >
+          <LotusMark size={36} />
+        </View>
+        <View style={styles.entryCopy}>
+          <AppText variant="label">Reflect with Solace</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            Choose what to share after saving.
+          </AppText>
+        </View>
+        <Switch
+          accessibilityLabel="Offer reflection after saving"
+          accessibilityHint="After saving, you can choose and confirm an excerpt to share."
+          value={reflectAfterSave}
+          onValueChange={setReflectAfterSave}
           disabled={saving}
-          onPress={() => setShowMood(!showMood)}
-        >
-          <Row style={styles.metaControl}>
-            <Icon name="happy-outline" size={18} color={colors.peach} />
-            <AppText variant="label" style={styles.flex}>
-              Mood (optional)
-            </AppText>
-            <Row style={[styles.valuePill, { borderColor: colors.border }]}>
-              <AppText variant="caption" color={colors.muted}>
-                {value.mood || "Choose"}
-              </AppText>
-              <Icon
-                name={showMood ? "chevron-up" : "chevron-down"}
-                size={13}
-                color={colors.muted}
-              />
-            </Row>
-          </Row>
-        </Pressable>
-        {showMood && (
-          <View style={[styles.wrap, styles.metadataInset]}>
-            {moodPetals.map((choice) => (
-              <JournalChip
-                key={choice.mood}
-                label={choice.mood}
-                petal={choice.image}
-                selected={value.mood === choice.mood}
-                onPress={() => {
-                  change("mood", value.mood === choice.mood ? "" : choice.mood);
-                  setShowMood(false);
-                }}
-              />
-            ))}
-          </View>
-        )}
-      </View>
-      <View
-        style={[
-          styles.metaPanel,
-          styles.tagsPanel,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
-        <Row>
-          <Icon name="pricetag-outline" size={16} color={colors.lavenderText} />
-          <AppText variant="label">Tags (optional)</AppText>
-        </Row>
-        <Input
-          accessibilityLabel="Entry tags, separated by commas"
-          placeholder="Separate tags with commas"
-          value={value.tags}
-          onChangeText={(tags) => change("tags", tags)}
-          editable={!saving}
-          style={styles.tagsInput}
+          trackColor={{ false: colors.border, true: colors.lavender }}
+          thumbColor={reflectAfterSave ? "#FFFFFF" : colors.muted}
+          style={styles.reflectSwitch}
         />
-        {!!tags.length && (
-          <View style={styles.wrap}>
-            {tags.map((tag) => (
-              <Pressable
-                key={tag}
-                accessibilityRole="button"
-                accessibilityLabel={`Remove tag ${tag}`}
-                disabled={saving}
-                onPress={() =>
-                  change(
-                    "tags",
-                    tags.filter((value) => value !== tag).join(", "),
-                  )
-                }
-                style={[
-                  styles.removableTag,
-                  {
-                    backgroundColor: colors.lavenderSurface,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <AppText
-                  variant="caption"
-                  color={colors.lavenderText}
-                  style={styles.flexShrink}
-                >
-                  {tag}
-                </AppText>
-                <Icon name="close" size={14} color={colors.lavenderText} />
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
-      <View
-        style={[
-          styles.metaPanel,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="About optional AI insights"
-          accessibilityState={{ expanded: showInsightInfo }}
-          onPress={() => setShowInsightInfo(!showInsightInfo)}
-        >
-          <Row style={styles.metaControl}>
-            <Icon name="sparkles-outline" size={20} color={colors.peach} />
-            <View style={styles.flex}>
-              <AppText variant="label">Reflect with Solace</AppText>
-              <AppText variant="caption" color={colors.muted}>
-                Choose an excerpt after saving.
-              </AppText>
-            </View>
-            <Icon
-              name={
-                showInsightInfo ? "chevron-up" : "information-circle-outline"
-              }
-              size={18}
-              color={colors.lavenderText}
-            />
-          </Row>
-        </Pressable>
-        {showInsightInfo && (
-          <View style={styles.metadataInset}>
-            <JournalNotice>
-              Your writing stays private until you choose an excerpt and confirm
-              that you want to share it with the AI service.
-            </JournalNotice>
-          </View>
-        )}
-      </View>
+      </Row>
       {draft && !saving && (
         <View style={styles.group}>
           <JournalNotice
@@ -1119,7 +1141,7 @@ function JournalEditor({ record }: { record?: Item }) {
               onPress={() => {
                 setRetryingDraft(true);
                 void app.flushEditorDrafts().finally(() => {
-                  if (open.current) setRetryingDraft(false);
+                  setRetryingDraft(false);
                 });
               }}
             />
@@ -1145,14 +1167,37 @@ function JournalEditor({ record }: { record?: Item }) {
             }
           />
         </View>
-        <Button
-          title={saving ? "Saving entry" : error ? "Retry save" : "Save entry"}
-          icon="checkmark"
-          loading={saving}
-          disabled={!value.text.trim() || !!record?.localOnly}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={saveTitle}
+          accessibilityState={{ disabled: saveDisabled, busy: saving }}
+          disabled={saveDisabled}
           onPress={() => void save()}
-          style={styles.flex}
-        />
+          style={({ pressed }) => [
+            styles.saveEntry,
+            {
+              backgroundColor: colors.lavenderAction,
+              opacity: saveDisabled && !saving ? 0.72 : pressed ? 0.82 : 1,
+            },
+          ]}
+        >
+          {saving ? (
+            <ActivityIndicator color={colors.lavenderActionText} />
+          ) : (
+            <Icon
+              name="checkmark"
+              size={20}
+              color={colors.lavenderActionText}
+            />
+          )}
+          <AppText
+            variant="label"
+            color={colors.lavenderActionText}
+            style={styles.saveLabel}
+          >
+            {saveTitle}
+          </AppText>
+        </Pressable>
       </Row>
       {!!record?.localOnly && <JournalEntrySyncStatus record={record} />}
     </Screen>
@@ -1184,32 +1229,35 @@ function JournalDetail({ record }: { record?: Item }) {
       app.setEditorDraft(`journal:edit:${record.id}`, null);
       if (open.current) app.back();
     } catch (error) {
-      if (open.current)
-        setError(failure(error, "Couldn’t delete this entry. Try again."));
+      setError(failure(error, "Couldn’t delete this entry. Try again."));
     } finally {
       deletingRef.current = false;
-      if (open.current) setDeleting(false);
+      setDeleting(false);
     }
   };
   if (!record)
     return (
-      <Screen style={styles.screen}>
-        <JournalHeader title="My Journal" back={app.back} />
-        <JournalNotice>
-          {deleting ? "Deleting entry…" : "This entry is no longer available."}
-        </JournalNotice>
+      <Screen variant="nested" title="My Journal" back={app.back}>
+        <NestedState
+          title={deleting ? "Deleting entry…" : "Entry unavailable"}
+          description={
+            deleting
+              ? "Returning to your journal after the entry is removed."
+              : "Return to your journal to open another entry."
+          }
+          icon="book-outline"
+        />
       </Screen>
     );
   return (
-    <Screen style={styles.screen}>
-      <JournalHeader title="My Journal" back={app.back} />
-      <View
-        style={[
-          styles.panel,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
-        <Row>
+    <Screen variant="nested" style={styles.entryScreen}>
+      <NestedHeader
+        title="Journal entry"
+        onBack={app.back}
+        style={{ marginBottom: 0 }}
+      />
+      <Card style={styles.group}>
+        <Row style={{ alignItems: "flex-start" }}>
           <AppText
             variant="title"
             accessibilityRole="header"
@@ -1245,6 +1293,7 @@ function JournalDetail({ record }: { record?: Item }) {
                 key={`${tag}-${index}`}
                 variant="caption"
                 color={colors.lavenderText}
+                numberOfLines={1}
                 style={[
                   styles.tag,
                   { backgroundColor: colors.lavenderSurface },
@@ -1255,14 +1304,32 @@ function JournalDetail({ record }: { record?: Item }) {
             ))}
           </View>
         )}
-      </View>
+      </Card>
       {bookmark.error && <JournalNotice error>{bookmark.error}</JournalNotice>}
       <JournalEntrySyncStatus record={record} disabled={deleting} />
+      <Button
+        title={
+          app.editorDrafts[`journal:edit:${record.id}`]
+            ? "Continue editing draft"
+            : "Edit entry"
+        }
+        icon="create-outline"
+        disabled={deleting}
+        onPress={() => app.navigate(routes.journalEditor, { id: record.id })}
+      />
       {!record.localOnly && (
-        <>
+        <Card style={styles.group}>
+          <AppText variant="heading" accessibilityRole="header">
+            Optional AI support
+          </AppText>
+          <JournalNotice>
+            Choose an excerpt to share for a reflection or a Companion
+            conversation.
+          </JournalNotice>
           <Button
             title="Reflect with Solace"
             icon="sparkles-outline"
+            variant="secondary"
             disabled={deleting}
             onPress={() =>
               app.navigate(routes.journalReflect, { id: record.id })
@@ -1271,7 +1338,7 @@ function JournalDetail({ record }: { record?: Item }) {
           <Button
             title="Discuss with Solace"
             icon="chatbubble-outline"
-            variant="secondary"
+            variant="ghost"
             disabled={deleting}
             onPress={() =>
               app.navigate(routes.journalReflect, {
@@ -1280,23 +1347,8 @@ function JournalDetail({ record }: { record?: Item }) {
               })
             }
           />
-          <JournalNotice>
-            Choose an excerpt to share for a reflection or a Companion
-            conversation.
-          </JournalNotice>
-        </>
+        </Card>
       )}
-      <Button
-        title={
-          app.editorDrafts[`journal:edit:${record.id}`]
-            ? "Continue editing draft"
-            : "Edit entry"
-        }
-        icon="create-outline"
-        variant="secondary"
-        disabled={deleting}
-        onPress={() => app.navigate(routes.journalEditor, { id: record.id })}
-      />
       {confirm ? (
         <View
           style={[
@@ -1357,6 +1409,7 @@ export function JournalScreen({ name }: { name: string }) {
 }
 
 const styles = StyleSheet.create({
+  entryScreen: { gap: spacing.card },
   screen: { gap: spacing.row, paddingTop: 10 },
   library: { flexGrow: 1 },
   listShell: {
@@ -1374,17 +1427,16 @@ const styles = StyleSheet.create({
     paddingTop: spacing.row,
   },
   entrySeparator: { height: spacing.row },
-  editor: { flexGrow: 1, gap: spacing.compact },
+  editor: { flexGrow: 1, gap: spacing.compact, paddingTop: 0 },
   draftInfo: { borderRadius: 15, borderWidth: 1, padding: spacing.row },
-  header: { gap: 4, marginHorizontal: -8, marginBottom: 1 },
-  headerTitle: { flex: 1, fontSize: 25, lineHeight: 32 },
+  header: { marginBottom: 1 },
+  headerActions: { gap: 4, flexShrink: 0 },
   headerAction: { borderRadius: 22 },
   welcome: { gap: 5, marginHorizontal: 10, marginTop: 4 },
   hero: {
     aspectRatio: 1.65,
     overflow: "hidden",
   },
-  heroArt: { position: "absolute", top: 0, width: "100%", aspectRatio: 1 },
   center: { textAlign: "center" },
   welcomeAction: { alignSelf: "center", minWidth: "70%", marginTop: 12 },
   privacyCopy: { marginTop: 2 },
@@ -1406,7 +1458,6 @@ const styles = StyleSheet.create({
   },
   markerLabel: { textAlign: "center", maxWidth: 83 },
   flex: { flex: 1 },
-  flexShrink: { flexShrink: 1 },
   group: { gap: spacing.row },
   wrap: {
     flexDirection: "row",
@@ -1463,6 +1514,7 @@ const styles = StyleSheet.create({
     gap: spacing.row,
   },
   thumbnail: { width: 65, height: 84, borderRadius: 10 },
+  compactThumbnail: { width: 44, height: 62 },
   cardTitle: { fontSize: 23, lineHeight: 28 },
   entryCopy: { flex: 1, minWidth: 0, gap: 4 },
   panel: {
@@ -1471,61 +1523,40 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
-  writingPanel: { borderRadius: 15, borderWidth: 1, overflow: "hidden" },
-  titleInput: {
-    borderWidth: 0,
-    fontFamily: "CormorantGaramond_600SemiBold",
-    fontSize: 25,
-    lineHeight: 32,
-    minHeight: 48,
-    paddingVertical: 7,
-  },
-  divider: { height: StyleSheet.hairlineWidth, marginHorizontal: spacing.card },
-  bodyInput: {
-    borderWidth: 0,
-    paddingTop: spacing.row,
-    paddingBottom: spacing.row,
-    lineHeight: 23,
-  },
-  metaPanel: { borderWidth: 1, borderRadius: 16 },
-  metaControl: {
-    minHeight: 51,
-    paddingHorizontal: spacing.row,
-    paddingVertical: spacing.compact,
-    gap: spacing.compact,
-  },
-  metadataInset: { paddingHorizontal: spacing.row, paddingBottom: spacing.row },
-  valuePill: {
+  reflectPanel: {
+    minHeight: 66,
+    padding: spacing.compact,
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    gap: 6,
+    borderRadius: 16,
   },
-  tagsPanel: {
-    paddingHorizontal: spacing.row,
-    paddingVertical: spacing.compact,
-    gap: 5,
-  },
-  tagsInput: {
-    borderWidth: 0,
-    minHeight: 44,
-    paddingHorizontal: 0,
-    paddingVertical: 5,
-    backgroundColor: "transparent",
-  },
-  removableTag: {
-    flexDirection: "row",
+  reflectMark: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
     alignItems: "center",
-    gap: 5,
-    minHeight: 44,
-    maxWidth: "100%",
-    borderWidth: 1,
-    borderRadius: 22,
-    paddingHorizontal: 9,
+    justifyContent: "center",
   },
+  reflectSwitch: { flexShrink: 0 },
+  saveEntry: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 54,
+    borderRadius: 28,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing.compact,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+  },
+  saveLabel: { flexShrink: 1, textAlign: "center" },
   bookmarkFrame: { borderWidth: 1, borderRadius: 22 },
   editorAction: { marginTop: "auto", paddingTop: spacing.compact },
   entryText: { marginTop: spacing.compact, lineHeight: 26 },
-  tag: { paddingVertical: 4, paddingHorizontal: 9, borderRadius: 12 },
+  tag: {
+    maxWidth: "100%",
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    borderRadius: 12,
+  },
 });

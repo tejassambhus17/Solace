@@ -1,15 +1,26 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Animated,
   AppState,
   BackHandler,
+  Image,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TextProps,
   View,
+  useWindowDimensions,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
@@ -17,8 +28,13 @@ import {
   savedWeeklyStory,
 } from "../../server/src/weekly-facts";
 import { useApp, type WeeklyReflectionResult } from "../store";
-import { isRecordId, savedReflectionRoute } from "../routes";
-import { useTheme } from "../theme";
+import { useGuardedBack, useTabResetGuard } from "../navigation-reset";
+import { spacing, useScreenGutter } from "../layout";
+import { EditorialSection, SceneIntro } from "../NestedDesign";
+import { webRadioProps } from "../radio-keyboard";
+import { starterHabits } from "../habits-ui";
+import { isRecordId, routes, savedReflectionRoute } from "../routes";
+import { artGradient, useTheme } from "../theme";
 import { useReducedMotion } from "../Companion";
 import { journeyWeek } from "../journey-analytics";
 import { journeyGoalProgress, selectJourneyGoal } from "../journey-goals";
@@ -31,27 +47,37 @@ import {
 import { useBreathingMotion } from "../breathing-motion";
 import { WeeklyStoryOverview } from "./WeeklyStory";
 import { CheckinNextStep } from "./CheckinNextStep";
+import { playHaptic } from "../haptics";
+import { PracticeCompletion } from "./PracticeFollowUp";
+import {
+  emotionalRecheckLabel,
+  practiceFollowUpId,
+  practiceOrigins,
+} from "../practice-follow-up";
 import {
   Screen,
   Card,
   Button,
-  Petal,
+  coverImageStyle,
   IconButton,
   MoodPetal,
   moodPetals,
   BotanicalBackdrop,
   Artwork,
+  NestedHeader,
+  NestedState,
 } from "../ui";
 import {
   ASSESSMENTS,
   ASSESSMENT_OPTIONS,
   AssessmentId,
   assessmentSummary,
-  DEFAULT_PLAN,
   localDay,
   recordDay,
   RESOURCE_GUIDES,
   todayAffirmation,
+  type AssessmentDefinition,
+  type ResourceGuide,
 } from "../content";
 
 const F = {
@@ -139,34 +165,6 @@ function Mark({
     />
   );
 }
-function Header({
-  back = true,
-  title = "Solace",
-  onBack,
-}: {
-  back?: boolean;
-  title?: string;
-  onBack?: () => void;
-}) {
-  const app = useApp();
-  const { colors } = useTheme();
-  return (
-    <View style={styles.header}>
-      {back ? (
-        <IconButton
-          name="arrow-back"
-          label="Go back"
-          onPress={onBack || app.back}
-          size={48}
-        />
-      ) : (
-        <Petal size={38} />
-      )}
-      <Text style={[styles.brand, { color: colors.text }]}>{title}</Text>
-      <View style={{ width: 48 }} />
-    </View>
-  );
-}
 function ErrorNote({ error }: { error: string }) {
   const { colors } = useTheme();
   return error ? (
@@ -196,6 +194,7 @@ function Field({
   label,
   editable = true,
   maxLength = 3000,
+  style,
 }: {
   value: string;
   onChangeText: (v: string) => void;
@@ -204,6 +203,7 @@ function Field({
   label?: string;
   editable?: boolean;
   maxLength?: number;
+  style?: React.ComponentProps<typeof TextInput>["style"];
 }) {
   const { colors, resolved } = useTheme();
   const [focused, setFocused] = useState(false);
@@ -218,7 +218,7 @@ function Field({
       maxLength={maxLength}
       placeholder={placeholder}
       placeholderTextColor={colors.muted}
-      selectionColor={colors.primary}
+      selectionColor={resolved === "dark" ? colors.primary : colors.accent}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       style={[
@@ -227,9 +227,14 @@ function Field({
           color: colors.text,
           backgroundColor:
             resolved === "dark" ? colors.surface2 : colors.surface,
-          borderColor: focused ? colors.primary : colors.border,
+          borderColor: focused
+            ? resolved === "dark"
+              ? colors.primary
+              : colors.accent
+            : colors.border,
           minHeight,
         },
+        style,
       ]}
     />
   );
@@ -247,7 +252,8 @@ function Choice({
   icon?: string;
   disabled?: boolean;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const selectionInk = resolved === "dark" ? colors.primary : colors.accent;
   return (
     <Pressable
       accessibilityRole="radio"
@@ -259,7 +265,7 @@ function Choice({
         styles.choice,
         {
           backgroundColor: selected ? colors.surface2 : colors.surface,
-          borderColor: selected ? colors.primary : colors.border,
+          borderColor: selected ? selectionInk : colors.border,
           borderWidth: 1,
           opacity: pressed ? 0.72 : 1,
         },
@@ -267,7 +273,7 @@ function Choice({
     >
       <Mark
         name={icon || (selected ? "radio-button-on" : "radio-button-off")}
-        color={selected ? colors.primary : colors.muted}
+        color={selected ? selectionInk : colors.muted}
         size={23}
       />
       <Copy style={{ flex: 1 }}>{label}</Copy>
@@ -280,25 +286,38 @@ function Action({
   icon = "leaf-outline",
   onPress,
   tone = "sage",
+  expanded,
+  style,
 }: {
   title: string;
   description: string;
   icon?: string;
   onPress: () => void;
   tone?: "lavender" | "peach" | "sage";
+  expanded?: boolean;
+  style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityHint={description}
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.action,
         {
-          borderBottomWidth: 0.75,
-          borderBottomColor: colors.border,
-          opacity: pressed ? 0.65 : 1,
+          backgroundColor: pressed ? colors[`${tone}Surface`] : colors.surface,
+          borderColor: pressed ? colors[`${tone}Text`] : colors.border,
         },
+        expanded !== undefined && {
+          backgroundColor: pressed ? colors[`${tone}Surface`] : "transparent",
+          padding: 0,
+          marginBottom: 0,
+          borderWidth: 0,
+        },
+        style,
       ]}
     >
       <View
@@ -306,45 +325,204 @@ function Action({
       >
         <Mark name={icon} color={colors[`${tone}Text`]} size={22} />
       </View>
-      <View style={{ flex: 1 }}>
+      <View style={styles.flexCopy}>
         <Heading small style={{ fontSize: 23, lineHeight: 25 }}>
           {title}
         </Heading>
-        <Copy style={{ fontSize: 13, lineHeight: 19, marginTop: 3 }}>
+        <Copy muted style={{ fontSize: 13, lineHeight: 19, marginTop: 3 }}>
           {description}
         </Copy>
       </View>
-      <Mark name="chevron-forward" size={20} />
+      <Mark
+        name={
+          expanded === undefined
+            ? "chevron-forward"
+            : expanded
+              ? "chevron-up"
+              : "chevron-down"
+        }
+        size={18}
+        color={colors.muted}
+      />
     </Pressable>
   );
 }
 function PageIntro({
   title,
   children,
+  onBack,
 }: {
   title: string;
-  children?: React.ReactNode;
+  children?: string;
+  onBack?: () => void;
 }) {
+  const app = useApp();
   const { resolved } = useTheme();
   return (
-    <View style={{ marginBottom: 28 }}>
+    <View>
       <BotanicalBackdrop
         style={{
-          width: 190,
-          height: 190,
-          right: -105,
-          top: -92,
+          width: 155,
+          height: 155,
+          right: -97,
+          top: -76,
           opacity: resolved === "dark" ? 0.1 : 0.23,
         }}
       />
-      <Heading style={{ maxWidth: "92%" }}>{title}</Heading>
-      {children && (
-        <Copy muted style={{ marginTop: 12 }}>
-          {children}
-        </Copy>
-      )}
+      <NestedHeader
+        title={title}
+        subtitle={children}
+        onBack={onBack ?? app.back}
+      />
     </View>
   );
+}
+
+const wellnessArt = {
+  guide: {
+    light: require("../../assets/profile-mountains-light.jpg"),
+    dark: require("../../assets/profile-mountains-dark.jpg"),
+  },
+  grounding: {
+    light: require("../../assets/redesign-guided-light.jpg"),
+    dark: require("../../assets/dark-stillness.png"),
+  },
+  sleep: {
+    light: require("../../assets/guided-rest.jpg"),
+    dark: require("../../assets/dark-night.png"),
+  },
+  checkin: {
+    light: require("../../assets/redesign-explore-scene-light.jpg"),
+    dark: require("../../assets/today-twilight-lotus.jpg"),
+  },
+  toolkit: {
+    light: require("../../assets/redesign-explore-scene-light.jpg"),
+    dark: require("../../assets/redesign-explore-scene-dark.jpg"),
+  },
+  reflection: {
+    light: require("../../assets/journal-editor-window.jpg"),
+    dark: require("../../assets/journal-editor-window.jpg"),
+  },
+  breathing: {
+    light: require("../../assets/guided-breathe.jpg"),
+    dark: require("../../assets/guided-breathe.jpg"),
+  },
+};
+
+function ScenePage({
+  title,
+  description,
+  kind,
+  meta,
+  onBack,
+  children,
+}: {
+  title: string;
+  description?: string;
+  kind: keyof typeof wellnessArt;
+  meta?: string;
+  onBack?: () => void;
+  children?: React.ReactNode;
+}) {
+  const app = useApp();
+  const { resolved } = useTheme();
+  const back = useGuardedBack(onBack ?? app.back);
+  return (
+    <>
+      <View style={styles.sceneBack}>
+        <IconButton
+          name="chevron-back"
+          label="Go back"
+          size={48}
+          appearance="outlined"
+          onPress={back}
+        />
+      </View>
+      <SceneIntro
+        image={wellnessArt[kind][resolved]}
+        title={title}
+        description={description}
+        meta={meta}
+        tone={kind === "grounding" ? "sage" : "lavender"}
+      >
+        {children}
+      </SceneIntro>
+    </>
+  );
+}
+
+function ArtShelfItem({
+  title,
+  detail,
+  kind,
+  label,
+  onPress,
+  trailing,
+}: {
+  title: string;
+  detail: string;
+  kind: keyof typeof wellnessArt;
+  label?: string;
+  onPress: () => void;
+  trailing?: React.ReactNode;
+}) {
+  const { colors, resolved } = useTheme();
+  return (
+    <View
+      style={[
+        styles.shelfItem,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label ?? title}
+        accessibilityHint={detail}
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.shelfMain,
+          pressed && { backgroundColor: colors.lavenderSurface },
+        ]}
+      >
+        <View style={styles.shelfThumb} pointerEvents="none">
+          <Image
+            source={wellnessArt[kind][resolved]}
+            accessible={false}
+            resizeMode="cover"
+            fadeDuration={0}
+            style={coverImageStyle}
+          />
+        </View>
+        <View style={styles.shelfCopy}>
+          <Heading small style={styles.shelfTitle}>
+            {title}
+          </Heading>
+          <Copy muted style={styles.shelfDetail}>
+            {detail}
+          </Copy>
+        </View>
+        {!trailing && (
+          <Mark name="arrow-forward" size={18} color={colors.lavenderText} />
+        )}
+      </Pressable>
+      {trailing && <View style={styles.shelfTrailing}>{trailing}</View>}
+    </View>
+  );
+}
+
+function guideArt(id: string): keyof typeof wellnessArt {
+  switch (id) {
+    case "sleep":
+      return "sleep";
+    case "anxiety":
+      return "grounding";
+    case "low-mood":
+      return "checkin";
+    case "self-esteem":
+      return "reflection";
+    default:
+      return "guide";
+  }
 }
 
 type ToolkitKind = "resource" | "breathing" | "reflection" | "grounding";
@@ -358,7 +536,8 @@ function SaveToToolkit({
   title: string;
 }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const selectionInk = resolved === "dark" ? colors.primary : colors.accent;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const lock = useRef(false);
@@ -406,8 +585,11 @@ function SaveToToolkit({
           paddingHorizontal: 14,
           borderRadius: 22,
           borderWidth: 0.75,
-          borderColor: favorite ? colors.primary : colors.border,
-          backgroundColor: pressed ? colors.surface2 : colors.surface,
+          borderColor: favorite ? selectionInk : colors.border,
+          backgroundColor:
+            pressed || (favorite && resolved === "light")
+              ? colors.surface2
+              : colors.surface,
           opacity: pending ? 0.6 : 1,
         })}
       >
@@ -427,7 +609,6 @@ function SaveToToolkit({
 
 function Toolkit() {
   const app = useApp();
-  const { colors } = useTheme();
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState("");
   const removeLock = useRef(false);
@@ -455,104 +636,83 @@ function Toolkit() {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro title="Your toolkit">
-        The practices you choose to keep close. Saved privately to your account.
-      </PageIntro>
+    <Screen variant="nested">
+      <ScenePage
+        title="Your toolkit"
+        kind="toolkit"
+        description={
+          favorites.length
+            ? "A quiet place for the practices and guides you choose to keep close."
+            : "Keep what helps. Tap the bookmark on a practice or guide to find it here again."
+        }
+        meta={
+          favorites.length
+            ? `${favorites.length} saved ${favorites.length === 1 ? "item" : "items"} · Private to your account`
+            : "No saved practices yet"
+        }
+      />
       <ErrorNote error={error} />
-      {!favorites.length ? (
-        <View
-          style={{
-            alignItems: "center",
-            paddingVertical: 20,
-            marginBottom: 28,
-          }}
-        >
-          <Artwork
-            kind="stillness"
-            style={{
-              width: "100%",
-              height: 148,
-              borderRadius: 20,
-              marginBottom: 8,
-            }}
-          />
-          <Heading small style={{ marginTop: 18, textAlign: "center" }}>
-            A little support, collected
-          </Heading>
-          <Copy
-            muted
-            style={{ textAlign: "center", marginTop: 10, maxWidth: 285 }}
-          >
-            Save a practice or guide when it feels useful. It will be here
-            whenever you want to return.
-          </Copy>
-        </View>
-      ) : (
-        <View style={{ marginBottom: 28 }}>
+      {!!favorites.length && (
+        <View style={[styles.featureSection, styles.savedList]}>
+          <EditorialSection title="Saved for later" />
           {favorites.map((item) => (
-            <View
+            <ArtShelfItem
               key={item.id}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 12,
-                borderBottomWidth: 0.75,
-                borderBottomColor: colors.border,
-                paddingVertical: 17,
-              }}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${item.title}`}
-                onPress={() => open(item)}
-                style={{ flex: 1, minHeight: 52, justifyContent: "center" }}
-              >
-                <Heading small style={{ fontSize: 26, lineHeight: 29 }}>
-                  {item.title}
-                </Heading>
-                <Copy muted style={{ fontSize: 13, marginTop: 5 }}>
-                  {item.kind === "resource"
-                    ? "Resource guide"
+              title={item.title}
+              label={`Open ${item.title}`}
+              kind={
+                item.kind === "resource"
+                  ? item.targetId === "sleep"
+                    ? "sleep"
+                    : "guide"
+                  : item.kind === "grounding"
+                    ? "grounding"
                     : item.kind === "breathing"
-                      ? "A paced breathing practice"
-                      : item.kind === "grounding"
-                        ? "A five-senses practice"
-                        : "A space to write"}
-                </Copy>
-              </Pressable>
-              <IconButton
-                name={removing === item.id ? "hourglass-outline" : "bookmark"}
-                label={`Remove ${item.title} from toolkit`}
-                disabled={!!removing}
-                onPress={() => remove(String(item.id))}
-              />
-            </View>
+                      ? "breathing"
+                      : "reflection"
+              }
+              detail={
+                item.kind === "resource"
+                  ? "Resource guide"
+                  : item.kind === "breathing"
+                    ? "A paced breathing practice"
+                    : item.kind === "grounding"
+                      ? "A five-senses practice"
+                      : "A space to write"
+              }
+              onPress={() => open(item)}
+              trailing={
+                <IconButton
+                  name={removing === item.id ? "hourglass-outline" : "bookmark"}
+                  label={`Remove ${item.title} from toolkit`}
+                  disabled={!!removing}
+                  onPress={() => remove(String(item.id))}
+                />
+              }
+            />
           ))}
         </View>
       )}
-      <Heading small style={{ marginBottom: 14 }}>
-        Make room for a pause
-      </Heading>
-      <Action
+      <EditorialSection
+        title="Make room for a pause"
+        description="Try a practice now, then save it if you want to come back."
+      />
+      <ArtShelfItem
         title="Five-senses grounding"
-        description="A gentle practice to notice your surroundings."
-        icon="hand-left-outline"
-        tone="peach"
+        detail="Notice your surroundings, one sense at a time."
+        kind="grounding"
         onPress={() => app.navigate("grounding")}
       />
-      <Action
+      <ArtShelfItem
         title="A breathing moment"
-        description="One to three minutes, at your pace."
-        icon="leaf-outline"
+        detail="One to three minutes, at your pace."
+        kind="breathing"
         onPress={() => app.navigate("breathing")}
       />
-      <Action
+      <ArtShelfItem
         title="A moment to reflect"
-        description="Notice what is on your mind."
-        icon="create-outline"
-        tone="lavender"
+        detail="Notice what is on your mind."
+        kind="reflection"
         onPress={() => app.navigate("reflection")}
       />
       <Button
@@ -616,10 +776,15 @@ function Grounding({ params }: { params: AnyRecord }) {
   const { colors } = useTheme();
   const [started, setStarted] = useState(false);
   const [index, setIndex] = useState(0);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  useLayoutEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [started, index]);
   const [tried, setTried] = useState<number[]>([]);
   const [ending, setEnding] = useState(false);
   const accumulated = useRef(0);
   const since = useRef<number | null>(null);
+  const startedAt = useRef<string | undefined>(undefined);
   const finished = useRef(false);
   const stopClock = () => {
     if (since.current !== null)
@@ -663,16 +828,19 @@ function Grounding({ params }: { params: AnyRecord }) {
     finished.current = true;
     stopClock();
     const completedAt = new Date();
+    const completed = nextTried.length > 0;
     app.navigate("feedback", {
       session: {
         id: newMomentSessionId(),
+        practiceId: "grounding",
         type: "grounding",
         title: "Five-senses grounding",
         durationSec: Math.min(
           1800,
           Math.max(0, Math.floor(accumulated.current)),
         ),
-        completed: nextTried.length > 0,
+        completed,
+        outcome: completed ? "completed" : "early-exit",
         steps: nextTried,
         source: params.source || "wellness",
         ...(params.conversationId || params.sourceConversationId
@@ -682,7 +850,10 @@ function Grounding({ params }: { params: AnyRecord }) {
             }
           : {}),
         createdAt: completedAt.toISOString(),
+        startedAt: startedAt.current,
+        endedAt: completedAt.toISOString(),
         day: localDay(completedAt),
+        ...practiceOrigins(params, app.data.checkins),
       },
     });
   }
@@ -697,9 +868,8 @@ function Grounding({ params }: { params: AnyRecord }) {
   const step = GROUNDING_STEPS[index];
   if (ending)
     return (
-      <Screen>
-        <Header title="Grounding" onBack={() => setEnding(false)} />
-        <PageIntro title="Take your time">
+      <Screen variant="nested">
+        <PageIntro title="Take your time" onBack={() => setEnding(false)}>
           Your practice is paused. You can continue, or leave without saving a
           completed activity.
         </PageIntro>
@@ -713,95 +883,131 @@ function Grounding({ params }: { params: AnyRecord }) {
       </Screen>
     );
   return (
-    <Screen>
-      <Header title="Grounding" onBack={leave} />
+    <Screen variant="nested" scrollRef={scroll}>
+      {started && <NestedHeader title="Five-senses grounding" onBack={leave} />}
       {!started ? (
         <>
-          <PageIntro title="Come back to here">
-            A five-senses practice to notice the space around you, one small
-            detail at a time.
-          </PageIntro>
+          <ScenePage
+            title="Five-senses grounding"
+            kind="grounding"
+            onBack={leave}
+            description="Notice the space around you, one small detail at a time."
+            meta="Self-paced · Five senses"
+          />
+          <EditorialSection title="Start with what’s around you" />
           <View
-            style={{
-              alignItems: "center",
-              paddingVertical: 22,
-              marginBottom: 24,
-            }}
+            style={[
+              styles.senseRoute,
+              {
+                backgroundColor: colors.sageSurface,
+                borderColor: colors.border,
+              },
+            ]}
           >
-            <Artwork
-              kind="stillness"
-              style={{ width: "100%", height: 174, borderRadius: 22 }}
-            />
+            {GROUNDING_STEPS.map(({ count, icon }) => (
+              <View key={count} style={styles.senseNode} aria-hidden>
+                <Mark name={icon} size={20} color={colors.sageText} />
+                <Copy style={{ color: colors.sageText, fontFamily: F.strong }}>
+                  {count}
+                </Copy>
+              </View>
+            ))}
           </View>
+          <Copy muted style={styles.draftCaption}>
+            Choose what feels accessible. Imagine a familiar sensation, skip a
+            sense, or stop at any point.
+          </Copy>
+          <Button
+            title="Begin grounding"
+            icon="play-outline"
+            onPress={() => {
+              startedAt.current ||= stamp();
+              setStarted(true);
+            }}
+            style={{ marginTop: spacing.compact, marginBottom: spacing.row }}
+          />
           <SaveToToolkit
             kind="grounding"
             targetId="grounding"
             title="Five-senses grounding"
           />
-          <Hint>
-            Use only what feels accessible and comfortable. You can imagine a
-            familiar sensation, skip a sense, or stop at any point.
-          </Hint>
-          <Button
-            title="Begin grounding"
-            onPress={() => setStarted(true)}
-            style={{ marginTop: 20 }}
-          />
         </>
       ) : (
         <>
-          <Copy muted style={{ marginBottom: 16 }}>
-            Step {index + 1} of {GROUNDING_STEPS.length}
-          </Copy>
-          <View style={{ flexDirection: "row", gap: 6, marginBottom: 28 }}>
-            {GROUNDING_STEPS.map((_, n) => (
-              <View
-                key={n}
-                style={{
-                  flex: 1,
-                  height: 4,
-                  borderRadius: 2,
-                  backgroundColor: n <= index ? colors.primary : colors.border,
-                }}
-              />
-            ))}
-          </View>
           <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 15,
-              marginBottom: 18,
-            }}
+            style={[
+              styles.senseStage,
+              {
+                backgroundColor: colors.sageSurface,
+                borderColor: colors.border,
+              },
+            ]}
           >
-            <Text
-              accessible={false}
-              style={{
-                fontFamily: F.heading,
-                fontSize: 88,
-                lineHeight: 92,
-                color: colors.peachText,
+            <View style={styles.senseStageHeader}>
+              <Mark name={step.icon} size={24} color={colors.sageText} />
+              <Copy style={{ color: colors.sageText, fontFamily: F.strong }}>
+                Step {index + 1} of {GROUNDING_STEPS.length}
+              </Copy>
+            </View>
+            <View
+              style={styles.groundingProgress}
+              accessibilityRole="progressbar"
+              accessibilityLabel="Grounding steps"
+              accessibilityValue={{
+                min: 0,
+                max: GROUNDING_STEPS.length,
+                now: index + 1,
               }}
             >
-              {step.count}
-            </Text>
-            <View style={{ flex: 1 }}>
-              <Mark name={step.icon} size={25} color={colors.peachText} />
-              <Heading style={{ fontSize: 35, lineHeight: 37, marginTop: 9 }}>
-                {step.title}
-              </Heading>
+              {GROUNDING_STEPS.map((_, n) => (
+                <View
+                  key={n}
+                  style={{
+                    flex: 1,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor:
+                      n <= index ? colors.sageText : colors.border,
+                  }}
+                />
+              ))}
             </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 15,
+                marginBottom: 18,
+              }}
+            >
+              <Text
+                accessible={false}
+                style={{
+                  fontFamily: F.heading,
+                  fontSize: 58,
+                  lineHeight: 66,
+                  color: colors.sageText,
+                }}
+              >
+                {step.count}
+              </Text>
+              <View style={{ flex: 1 }}>
+                <Heading style={{ fontSize: 35, lineHeight: 37 }}>
+                  {step.title}
+                </Heading>
+              </View>
+            </View>
+            <Copy
+              accessibilityLiveRegion="polite"
+              aria-live="polite"
+              style={{ fontSize: 17, lineHeight: 27 }}
+            >
+              {step.prompt}
+            </Copy>
+            <Copy muted style={{ marginTop: 14 }}>
+              {step.alternative}
+            </Copy>
           </View>
-          <Copy
-            accessibilityLiveRegion="polite"
-            aria-live="polite"
-            style={{ fontSize: 17, lineHeight: 27 }}
-          >
-            {step.prompt}
-          </Copy>
-          <Copy muted style={{ marginTop: 18, marginBottom: 32 }}>
-            {step.alternative}
-          </Copy>
           <Button
             title={index === 4 ? "Finish practice" : "Continue"}
             onPress={() => next(false)}
@@ -820,6 +1026,12 @@ function Grounding({ params }: { params: AnyRecord }) {
               style={{ marginTop: 8 }}
             />
           )}
+          <Button
+            title="Pause practice"
+            variant="ghost"
+            onPress={leave}
+            style={{ marginTop: 8 }}
+          />
         </>
       )}
     </Screen>
@@ -828,7 +1040,14 @@ function Grounding({ params }: { params: AnyRecord }) {
 
 function Checkin() {
   const app = useApp();
-  const { colors, resolved } = useTheme();
+  const { colors } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
+  const gutter = useScreenGutter();
+  const moodColumns =
+    fontScale > 1.65 ? 2 : fontScale > 1.15 || width - 2 * gutter < 275 ? 3 : 5;
+  const moodTileBasis =
+    moodColumns === 5 ? "18%" : moodColumns === 3 ? "29%" : "44%";
+  const tightMoodRow = moodColumns === 5 && width - 2 * gutter < 308;
   const draftKey = "checkin:new";
   const draft = app.editorDrafts[draftKey];
   const [mood, setMood] = useState(
@@ -902,6 +1121,7 @@ function Checkin() {
       });
       app.setEditorDraft(draftKey, null, submittedDraft);
       app.setParams({ savedCheckinId: result.id });
+      if (!result.localOnly) void playHaptic("confirmation");
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -911,9 +1131,9 @@ function Checkin() {
   }
   if (savedCheckin)
     return (
-      <Screen>
-        <Header />
-        <PageIntro
+      <Screen variant="nested">
+        <ScenePage
+          kind="checkin"
           title={
             awaitingSync
               ? app.draftProtection === "device"
@@ -921,14 +1141,16 @@ function Checkin() {
                 : "Kept in this tab"
               : "Your check-in is saved"
           }
-        >
-          {awaitingSync
-            ? app.draftProtection === "device"
-              ? "Your check-in is saved securely on this device and waiting to sync to your account."
-              : "Your check-in is waiting to sync. Keep this browser tab open; closing it will remove this unsynced writing."
-            : "Thank you for making a little space for yourself. Choose a next step if it feels right."}
-        </PageIntro>
-        <CheckinNextStep checkin={savedCheckin} />
+          description={
+            awaitingSync
+              ? app.draftProtection === "device"
+                ? "Your check-in is saved securely on this device and waiting to sync to your account."
+                : "Your check-in is waiting to sync. Keep this browser tab open; closing it will remove this unsynced writing."
+              : "You made a little space for yourself. Choose a next step if it feels right."
+          }
+          meta={String(savedCheckin.mood ?? "")}
+        />
+        <CheckinNextStep key={savedCheckin.id} checkin={savedCheckin} />
         {awaitingSync && (
           <Button
             title="Manage unsynced writing"
@@ -940,65 +1162,55 @@ function Checkin() {
       </Screen>
     );
   return (
-    <Screen>
-      <Header />
-      <PageIntro title={"How are you\nfeeling?"}>
-        Take a quick moment to check in with yourself today.
-      </PageIntro>
-      <Card
-        style={{
-          padding: 16,
-          backgroundColor:
-            resolved === "dark" ? colors.surface : colors.peachSurface,
-          borderColor:
-            resolved === "dark" ? colors.border : colors.peachSurface,
-        }}
+    <Screen variant="nested">
+      <ScenePage
+        kind="checkin"
+        title="How are you feeling?"
+        description="Take a quick moment to check in with yourself today."
+      />
+      <View
+        style={[
+          styles.moodPanel,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
       >
-        <Heading small style={{ color: colors.peachText }}>
-          Your mood today
-        </Heading>
-        <View accessibilityRole="radiogroup" style={styles.moodRow}>
-          {moodPetals.map(({ mood: label, image }) => (
+        <Heading small>Your mood today</Heading>
+        <View
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Your mood today"
+          style={[styles.moodRow, tightMoodRow && styles.tightMoodRow]}
+        >
+          {moodPetals.map(({ mood: label, image }, index) => (
             <Pressable
               key={label}
               accessibilityRole="radio"
               accessibilityLabel={label}
               accessibilityState={{ checked: mood === label }}
               aria-checked={mood === label}
+              {...webRadioProps(mood === label || (!mood && index === 0))}
               disabled={saving}
               onPress={() => {
                 writeDraft(label);
                 setError("");
               }}
-              style={[
+              style={({ pressed }) => [
                 styles.moodChoice,
                 {
+                  flexBasis: moodTileBasis,
+                  opacity: pressed ? 0.75 : 1,
                   backgroundColor:
-                    mood === label
-                      ? resolved === "dark"
-                        ? colors.peachSurface
-                        : colors.primary
-                      : colors.surface,
-                  borderColor:
-                    mood === label
-                      ? resolved === "dark"
-                        ? colors.peachText
-                        : colors.primary
-                      : colors.border,
+                    mood === label ? colors.lavenderSurface : colors.bg,
+                  borderColor: mood === label ? colors.lavender : colors.border,
                 },
               ]}
             >
               <MoodPetal source={image} style={{ width: 35, height: 34 }} />
               <Copy
                 style={{
-                  fontSize: 12,
+                  fontSize: 11.5,
                   lineHeight: 17,
-                  color:
-                    mood === label
-                      ? resolved === "dark"
-                        ? colors.peachText
-                        : colors.primaryText
-                      : colors.text,
+                  textAlign: "center",
+                  color: mood === label ? colors.lavenderText : colors.text,
                 }}
               >
                 {label}
@@ -1006,65 +1218,80 @@ function Checkin() {
             </Pressable>
           ))}
         </View>
-      </Card>
-      <View style={styles.sectionLabel}>
-        <Mark name="pricetag-outline" size={20} />
-        <Copy>Add tags (optional)</Copy>
       </View>
-      <View style={styles.chips}>
-        {tagChoices.map((tag) => (
-          <Pressable
-            key={tag}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: tags.includes(tag) }}
-            aria-checked={tags.includes(tag)}
-            disabled={saving}
-            onPress={() =>
-              writeDraft(
-                mood,
-                tags.includes(tag)
-                  ? tags.filter((v) => v !== tag)
-                  : [...tags, tag],
-              )
-            }
-            style={[
-              styles.chip,
-              {
-                backgroundColor: tags.includes(tag)
-                  ? colors.surface2
-                  : colors.surface,
-                borderColor: tags.includes(tag)
-                  ? colors.primary
-                  : colors.border,
-              },
-            ]}
-          >
-            <Copy style={{ fontSize: 13 }}>{tag}</Copy>
-          </Pressable>
-        ))}
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setMore(!more)}
-          style={[styles.chip, { borderColor: colors.border }]}
-        >
-          <Copy style={{ fontSize: 13 }}>{more ? "Fewer tags" : "+ More"}</Copy>
-        </Pressable>
-      </View>
-      <View style={styles.sectionLabel}>
-        <Mark name="pencil-outline" size={20} />
-        <Copy>Add a note (optional)</Copy>
-      </View>
-      <Field
-        value={note}
-        onChangeText={(value) => writeDraft(mood, tags, value)}
-        editable={!saving}
-        placeholder="What is on your mind today?"
-        minHeight={88}
+      <EditorialSection
+        title="What shaped today?"
+        description="Add a little context if you want to remember it later."
       />
-      <Copy muted style={{ fontSize: 12, lineHeight: 19, marginBottom: 14 }}>
+      <View
+        style={[
+          styles.checkinWriting,
+          { borderColor: colors.border, backgroundColor: colors.surface },
+        ]}
+      >
+        <View style={styles.sectionLabel}>
+          <Mark name="pricetag-outline" size={17} color={colors.lavenderText} />
+          <Copy>Add tags (optional)</Copy>
+        </View>
+        <View style={styles.chips}>
+          {tagChoices.map((tag) => (
+            <Pressable
+              key={tag}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: tags.includes(tag) }}
+              aria-checked={tags.includes(tag)}
+              disabled={saving}
+              onPress={() =>
+                writeDraft(
+                  mood,
+                  tags.includes(tag)
+                    ? tags.filter((v) => v !== tag)
+                    : [...tags, tag],
+                )
+              }
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: tags.includes(tag)
+                    ? colors.lavenderSurface
+                    : colors.surface,
+                  borderColor: tags.includes(tag)
+                    ? colors.lavender
+                    : colors.border,
+                },
+              ]}
+            >
+              <Copy style={{ fontSize: 13 }}>{tag}</Copy>
+            </Pressable>
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: more }}
+            onPress={() => setMore(!more)}
+            style={[styles.chip, { borderColor: colors.border }]}
+          >
+            <Copy style={{ fontSize: 13 }}>
+              {more ? "Fewer tags" : "+ More"}
+            </Copy>
+          </Pressable>
+        </View>
+        <View style={styles.sectionLabel}>
+          <Mark name="pencil-outline" size={17} color={colors.lavenderText} />
+          <Copy>Add a note (optional)</Copy>
+        </View>
+        <Field
+          value={note}
+          onChangeText={(value) => writeDraft(mood, tags, value)}
+          editable={!saving}
+          placeholder="What is on your mind today?"
+          minHeight={88}
+          style={styles.checkinField}
+        />
+      </View>
+      <Copy muted style={styles.draftCaption}>
         {app.draftProtection === "device"
-          ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
-          : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
+          ? "Drafts stay on this device. Save your check-in to add it to Journey."
+          : "Drafts stay in this tab until it closes or reloads. Save to add this check-in to Journey."}
       </Copy>
       <ErrorNote error={app.offlineError || ""} />
       <ErrorNote error={error} />
@@ -1079,71 +1306,42 @@ function Checkin() {
 
 function Assessments() {
   const app = useApp();
-  const { colors, resolved } = useTheme();
   return (
-    <Screen>
-      <Header />
-      <PageIntro title="Check-ins">
-        Gentle, supportive reflections to help you notice feelings and patterns.
-      </PageIntro>
-      {ASSESSMENTS.map((item, index) => {
-        const tone = (["peach", "lavender", "sage"] as const)[index % 3];
+    <Screen variant="nested">
+      <ScenePage
+        kind="reflection"
+        title="Check-ins"
+        description="Make a little space for how life feels right now."
+        meta="Three guided reflections"
+      />
+      <EditorialSection title="Choose a reflection" />
+      {ASSESSMENTS.map((item) => {
         const previous = [...(app.data.assessments || [])]
           .filter((v: AnyRecord) => v.assessmentType === item.id)
           .sort((a: AnyRecord, b: AnyRecord) =>
             String(b.createdAt).localeCompare(String(a.createdAt)),
           )[0];
         return (
-          <Card
-            key={item.id}
-            style={{
-              padding: 18,
-              marginBottom: 12,
-              backgroundColor:
-                resolved === "dark" ? colors.surface : colors[`${tone}Surface`],
-              borderColor:
-                resolved === "dark" ? colors.border : colors[`${tone}Surface`],
-            }}
-          >
-            <View style={styles.cardTop}>
-              <Mark name={item.icon} color={colors[`${tone}Text`]} />
-              <View style={{ flex: 1 }}>
-                <Heading small style={{ color: colors[`${tone}Text`] }}>
-                  {item.title}
-                </Heading>
-                <Copy
-                  style={{
-                    fontSize: 13,
-                    lineHeight: 19,
-                    marginTop: 5,
-                    color: colors[`${tone}Text`],
-                  }}
-                >
-                  {item.description}
-                </Copy>
-              </View>
-            </View>
-            <View style={styles.cardFooter}>
-              <Button
-                title="Start"
-                icon="arrow-forward"
-                onPress={() => app.navigate("assessment", { id: item.id })}
-              />
-              <Copy
-                style={{
-                  fontSize: 13,
-                  lineHeight: 19,
-                  flex: 1,
-                  color: colors[`${tone}Text`],
-                }}
-              >
-                {previous
-                  ? `Last reflection: ${new Date(previous.createdAt).toLocaleDateString()}`
-                  : "Your first reflection"}
-              </Copy>
-            </View>
+          <View key={item.id}>
+            <ArtShelfItem
+              title={item.title}
+              label={`Start ${item.title}`}
+              detail={item.description}
+              kind={
+                item.id === "mood"
+                  ? "checkin"
+                  : item.id === "anxiety"
+                    ? "grounding"
+                    : "reflection"
+              }
+              onPress={() => app.navigate("assessment", { id: item.id })}
+            />
             {previous && (
-              <View style={{ marginTop: 8 }}>
+              <View style={styles.previousReflection}>
+                <Copy muted style={styles.shelfDetail}>
+                  Last reflection{" "}
+                  {new Date(previous.createdAt).toLocaleDateString()}
+                </Copy>
                 <Button
                   title="View last reflection"
                   variant="ghost"
@@ -1153,7 +1351,7 @@ function Assessments() {
                 />
               </View>
             )}
-          </Card>
+          </View>
         );
       })}
       <Hint>
@@ -1164,30 +1362,34 @@ function Assessments() {
   );
 }
 
-function Assessment({ params }: { params: AnyRecord }) {
+function Assessment({ definition }: { definition: AssessmentDefinition }) {
   const app = useApp();
+  const goBack = useGuardedBack(app.back);
   const { colors } = useTheme();
-  const definition =
-    ASSESSMENTS.find((v) => v.id === params.id) || ASSESSMENTS[0];
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [savedResult, setSavedResult] = useState<AnyRecord | null>(null);
   const saveLock = useRef(false);
-  const activeAssessment = useRef<string | null>(definition.id);
-  activeAssessment.current = definition.id;
-  useEffect(() => {
-    activeAssessment.current = definition.id;
-    setIndex(0);
-    setAnswers([]);
-    setError("");
-    setSaving(false);
+  const visible = useRef(false);
+  useTabResetGuard(answers.length > 0 && !savedResult);
+  useLayoutEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [index]);
+  useLayoutEffect(() => {
+    visible.current = true;
     return () => {
-      activeAssessment.current = null;
+      visible.current = false;
     };
-  }, [definition.id]);
+  }, []);
   async function next() {
     if (saveLock.current) return;
+    if (savedResult) {
+      app.navigate("assessment-result", { result: savedResult });
+      return;
+    }
     if (answers[index] === undefined) {
       setError("Choose the answer that feels closest to your experience.");
       return;
@@ -1210,56 +1412,70 @@ function Assessment({ params }: { params: AnyRecord }) {
         summary,
         createdAt: stamp(),
       });
-      if (activeAssessment.current === definition.id)
-        app.navigate("assessment-result", {
-          result: saved || { assessmentType: definition.id, summary },
-        });
+      const result = saved || { assessmentType: definition.id, summary };
+      setSavedResult(result);
+      if (visible.current) app.navigate("assessment-result", { result });
     } catch (e) {
-      if (activeAssessment.current === definition.id) setError(errText(e));
+      setError(errText(e));
     } finally {
       saveLock.current = false;
-      if (activeAssessment.current === definition.id) setSaving(false);
+      setSaving(false);
     }
   }
   return (
-    <Screen>
-      <Header />
-      <Copy style={{ marginTop: 8 }}>
-        Question {index + 1} of {definition.questions.length}
-      </Copy>
+    <Screen variant="nested" scrollRef={scroll}>
+      <NestedHeader title={definition.title} onBack={app.back} />
       <View
-        accessibilityLabel={`Question ${index + 1} of ${definition.questions.length}`}
-        style={styles.progressRow}
+        style={[
+          styles.questionPanel,
+          {
+            backgroundColor: colors.lavenderSurface,
+            borderColor: colors.border,
+          },
+        ]}
       >
-        {definition.questions.map((_, n) => (
-          <View
-            key={n}
-            style={{
-              height: 7,
-              flex: 1,
-              borderRadius: 5,
-              backgroundColor: n <= index ? colors.primary : colors.border,
-            }}
-          />
-        ))}
+        <Copy
+          style={{
+            color: colors.lavenderText,
+            fontFamily: F.strong,
+            fontSize: 13,
+          }}
+        >
+          Question {index + 1} of {definition.questions.length}
+        </Copy>
+        <View accessible={false} aria-hidden style={styles.progressRow}>
+          {definition.questions.map((_, n) => (
+            <View
+              key={n}
+              style={{
+                height: 4,
+                flex: 1,
+                borderRadius: 5,
+                backgroundColor:
+                  n <= index ? colors.lavenderText : colors.border,
+              }}
+            />
+          ))}
+        </View>
+        <Heading
+          style={{
+            fontSize: 33,
+            lineHeight: 36,
+          }}
+        >
+          {definition.questions[index]}
+        </Heading>
       </View>
-      <Heading
-        style={{
-          fontSize: 35,
-          lineHeight: 39,
-          marginTop: 32,
-          marginBottom: 28,
-        }}
+      <View
+        accessibilityRole="radiogroup"
+        accessibilityLabel="Choose an answer"
       >
-        {definition.questions[index]}
-      </Heading>
-      <View accessibilityRole="radiogroup">
         {ASSESSMENT_OPTIONS.map((label, value) => (
           <Choice
             key={label}
             label={label}
             selected={answers[index] === value}
-            disabled={saving}
+            disabled={saving || !!savedResult}
             onPress={() => {
               const nextAnswers = [...answers];
               nextAnswers[index] = value;
@@ -1277,7 +1493,9 @@ function Assessment({ params }: { params: AnyRecord }) {
             icon="arrow-back"
             variant="secondary"
             disabled={saving}
-            onPress={() => (index ? setIndex(index - 1) : app.back())}
+            onPress={() =>
+              index && !savedResult ? setIndex(index - 1) : goBack()
+            }
           />
         </View>
         <View style={{ flex: 1 }}>
@@ -1285,9 +1503,11 @@ function Assessment({ params }: { params: AnyRecord }) {
             title={
               saving
                 ? "Saving…"
-                : index === definition.questions.length - 1
-                  ? "Finish"
-                  : "Next"
+                : savedResult
+                  ? "View reflection"
+                  : index === definition.questions.length - 1
+                    ? "Finish"
+                    : "Next"
             }
             icon="arrow-forward"
             onPress={next}
@@ -1315,21 +1535,35 @@ function AssessmentResult({ params }: { params: AnyRecord }) {
           result.answers || [],
         )
       : null);
+  if (!summary) {
+    return (
+      <Screen variant="nested">
+        <NestedHeader title="Your check-in" onBack={app.back} />
+        <NestedState
+          icon="clipboard-outline"
+          title="Reflection unavailable"
+          description="You can return to Reflective Check-ins to choose another reflection."
+        >
+          <Button
+            title="View check-ins"
+            onPress={() => app.navigate("assessments")}
+          />
+        </NestedState>
+      </Screen>
+    );
+  }
   return (
-    <Screen>
-      <Header />
-      <PageIntro title="Your check-in">
-        {summary?.text ||
-          "Complete a reflection to see your personal next steps here."}
-      </PageIntro>
-      {summary && (
-        <Copy style={{ marginBottom: 20, fontFamily: F.strong }}>
-          {summary.title}
-        </Copy>
-      )}
-      <Heading small style={{ marginBottom: 14 }}>
-        Suggested next steps
-      </Heading>
+    <Screen variant="nested">
+      <ScenePage
+        title={summary.title}
+        description={summary.text}
+        kind="reflection"
+        meta="Your check-in"
+      />
+      <EditorialSection
+        title="Suggested next steps"
+        description="Choose one if it feels useful today."
+      />
       <Action
         title="Take a reset moment"
         description="A short breathing practice, at your pace."
@@ -1345,42 +1579,49 @@ function AssessmentResult({ params }: { params: AnyRecord }) {
         title="Add a calming habit"
         description="A small, supportive practice for your routine."
         icon="calendar-outline"
-        onPress={() => app.navigate("plan")}
+        onPress={() =>
+          app.navigate(routes.habitCreate, {
+            suggestion: starterHabits.find(
+              (habit) => habit.activity === "breathing",
+            ),
+          })
+        }
       />
       <Hint>
         This is a reflection, not a diagnosis. You can find human support in
         Resources whenever you need it.
       </Hint>
-      <View style={styles.twoButtons}>
-        <View style={{ flex: 1 }}>
-          <Button
-            title="Try a moment"
-            variant="secondary"
-            onPress={() => app.navigate("breathing")}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Button title="Done" onPress={() => app.navigate("assessments")} />
-        </View>
-      </View>
+      <Button
+        title="Done"
+        variant="secondary"
+        onPress={() => app.navigate("assessments")}
+      />
     </Screen>
   );
 }
 
 function Breathing({ params }: { params: AnyRecord }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
+  const daylight = resolved === "light";
+  const { width, height } = useWindowDimensions();
+  const artSize = Math.min(180, width * 0.45, height * 0.24);
   const [duration, setDuration] = useState(
     Math.max(60, Math.min(180, Number(params.durationSec) || 60)),
   );
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
   const [started, setStarted] = useState(false);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  useLayoutEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [started]);
   const [autoPaused, setAutoPaused] = useState(false);
   const reducedMotion = useReducedMotion();
   const [ending, setEnding] = useState(false);
   const base = useRef(0);
   const before = useRef(0);
+  const startedAt = useRef<string | undefined>(undefined);
   const active = useRef(false);
   const finished = useRef(false);
   const endSeconds = useRef(0);
@@ -1410,12 +1651,15 @@ function Breathing({ params }: { params: AnyRecord }) {
     app.navigate("feedback", {
       session: {
         id: newMomentSessionId(),
+        practiceId: "breathing",
         type: "breathing",
-        title: "A reset moment",
+        title:
+          duration === 60 ? "One-minute breathing reset" : "A reset moment",
         durationSec: recordedSeconds,
         duration: recordedSeconds,
         plannedDurationSec: duration,
         completed: complete,
+        outcome: complete ? "completed" : "early-exit",
         source: params.source || "wellness",
         ...(params.conversationId || params.sourceConversationId
           ? {
@@ -1424,7 +1668,10 @@ function Breathing({ params }: { params: AnyRecord }) {
             }
           : {}),
         createdAt: completedAt.toISOString(),
+        startedAt: startedAt.current,
+        endedAt: completedAt.toISOString(),
         day: localDay(completedAt),
+        ...practiceOrigins(params, app.data.checkins),
       },
     });
   }
@@ -1446,6 +1693,7 @@ function Breathing({ params }: { params: AnyRecord }) {
       return;
     }
     base.current = monotonicNow();
+    startedAt.current ||= stamp();
     active.current = true;
     setRunning(true);
     setStarted(true);
@@ -1507,14 +1755,10 @@ function Breathing({ params }: { params: AnyRecord }) {
   }, [started, ending, duration]);
   if (ending)
     return (
-      <Screen>
-        <Header title="Solace Moment" onBack={keepGoing} />
-        <View style={{ alignItems: "center", marginVertical: 28 }}>
-          <Artwork kind="petal" size={150} />
-        </View>
+      <Screen variant="nested">
+        <NestedHeader title="End this moment?" onBack={keepGoing} />
         <Card style={{ padding: 24 }}>
-          <Heading small>End this moment?</Heading>
-          <Copy style={{ marginTop: 12, marginBottom: 20 }}>
+          <Copy style={{ marginBottom: spacing.card }}>
             Your moment is paused. You can save a reflection on the{" "}
             {clock(endSeconds.current)} you have taken, or continue when you are
             ready.
@@ -1534,30 +1778,99 @@ function Breathing({ params }: { params: AnyRecord }) {
       </Screen>
     );
   return (
-    <Screen>
-      <Header title="Solace Moment" onBack={end} />
-      <BotanicalBackdrop
-        style={{ top: 25, right: -155, width: 290, height: 290, opacity: 0.18 }}
-      />
-      <BotanicalBackdrop
-        variant="footer"
-        style={{ bottom: -110, right: -100, opacity: 0.18 }}
-      />
-      <Copy style={{ textAlign: "center", marginTop: 3 }} muted>
-        A comfortable breath. Nothing to force.
-      </Copy>
-      {!started && (
-        <View style={{ alignItems: "center", marginTop: 12 }}>
-          <SaveToToolkit
-            kind="breathing"
-            targetId="breathing"
-            title="A breathing moment"
+    <Screen variant="nested" scrollRef={scroll}>
+      <NestedHeader title="Solace Moment" onBack={end} />
+      <View
+        style={[
+          styles.breathStage,
+          {
+            backgroundColor: daylight ? colors.surface : colors.lavenderSurface,
+            borderColor: colors.border,
+          },
+        ]}
+      >
+        {daylight ? (
+          <View
+            pointerEvents="none"
+            style={[styles.daylightBreathArt, { height: artSize + 43 }]}
+          >
+            <Image
+              source={require("../../assets/redesign-explore-feature-light.jpg")}
+              resizeMode="cover"
+              resizeMethod="scale"
+              fadeDuration={0}
+              accessible={false}
+              style={coverImageStyle}
+            />
+            <View
+              style={[
+                StyleSheet.absoluteFill,
+                artGradient(
+                  `linear-gradient(180deg, transparent 48%, ${colors.surface}3D 74%, ${colors.surface} 100%)`,
+                ),
+              ]}
+            />
+          </View>
+        ) : (
+          <BotanicalBackdrop
+            style={{
+              width: 210,
+              height: 210,
+              top: -50,
+              right: -115,
+              opacity: 0.2,
+            }}
+          />
+        )}
+        <View style={styles.momentArt} pointerEvents="none">
+          <Animated.View
+            style={{ transform: [{ scale: reducedMotion ? 1 : scale }] }}
+          >
+            <Artwork kind="petal" size={artSize} />
+          </Animated.View>
+        </View>
+        <Heading style={styles.breathTitle}>
+          {!started ? "A moment for you" : !running ? "Rest here" : cue.phase}
+        </Heading>
+        <Copy muted style={styles.breathContext}>
+          {!started
+            ? "A comfortable breath. Nothing to force."
+            : running
+              ? `${cue.remaining}s in this phase`
+              : "Your practice is paused."}
+        </Copy>
+        <View style={styles.breathTime}>
+          <Copy accessibilityLiveRegion="none" style={styles.breathClock}>
+            {clock(elapsed)}
+          </Copy>
+          <Copy muted style={styles.breathTotal}>
+            / {clock(duration)}
+          </Copy>
+        </View>
+        <View
+          accessibilityRole="progressbar"
+          accessibilityLabel="Practice time"
+          accessibilityValue={{
+            min: 0,
+            max: duration,
+            now: Math.floor(elapsed),
+          }}
+          style={[styles.breathTrack, { backgroundColor: colors.border }]}
+        >
+          <View
+            style={{
+              width: `${(elapsed / duration) * 100}%`,
+              height: "100%",
+              backgroundColor: colors.lavenderText,
+            }}
           />
         </View>
-      )}
+      </View>
       {!started && (
         <View
-          style={[styles.chips, { justifyContent: "center", marginTop: 6 }]}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Practice duration"
+          style={[styles.chips, styles.breathDurations]}
         >
           {[60, 120, 180].map((value) => (
             <Pressable
@@ -1565,14 +1878,18 @@ function Breathing({ params }: { params: AnyRecord }) {
               accessibilityRole="radio"
               accessibilityState={{ checked: duration === value }}
               aria-checked={duration === value}
+              {...webRadioProps(duration === value)}
               onPress={() => setDuration(value)}
               style={[
                 styles.chip,
                 {
+                  flexGrow: 1,
                   backgroundColor:
-                    duration === value ? colors.surface2 : colors.surface,
+                    duration === value
+                      ? colors.lavenderSurface
+                      : colors.surface,
                   borderColor:
-                    duration === value ? colors.primary : colors.border,
+                    duration === value ? colors.lavender : colors.border,
                 },
               ]}
             >
@@ -1581,49 +1898,7 @@ function Breathing({ params }: { params: AnyRecord }) {
           ))}
         </View>
       )}
-      <View style={styles.momentArt}>
-        <Animated.View
-          style={{ transform: [{ scale: reducedMotion ? 1 : scale }] }}
-        >
-          <Artwork kind="petal" size={270} />
-        </Animated.View>
-      </View>
-      <Heading
-        style={{
-          textAlign: "center",
-          fontStyle: "italic",
-          fontSize: 47,
-          lineHeight: 52,
-        }}
-      >
-        {!started ? "A moment for you" : !running ? "Rest here" : cue.phase}
-      </Heading>
-      {started && (
-        <Copy
-          accessibilityLiveRegion="none"
-          aria-hidden={!running}
-          style={{
-            textAlign: "center",
-            marginTop: 7,
-            opacity: running ? 1 : 0,
-          }}
-        >
-          {cue.remaining}s
-        </Copy>
-      )}
-      <Copy
-        accessibilityLiveRegion="none"
-        style={{
-          textAlign: "center",
-          marginTop: 22,
-          fontSize: 18,
-          fontVariant: ["tabular-nums"],
-          letterSpacing: 1,
-        }}
-      >
-        {clock(elapsed)} / {clock(duration)}
-      </Copy>
-      <View style={[styles.twoButtons, { marginTop: 30 }]}>
+      <View style={styles.twoButtons}>
         <View style={{ flex: 1 }}>
           <Button title="End" variant="secondary" onPress={end} />
         </View>
@@ -1634,6 +1909,15 @@ function Breathing({ params }: { params: AnyRecord }) {
           />
         </View>
       </View>
+      {!started && (
+        <View style={styles.breathBookmark}>
+          <SaveToToolkit
+            kind="breathing"
+            targetId="breathing"
+            title="A breathing moment"
+          />
+        </View>
+      )}
       {autoPaused && (
         <Copy
           muted
@@ -1660,8 +1944,11 @@ function Breathing({ params }: { params: AnyRecord }) {
 
 function Feedback({ params }: { params: AnyRecord }) {
   const app = useApp();
-  const { colors } = useTheme();
+  const { width, fontScale } = useWindowDimensions();
+  const stackChoices = width < 350 || fontScale > 1.25;
+  const { colors, resolved } = useTheme();
   const session = params.session;
+  const completed = session?.completed === true;
   const draftKey = `feedback:${String(session?.id || session?.createdAt || "new")}`;
   const draft = app.editorDrafts[draftKey];
   const [feedback, setFeedback] = useState(draft?.feedback || "");
@@ -1670,12 +1957,64 @@ function Feedback({ params }: { params: AnyRecord }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [showExtraFeedback, setShowExtraFeedback] = useState(
+    !!(draft?.feedback || draft?.note),
+  );
   const [submitted, setSubmitted] = useState(draft?.submitted === "true");
   const savedSession = useRef<AnyRecord | null>(
     draft?.savedSessionId ? { id: draft.savedSessionId } : null,
   );
+  const [completionSaved, setCompletionSaved] = useState(
+    () =>
+      completed &&
+      !!session.id &&
+      app.data.sessions.some((record) => record.id === session.id),
+  );
+  const [savingCompletion, setSavingCompletion] = useState(
+    completed && !completionSaved,
+  );
+  const [completionError, setCompletionError] = useState("");
+  const autoSaveAttempted = useRef(false);
   const saveLock = useRef(false);
-  const waitingForSession = submitted && !savedSession.current;
+  const awaitingCompletion = completed && !completionSaved;
+  const waitingForSession =
+    awaitingCompletion || (submitted && !savedSession.current);
+  useTabResetGuard(
+    !!session &&
+      !saved &&
+      (savingCompletion ||
+        saving ||
+        awaitingCompletion ||
+        (!completed && !savedSession.current) ||
+        !!(feedback || note || remember)),
+    savingCompletion || saving ? "saving" : "dirty",
+  );
+  async function saveCompletion() {
+    if (saveLock.current || !awaitingCompletion) return;
+    saveLock.current = true;
+    setSavingCompletion(true);
+    setCompletionError("");
+    try {
+      // Practice completion belongs to Journey even when the optional
+      // feedback is skipped. Retries use the same unmodified client ID.
+      await app.save("sessions", session);
+      setCompletionSaved(true);
+      void playHaptic("confirmation");
+    } catch (e) {
+      setCompletionError(errText(e));
+    } finally {
+      saveLock.current = false;
+      setSavingCompletion(false);
+    }
+  }
+  const writeCompletion = useRef(saveCompletion);
+  writeCompletion.current = saveCompletion;
+  useEffect(() => {
+    if (!awaitingCompletion || autoSaveAttempted.current) return;
+    autoSaveAttempted.current = true;
+    void writeCompletion.current();
+  }, [awaitingCompletion]);
+
   function writeDraft(
     nextFeedback = feedback,
     nextNote = note,
@@ -1700,7 +2039,7 @@ function Feedback({ params }: { params: AnyRecord }) {
         ? "Finds short breathing moments helpful."
         : null;
   async function save() {
-    if (saveLock.current || !session) return;
+    if (saveLock.current || !session || awaitingCompletion) return;
     saveLock.current = true;
     const submittedDraft = {
       feedback,
@@ -1714,24 +2053,30 @@ function Feedback({ params }: { params: AnyRecord }) {
     setSaving(true);
     setError("");
     try {
-      savedSession.current = await app.save("sessions", {
-        ...session,
-        ...(savedSession.current?.id ? { id: savedSession.current.id } : {}),
-        feedback: feedback || "skipped",
-        note: note.trim(),
-      });
+      const persisted: AnyRecord =
+        completed && !feedback && !note.trim()
+          ? session
+          : await app.save("sessions", {
+              ...(completed ? { id: session.id } : session),
+              ...(savedSession.current?.id
+                ? { id: savedSession.current.id }
+                : {}),
+              feedback: feedback || "skipped",
+              note: note.trim(),
+            });
+      savedSession.current = persisted;
       const savedDraft = {
         ...submittedDraft,
-        savedSessionId: String(savedSession.current.id),
+        savedSessionId: String(persisted.id),
       };
       app.setEditorDraft(draftKey, savedDraft);
       if (remember && feedback === "Helped" && preference)
         await app.save("memories", {
-          id: `memory-${savedSession.current.id}`,
+          id: `memory-${persisted.id}`,
           text: preference,
           content: preference,
           sourceType: "session",
-          sourceId: savedSession.current?.id,
+          sourceId: persisted.id,
           ...(session.sourceConversationId
             ? { sourceConversationId: session.sourceConversationId }
             : {}),
@@ -1749,8 +2094,7 @@ function Feedback({ params }: { params: AnyRecord }) {
   }
   if (!session)
     return (
-      <Screen>
-        <Header />
+      <Screen variant="nested">
         <PageIntro title="Take a moment first">
           A reflection on your activity will be here after a breathing moment.
         </PageIntro>
@@ -1760,16 +2104,14 @@ function Feedback({ params }: { params: AnyRecord }) {
         />
       </Screen>
     );
-  if (saved)
+  if (saved && !completionSaved)
     return (
-      <Screen key="practice-saved">
-        <Header />
-        <PageIntro title="A little care, saved">
-          Your moment is in your Journey. You can return whenever you need.
-        </PageIntro>
-        <View style={{ alignItems: "center", marginVertical: 24 }}>
-          <Artwork kind="petal" size={170} />
-        </View>
+      <Screen key="practice-saved" variant="nested">
+        <ScenePage
+          title="A little care, saved"
+          kind="checkin"
+          description="Your moment is in your Journey. You can return whenever you need."
+        />
         {session.sourceConversationId && (
           <View style={{ marginBottom: 12 }}>
             <Button
@@ -1793,106 +2135,186 @@ function Feedback({ params }: { params: AnyRecord }) {
       </Screen>
     );
   return (
-    <Screen>
-      <Header />
-      <PageIntro title={"You took\na moment"}>
-        Thank you for making space for yourself. There is no right way to feel
-        afterward.
-      </PageIntro>
-      <Card style={{ padding: 17 }}>
-        <Heading small>How did that feel?</Heading>
-        <View style={[styles.twoButtons, { marginTop: 16 }]}>
-          {[
-            { label: "Helped", icon: "leaf-outline" },
-            { label: "A little", icon: "water-outline" },
-            { label: "Not for me", icon: "close-outline" },
-          ].map((item) => (
-            <Pressable
-              key={item.label}
-              accessibilityRole="radio"
-              accessibilityState={{
-                checked: feedback === item.label,
-                disabled: saving || waitingForSession,
-              }}
-              aria-checked={feedback === item.label}
-              disabled={saving || waitingForSession}
-              onPress={() => writeDraft(item.label)}
+    <Screen variant="nested">
+      {completionSaved ? (
+        <NestedHeader title="Practice complete" onBack={app.back} />
+      ) : (
+        <ScenePage
+          title="You took a moment"
+          kind={session.type === "grounding" ? "grounding" : "breathing"}
+          description="There is no right way to feel afterward."
+          meta={`${session.title || "Solace Moment"} · ${clock(session.durationSec ?? session.duration ?? 0)}`}
+        />
+      )}
+      {savingCompletion && <Hint>Saving your practice to Journey…</Hint>}
+      {completionSaved && <PracticeCompletion session={session} />}
+      {completionSaved && (!showExtraFeedback || saved) ? (
+        <>
+          <Button
+            title="View my Journey"
+            onPress={() => app.navigate(routes.journey)}
+          />
+          {!!session.sourceConversationId && (
+            <Button
+              title="Continue conversation"
+              variant="secondary"
+              style={{ marginTop: 8 }}
+              onPress={() =>
+                app.navigate(routes.companion, {
+                  id: session.sourceConversationId,
+                })
+              }
+            />
+          )}
+          {!saved && (
+            <Button
+              title="Add optional practice feedback"
+              variant="ghost"
+              onPress={() => setShowExtraFeedback(true)}
+              style={{ marginTop: 8 }}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <View
+            style={[
+              styles.writingDesk,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <EditorialSection
+              title="How did that feel?"
+              description="Optional. Leave a note for yourself or keep going."
+            />
+            <View
+              accessibilityRole="radiogroup"
+              accessibilityLabel="How did that feel?"
               style={[
-                styles.feedbackOption,
-                {
-                  borderColor:
-                    feedback === item.label ? colors.primary : colors.border,
-                  backgroundColor:
-                    feedback === item.label ? colors.surface2 : colors.surface,
-                },
+                styles.feedbackOptions,
+                stackChoices && styles.stackedChoices,
               ]}
             >
-              <Mark name={item.icon} />
-              <Copy style={{ textAlign: "center", fontSize: 12 }}>
-                {item.label}
+              {[
+                { label: "Helped", icon: "leaf-outline" },
+                { label: "A little", icon: "water-outline" },
+                { label: "Not for me", icon: "close-outline" },
+              ].map(({ label, icon }) => {
+                const selected = feedback === label;
+                const disabled = saving || waitingForSession;
+                const ink = selected ? colors.lavenderText : colors.text;
+                return (
+                  <Pressable
+                    key={label}
+                    accessibilityRole="radio"
+                    accessibilityLabel={label}
+                    accessibilityState={{ checked: selected, disabled }}
+                    aria-checked={selected}
+                    {...webRadioProps(
+                      selected || (!feedback && label === "Helped"),
+                    )}
+                    disabled={disabled}
+                    onPress={() => writeDraft(label)}
+                    style={({ pressed }) => [
+                      styles.feedbackOption,
+                      stackChoices && styles.feedbackOptionStacked,
+                      {
+                        borderColor: selected
+                          ? colors.lavenderText
+                          : colors.border,
+                        backgroundColor: selected
+                          ? colors.lavenderSurface
+                          : colors.surface,
+                        opacity: disabled || pressed ? 0.72 : 1,
+                      },
+                    ]}
+                  >
+                    <Mark name={icon} color={ink} size={20} />
+                    <Copy
+                      style={{
+                        textAlign: stackChoices ? "left" : "center",
+                        fontSize: 13,
+                        color: ink,
+                        flexShrink: 1,
+                      }}
+                    >
+                      {label}
+                    </Copy>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Field
+              value={note}
+              onChangeText={(value) => writeDraft(feedback, value)}
+              editable={!saving && !waitingForSession}
+              placeholder="Add a note (optional)…"
+              minHeight={90}
+              style={styles.checkinField}
+            />
+          </View>
+          {feedback === "Helped" && !!preference && (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: remember }}
+              aria-checked={remember}
+              disabled={saving || waitingForSession}
+              onPress={() => writeDraft(feedback, note, !remember)}
+              style={styles.checkRow}
+            >
+              <Mark
+                name={remember ? "checkbox" : "square-outline"}
+                color={resolved === "dark" ? colors.primary : colors.accent}
+              />
+              <Copy style={{ flex: 1, fontSize: 13 }}>
+                {session.type === "grounding"
+                  ? "Save a preference that five-senses grounding helps me."
+                  : "Save a preference that short breathing moments help me."}
               </Copy>
             </Pressable>
-          ))}
-        </View>
-      </Card>
-      <Field
-        value={note}
-        onChangeText={(value) => writeDraft(feedback, value)}
-        editable={!saving && !waitingForSession}
-        placeholder="Add a note (optional)…"
-        minHeight={90}
-      />
-      {feedback === "Helped" && !!preference && (
-        <Pressable
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: remember }}
-          aria-checked={remember}
-          disabled={saving}
-          onPress={() => writeDraft(feedback, note, !remember)}
-          style={styles.checkRow}
-        >
-          <Mark
-            name={remember ? "checkbox" : "square-outline"}
-            color={colors.primary}
+          )}
+          {remember &&
+            feedback === "Helped" &&
+            !!preference &&
+            !app.user?.personalization && (
+              <Hint>
+                This saves the preference for you to manage. Personalization is
+                currently off; enable it in Profile if you want Solace to use
+                approved preferences and recent check-ins.
+              </Hint>
+            )}
+          <ErrorNote error={error} />
+          <ErrorNote error={completionError} />
+          {awaitingCompletion && !!completionError && (
+            <Hint>
+              Your completed practice has not been saved yet. You can retry
+              here.
+            </Hint>
+          )}
+          {waitingForSession && !awaitingCompletion && !saving && (
+            <Hint>
+              Your feedback is still here. Retry to save the same practice.
+            </Hint>
+          )}
+          <Button
+            title={
+              savingCompletion
+                ? "Saving practice…"
+                : saving
+                  ? "Saving…"
+                  : waitingForSession
+                    ? "Retry saving practice"
+                    : "Save and continue →"
+            }
+            onPress={awaitingCompletion ? saveCompletion : save}
+            disabled={saving || savingCompletion}
           />
-          <Copy style={{ flex: 1, fontSize: 13 }}>
-            {session.type === "grounding"
-              ? "Save a preference that five-senses grounding helps me."
-              : "Save a preference that short breathing moments help me."}
+          <Copy muted style={{ fontSize: 12, marginTop: 10 }}>
+            Feedback is optional. You can inspect or remove approved memories in
+            Profile.
           </Copy>
-        </Pressable>
+        </>
       )}
-      {remember &&
-        feedback === "Helped" &&
-        !!preference &&
-        !app.user?.personalization && (
-          <Hint>
-            This saves the preference for you to manage. Personalization is
-            currently off; enable it in Profile if you want Solace to use
-            approved preferences and recent check-ins.
-          </Hint>
-        )}
-      <ErrorNote error={error} />
-      {waitingForSession && !saving && (
-        <Hint>
-          Your feedback is still here. Retry to save the same practice.
-        </Hint>
-      )}
-      <Button
-        title={
-          saving
-            ? "Saving…"
-            : waitingForSession
-              ? "Retry saving practice"
-              : "Save and continue →"
-        }
-        onPress={save}
-        disabled={saving}
-      />
-      <Copy muted style={{ fontSize: 12, marginTop: 10 }}>
-        Feedback is optional. You can inspect or remove approved memories in
-        Profile.
-      </Copy>
     </Screen>
   );
 }
@@ -1909,7 +2331,7 @@ function selectedReflectionWeek(day: unknown) {
 
 function Reflection() {
   const app = useApp();
-  const { colors, resolved } = useTheme();
+  const { colors } = useTheme();
   const editId = typeof app.params?.id === "string" ? app.params.id : undefined;
   const existing = editId
     ? app.data.reflections.find((entry) => entry.id === editId)
@@ -2116,25 +2538,17 @@ function Reflection() {
   }
   if (saved)
     return (
-      <Screen>
-        <Header />
-        <PageIntro
+      <Screen variant="nested">
+        <ScenePage
+          kind="reflection"
           title={editId ? "Reflection updated" : "A little space, for you"}
-        >
-          {app.pendingWrites.some((entry) => entry.id === savedId)
-            ? app.draftProtection === "device"
-              ? "Your reflection is saved securely on this device. It is waiting to sync to your account."
-              : "Your reflection is kept in this browser tab and waiting to sync. Keep the tab open; closing it will remove this unsynced writing."
-            : "Your reflection is saved privately in your Journey."}
-        </PageIntro>
-        <Artwork
-          kind="stillness"
-          style={{
-            width: "100%",
-            height: 170,
-            borderRadius: 22,
-            marginBottom: 24,
-          }}
+          description={
+            app.pendingWrites.some((entry) => entry.id === savedId)
+              ? app.draftProtection === "device"
+                ? "Your reflection is saved securely on this device. It is waiting to sync to your account."
+                : "Your reflection is kept in this browser tab and waiting to sync. Keep the tab open; closing it will remove this unsynced writing."
+              : "Your reflection is saved privately in your Journey."
+          }
         />
         {app.params?.conversationId && (
           <View style={{ marginBottom: 12 }}>
@@ -2171,9 +2585,9 @@ function Reflection() {
       </Screen>
     );
   return (
-    <Screen>
-      <Header />
-      <PageIntro
+    <Screen variant="nested">
+      <ScenePage
+        kind="reflection"
         title={
           editId
             ? existing?.weeklyPeriod
@@ -2181,13 +2595,22 @@ function Reflection() {
               : "Edit your reflection"
             : week
               ? "Your weekly story"
-              : "A moment\nto reflect"
+              : "A moment to reflect"
+        }
+        description={
+          week
+            ? reflectionPeriodLabel(week)
+            : "A quiet place to put what’s on your mind into words."
         }
       >
-        {week
-          ? reflectionPeriodLabel(week)
-          : "A guided journal to notice, process, and make space for what is on your mind."}
-      </PageIntro>
+        {!week && !editId && (
+          <SaveToToolkit
+            kind="reflection"
+            targetId="reflection"
+            title="A moment to reflect"
+          />
+        )}
+      </ScenePage>
       {editId && (!existing || existing.localOnly) && (
         <Hint>
           {existing
@@ -2199,6 +2622,7 @@ function Reflection() {
         <WeeklyStoryOverview
           facts={weeklyContext.facts}
           goal={weeklyContext.goal}
+          period={week}
         />
       )}
       {week && hasStoryActivity && (
@@ -2285,56 +2709,69 @@ function Reflection() {
         </Hint>
       )}
       {showEditor && (!editId || (existing && !existing.localOnly)) && (
-        <>
+        <View style={{ gap: spacing.row }}>
           {!!guidedPrompt && <Hint>{guidedPrompt}</Hint>}
           {!!app.params?.prompt && <Hint>{String(app.params.prompt)}</Hint>}
-          {!week && !editId && (
-            <SaveToToolkit
-              kind="reflection"
-              targetId="reflection"
-              title="A moment to reflect"
-            />
-          )}
-          <Card
-            style={{
-              padding: 16,
-              backgroundColor:
-                resolved === "dark" ? colors.surface : colors.lavenderSurface,
-              borderColor:
-                resolved === "dark" ? colors.border : colors.lavenderSurface,
-            }}
+          <View
+            style={[
+              styles.writingDesk,
+              {
+                backgroundColor: colors.lavenderSurface,
+                borderColor: colors.border,
+              },
+            ]}
           >
-            <Heading small style={{ color: colors.lavenderText }}>
-              What has been on your mind?
-            </Heading>
+            <View style={styles.writingLabel}>
+              <Mark
+                name="create-outline"
+                size={20}
+                color={colors.lavenderText}
+              />
+              <Heading small style={{ color: colors.lavenderText }}>
+                What has been on your mind?
+              </Heading>
+            </View>
             <Field
               value={text}
               onChangeText={(value) => writeDraft(value, need)}
               editable={!saving}
               placeholder="Write your reflection here…"
-              minHeight={180}
+              minHeight={186}
               maxLength={maxLength}
+              style={[styles.writingField, { borderTopColor: colors.border }]}
             />
-          </Card>
-          <Action
-            title="What might you need?"
-            description="If it feels helpful, explore what you need more of right now. (Optional)"
-            onPress={() => setExpanded(!expanded)}
-          />
-          {expanded && (
-            <Field
-              value={need}
-              onChangeText={(value) => writeDraft(text, value)}
-              editable={!saving}
-              placeholder="Perhaps rest, reassurance, connection, or something else…"
-              minHeight={100}
-              maxLength={maxLength}
+            <View style={styles.between}>
+              <Copy muted style={styles.shelfDetail}>
+                Private reflection
+              </Copy>
+              <Copy muted style={styles.shelfDetail}>
+                {text.length} / {maxLength}
+              </Copy>
+            </View>
+          </View>
+          <View>
+            <Action
+              title="What might you need?"
+              description="If it feels helpful, explore what you need more of right now. (Optional)"
+              onPress={() => setExpanded(!expanded)}
+              expanded={expanded}
             />
-          )}
-          <Copy muted style={{ fontSize: 12, marginTop: 14, marginBottom: 14 }}>
+            {expanded && (
+              <Field
+                value={need}
+                onChangeText={(value) => writeDraft(text, value)}
+                editable={!saving}
+                placeholder="Perhaps rest, reassurance, connection, or something else…"
+                minHeight={100}
+                maxLength={maxLength}
+                style={{ marginVertical: 0 }}
+              />
+            )}
+          </View>
+          <Copy muted style={styles.shelfDetail}>
             {app.draftProtection === "device"
-              ? "Draft protection saves shortly after typing stops and when you leave the app. Keep this screen open if a storage error appears. Save to add it to your Journey."
-              : "Your draft stays in this tab while you move around. Save before leaving; unsynced writing is lost if you close or reload this tab."}
+              ? "Drafts stay on this device. Save to add your reflection to Journey."
+              : "Drafts stay in this tab until it closes or reloads. Save to add your reflection to Journey."}
           </Copy>
           <ErrorNote error={app.offlineError || ""} />
           <ErrorNote error={error} />
@@ -2363,7 +2800,6 @@ function Reflection() {
             variant="ghost"
             onPress={app.back}
             disabled={saving}
-            style={{ marginTop: 10 }}
           />
           {!!(text || need) && !discarding && (
             <Button
@@ -2400,7 +2836,7 @@ function Reflection() {
               />
             </Card>
           )}
-        </>
+        </View>
       )}
     </Screen>
   );
@@ -2408,23 +2844,38 @@ function Reflection() {
 
 function Reflections() {
   const app = useApp();
+  const { colors } = useTheme();
   const records = [...(app.data.reflections || [])].sort(
     (a: AnyRecord, b: AnyRecord) =>
       String(b.createdAt).localeCompare(String(a.createdAt)),
   );
   return (
-    <Screen>
-      <Header />
-      <PageIntro title="Your reflections">
-        A private place to return to the thoughts you have made space for.
-      </PageIntro>
-      <Button
-        title="Write a reflection"
-        onPress={() => app.navigate("reflection")}
-      />
-      <View style={{ marginTop: 20 }}>
-        {records.length ? (
-          records.map((record: AnyRecord) => (
+    <Screen variant="nested">
+      <ScenePage
+        title="Your reflections"
+        kind="reflection"
+        description="Return to the thoughts you’ve made space for."
+        meta={
+          records.length
+            ? `${records.length} saved ${records.length === 1 ? "reflection" : "reflections"}`
+            : "No saved reflections yet"
+        }
+      >
+        <Button
+          title="Write a reflection"
+          icon="create-outline"
+          onPress={() => app.navigate("reflection")}
+        />
+      </ScenePage>
+      {!!records.length && <EditorialSection title="Your saved writing" />}
+      {!!records.length && (
+        <View
+          style={[
+            styles.guideTrail,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          {records.map((record: AnyRecord, index) => (
             <Action
               key={record.id}
               title={
@@ -2442,24 +2893,27 @@ function Reflections() {
                   "A saved reflection",
               ).slice(0, 130)}`}
               icon="create-outline"
+              style={[
+                styles.archiveRow,
+                index > 0 && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                },
+              ]}
               onPress={() =>
                 app.navigate(savedReflectionRoute(record), { id: record.id })
               }
             />
-          ))
-        ) : (
-          <Hint>
-            Your saved reflections will appear here. Start whenever you are
-            ready.
-          </Hint>
-        )}
-      </View>
+          ))}
+        </View>
+      )}
     </Screen>
   );
 }
 
 function ReflectionDetail({ params }: { params: AnyRecord }) {
   const app = useApp();
+  const { colors } = useTheme();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -2483,21 +2937,22 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro
+    <Screen variant="nested">
+      <ScenePage
+        kind="reflection"
         title={record?.weeklyPeriod ? "Your weekly story" : "Your reflection"}
-      >
-        {record?.weeklyPeriod
-          ? reflectionPeriodLabel(record.weeklyPeriod)
-          : record
-            ? new Date(record.createdAt).toLocaleDateString(undefined, {
-                month: "long",
-                day: "numeric",
-                year: "numeric",
-              })
-            : "This reflection is no longer available."}
-      </PageIntro>
+        description={
+          record?.weeklyPeriod
+            ? reflectionPeriodLabel(record.weeklyPeriod)
+            : record
+              ? new Date(record.createdAt).toLocaleDateString(undefined, {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : "This reflection is no longer available."
+        }
+      />
       {!!record?.localOnly && (
         <Hint>
           {app.draftProtection === "device"
@@ -2507,8 +2962,13 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
       )}
       {record && (
         <>
-          <Card style={{ padding: 20 }}>
-            <Copy selectable>
+          <View
+            style={[
+              styles.writingDesk,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <Copy selectable style={styles.readerCopy}>
               {record.text || record.content || record.note}
             </Copy>
             {!!record.need && (
@@ -2519,7 +2979,7 @@ function ReflectionDetail({ params }: { params: AnyRecord }) {
                 </Copy>
               </View>
             )}
-          </Card>
+          </View>
           <View style={{ marginTop: 20 }}>
             {!record.localOnly && (
               <Button
@@ -2567,6 +3027,16 @@ function SessionDetail({ params }: { params: AnyRecord }) {
     (v: AnyRecord) => v.id === params.id,
   );
   const day = record && recordDay(record);
+  const followUpId = practiceFollowUpId(record?.id);
+  const followUp = followUpId
+    ? app.data.checkins.find((entry) => entry.id === followUpId)
+    : undefined;
+  const emotionalRecheck = emotionalRecheckLabel(
+    record?.emotionalRecheck?.response,
+  );
+  const guidedSource = ["Explore", "Today", "Journey"].find(
+    (source) => source === record?.source,
+  );
   async function remove() {
     if (!record?.id) return;
     setDeleting(true);
@@ -2581,27 +3051,39 @@ function SessionDetail({ params }: { params: AnyRecord }) {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro title={record?.title || "Your moment"}>
-        {day
-          ? new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-            })
-          : record
-            ? "Saved practice"
-            : "This moment is no longer available."}
-      </PageIntro>
+    <Screen variant="nested">
+      <ScenePage
+        kind={
+          record?.type === "grounding"
+            ? "grounding"
+            : record?.resourceId === "sleep"
+              ? "sleep"
+              : "breathing"
+        }
+        title={record?.title || "Your moment"}
+        description={
+          day
+            ? new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })
+            : record
+              ? "Saved practice"
+              : "This moment is no longer available."
+        }
+        meta={
+          record
+            ? record.completed
+              ? "A completed practice"
+              : "Practice record"
+            : undefined
+        }
+      />
       {record && (
         <>
           <Card style={{ padding: 20 }}>
-            <Heading small>
-              {record.completed
-                ? "A completed practice"
-                : "The time you made for yourself"}
-            </Heading>
+            <Heading small>Your practice details</Heading>
             {record.kind === "generated" && record.activity && (
               <View style={{ gap: 12, marginTop: 14 }}>
                 <Copy>
@@ -2616,8 +3098,8 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                 <Hint>
                   {record.provider === "live"
                     ? "Created with AI for this saved Moment."
-                    : record.source === "Explore" || record.source === "Today"
-                      ? `Guided practice from ${record.source}.`
+                    : guidedSource
+                      ? `Guided practice from ${guidedSource}.`
                       : "Built-in Moment · Live AI was off."}
                 </Hint>
                 <Button
@@ -2627,10 +3109,7 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                     app.navigate("moment-player", {
                       activity: record.activity,
                       provider: record.provider || "offline",
-                      source:
-                        record.source === "Explore" || record.source === "Today"
-                          ? record.source.toLowerCase()
-                          : undefined,
+                      source: guidedSource?.toLowerCase(),
                       explanation: "A Moment you previously saved.",
                       usedMemoryIds: [],
                     })
@@ -2663,6 +3142,28 @@ function SessionDetail({ params }: { params: AnyRecord }) {
                   ? " · Guide completed"
                   : " · Partial progress"}
               </Copy>
+            )}
+            {emotionalRecheck ? (
+              <View style={{ marginTop: 20 }}>
+                <Heading small>How you felt afterward</Heading>
+                <Copy>{emotionalRecheck}</Copy>
+                <Hint>
+                  {new Date(
+                    record.emotionalRecheck.recordedAt,
+                  ).toLocaleString()}
+                </Hint>
+              </View>
+            ) : (
+              followUp && (
+                <View style={{ marginTop: 20 }}>
+                  <Heading small>Mood after practice</Heading>
+                  <Copy>{followUp.mood}</Copy>
+                  <Hint>
+                    {new Date(followUp.createdAt).toLocaleString()}
+                    {followUp.localOnly ? " · Waiting to sync" : ""}
+                  </Hint>
+                </View>
+              )
             )}
             {record.feedback && record.feedback !== "skipped" && (
               <View style={{ marginTop: 20 }}>
@@ -2720,51 +3221,45 @@ function SessionDetail({ params }: { params: AnyRecord }) {
 function Resources() {
   const app = useApp();
   return (
-    <Screen>
-      <Header />
-      <PageIntro title="Resources">
-        A curated library of practices, tools, and gentle guidance for everyday
-        wellbeing.
-      </PageIntro>
-      <Artwork
-        kind="stillness"
-        style={{
-          width: "100%",
-          height: 144,
-          borderRadius: 22,
-          marginBottom: 24,
-        }}
+    <Screen variant="nested">
+      <ScenePage
+        kind="guide"
+        title="Resources"
+        description="Practical ways to make room for rest, care, and perspective."
+        meta={`${RESOURCE_GUIDES.length} guides · At your pace`}
       />
-      <Action
-        title="Your saved toolkit"
-        description={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
-        icon="bookmark-outline"
-        tone="lavender"
-        onPress={() => app.navigate("toolkit")}
-      />
-      <Action
-        title="Five-senses grounding"
-        description="Notice this moment through your senses."
-        icon="hand-left-outline"
-        tone="peach"
-        onPress={() => app.navigate("grounding")}
-      />
-      {RESOURCE_GUIDES.map((guide) => (
-        <Action
-          key={guide.id}
-          title={guide.title}
-          description={guide.subtitle}
-          icon={guide.icon}
-          tone={
-            guide.id === "sleep" || guide.id === "self-esteem"
-              ? "lavender"
-              : guide.id === "anxiety" || guide.id === "low-mood"
-                ? "peach"
-                : "sage"
-          }
-          onPress={() => app.navigate("resource", { id: guide.id })}
+      <View style={styles.featureSection}>
+        <EditorialSection
+          title="Wellness guides"
+          description="Pick a guide that fits what you need today."
         />
-      ))}
+        {RESOURCE_GUIDES.map((guide) => (
+          <ArtShelfItem
+            key={guide.id}
+            title={guide.title}
+            detail={guide.subtitle}
+            kind={guideArt(guide.id)}
+            onPress={() => app.navigate("resource", { id: guide.id })}
+          />
+        ))}
+      </View>
+      <View style={styles.featureSection}>
+        <EditorialSection title="Quick access" />
+        <Action
+          title="Your saved toolkit"
+          description={`${app.data.favorites.length} saved ${app.data.favorites.length === 1 ? "practice or guide" : "practices and guides"}`}
+          icon="bookmark-outline"
+          tone="lavender"
+          onPress={() => app.navigate("toolkit")}
+        />
+        <Action
+          title="Five-senses grounding"
+          description="Notice this moment through your senses."
+          icon="hand-left-outline"
+          tone="peach"
+          onPress={() => app.navigate("grounding")}
+        />
+      </View>
       <Action
         title="Need more support?"
         description="Find human support and trusted resources."
@@ -2776,11 +3271,9 @@ function Resources() {
   );
 }
 
-function Resource({ params }: { params: AnyRecord }) {
+function Resource({ guide }: { guide: ResourceGuide }) {
   const app = useApp();
   const { colors, resolved } = useTheme();
-  const guide =
-    RESOURCE_GUIDES.find((v) => v.id === params.id) || RESOURCE_GUIDES[0];
   const [day] = useState(localDay);
   const previous = [...(app.data.sessions || [])]
     .filter(
@@ -2796,12 +3289,11 @@ function Resource({ params }: { params: AnyRecord }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const saveLock = useRef(false);
-  useEffect(() => {
-    setChecked(previous?.steps || []);
-    setExpanded(0);
-    setSaved(false);
-    setError("");
-  }, [guide.id]);
+  const savedSteps = useRef(checked);
+  useTabResetGuard(
+    checked.length !== savedSteps.current.length ||
+      checked.some((step) => !savedSteps.current.includes(step)),
+  );
   async function save() {
     if (saveLock.current) return;
     if (!checked.length && !previous?.id) {
@@ -2821,6 +3313,7 @@ function Resource({ params }: { params: AnyRecord }) {
         completed: checked.length === guide.steps.length,
         day,
       });
+      savedSteps.current = checked;
       setSaved(true);
     } catch (e) {
       if ((e as { status?: number }).status === 409) {
@@ -2841,45 +3334,28 @@ function Resource({ params }: { params: AnyRecord }) {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro title={guide.title}>{guide.description}</PageIntro>
-      <SaveToToolkit kind="resource" targetId={guide.id} title={guide.title} />
-      <Artwork
-        kind={guide.id === "sleep" ? "night" : "stillness"}
-        style={{
-          width: "100%",
-          height: 144,
-          borderRadius: 22,
-          marginBottom: 22,
-        }}
-      />
-      {guide.id === "anxiety" && (
-        <Action
-          title="Try five-senses grounding"
-          description="Follow an optional practice, one sense at a time."
-          icon="hand-left-outline"
-          onPress={() => app.navigate("grounding", { source: guide.id })}
-        />
-      )}
-      <Card
-        style={{
-          padding: 16,
-          marginBottom: 16,
-          backgroundColor:
-            resolved === "dark" ? colors.surface : colors.sageSurface,
-          borderColor: resolved === "dark" ? colors.border : colors.sageSurface,
-        }}
+    <Screen variant="nested">
+      <ScenePage
+        kind={guideArt(guide.id)}
+        title={guide.title}
+        description={guide.description}
       >
         <View style={styles.between}>
-          <Copy style={{ fontFamily: F.strong, color: colors.sageText }}>
+          <Copy style={{ fontFamily: F.strong, color: colors.lavenderText }}>
             Your progress
           </Copy>
-          <Copy style={{ fontSize: 12, color: colors.sageText }}>
+          <Copy style={{ fontSize: 12, color: colors.lavenderText }}>
             {checked.length} of {guide.steps.length} practices
           </Copy>
         </View>
         <View
+          accessibilityRole="progressbar"
+          accessibilityLabel="Practices tried"
+          accessibilityValue={{
+            min: 0,
+            max: guide.steps.length,
+            now: checked.length,
+          }}
           style={[styles.progressTrack, { backgroundColor: colors.border }]}
         >
           <View
@@ -2887,81 +3363,124 @@ function Resource({ params }: { params: AnyRecord }) {
               width: `${(checked.length / guide.steps.length) * 100}%`,
               height: 9,
               borderRadius: 8,
-              backgroundColor: colors.sageText,
+              backgroundColor: colors.lavenderText,
             }}
           />
         </View>
-      </Card>
-      {guide.steps.map((step, index) => (
-        <Card key={step.title} style={{ padding: 15, marginBottom: 10 }}>
-          <View style={styles.cardTop}>
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityLabel={`Mark ${step.title} as tried`}
-              disabled={saving}
-              accessibilityState={{ checked: checked.includes(index) }}
-              aria-checked={checked.includes(index)}
-              onPress={() => {
-                setChecked(
-                  checked.includes(index)
-                    ? checked.filter((v) => v !== index)
-                    : [...checked, index],
-                );
-                setSaved(false);
-              }}
-              style={styles.checkbox}
-            >
-              <Mark
-                name={checked.includes(index) ? "checkbox" : "square-outline"}
-                color={colors.primary}
-                size={27}
-              />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ expanded: expanded === index }}
-              aria-expanded={expanded === index}
-              onPress={() => setExpanded(expanded === index ? null : index)}
-              style={{ flex: 1, minHeight: 48, justifyContent: "center" }}
-            >
-              <Heading small style={{ fontSize: 25 }}>
-                {step.title}
-              </Heading>
-              {expanded !== index && (
-                <Copy muted style={{ fontSize: 12, marginTop: 3 }}>
-                  Tap to read the practice
-                </Copy>
-              )}
-            </Pressable>
-            <Mark
-              name={expanded === index ? "chevron-up" : "chevron-down"}
-              size={19}
-            />
-          </View>
-          {expanded === index && (
-            <View style={{ paddingTop: 12 }}>
-              <Copy style={{ fontSize: 14, lineHeight: 22 }}>{step.text}</Copy>
-              {step.action && (
-                <View style={{ marginTop: 14 }}>
-                  <Button
-                    title={
-                      step.action === "breathing"
-                        ? "Start a moment"
-                        : step.action === "reflection"
-                          ? "Open reflection"
-                          : "Check in"
-                    }
-                    variant="secondary"
-                    onPress={() =>
-                      app.navigate(step.action!, { source: guide.id })
-                    }
-                  />
+        <SaveToToolkit
+          kind="resource"
+          targetId={guide.id}
+          title={guide.title}
+        />
+      </ScenePage>
+      {guide.id === "anxiety" && (
+        <ArtShelfItem
+          title="Try five-senses grounding"
+          detail="Follow an optional practice, one sense at a time."
+          kind="grounding"
+          onPress={() => app.navigate("grounding", { source: guide.id })}
+        />
+      )}
+      <EditorialSection
+        title={
+          guide.id === "sleep"
+            ? "Your wind-down sequence"
+            : "Take it one practice at a time"
+        }
+        description="Open a step to read it. Mark the practices you try."
+      />
+      <View
+        style={[
+          styles.guideTrail,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        {guide.steps.map((step, index) => (
+          <View
+            key={step.title}
+            style={[
+              styles.guideChapter,
+              index > 0 && {
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardTop}>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityLabel={`Mark ${step.title} as tried`}
+                disabled={saving}
+                accessibilityState={{ checked: checked.includes(index) }}
+                aria-checked={checked.includes(index)}
+                onPress={() => {
+                  setChecked(
+                    checked.includes(index)
+                      ? checked.filter((v) => v !== index)
+                      : [...checked, index],
+                  );
+                  setSaved(false);
+                }}
+                style={styles.checkbox}
+              >
+                <Mark
+                  name={checked.includes(index) ? "checkbox" : "square-outline"}
+                  color={resolved === "dark" ? colors.primary : colors.accent}
+                  size={27}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={step.title}
+                accessibilityState={{ expanded: expanded === index }}
+                aria-expanded={expanded === index}
+                onPress={() => setExpanded(expanded === index ? null : index)}
+                style={({ pressed }) => [
+                  styles.guideStep,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <View style={styles.flexCopy}>
+                  <Heading small style={{ fontSize: 25 }}>
+                    {step.title}
+                  </Heading>
+                  <Copy muted style={styles.shelfDetail}>
+                    Practice {index + 1}
+                  </Copy>
                 </View>
-              )}
+                <Mark
+                  name={expanded === index ? "chevron-up" : "chevron-down"}
+                  size={19}
+                />
+              </Pressable>
             </View>
-          )}
-        </Card>
-      ))}
+            {expanded === index && (
+              <View style={{ paddingTop: 12 }}>
+                <Copy style={{ fontSize: 14, lineHeight: 22 }}>
+                  {step.text}
+                </Copy>
+                {step.action && (
+                  <View style={{ marginTop: 14 }}>
+                    <Button
+                      title={
+                        step.action === "breathing"
+                          ? "Start a moment"
+                          : step.action === "reflection"
+                            ? "Open reflection"
+                            : "Check in"
+                      }
+                      variant="secondary"
+                      onPress={() =>
+                        app.navigate(step.action!, { source: guide.id })
+                      }
+                    />
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        ))}
+      </View>
       <Copy muted style={{ fontSize: 12, marginTop: 5, marginBottom: 12 }}>
         Mark the practices you actually tried. You can save partial progress.
       </Copy>
@@ -2995,164 +3514,9 @@ function Resource({ params }: { params: AnyRecord }) {
   );
 }
 
-function Plan() {
-  const app = useApp();
-  const { colors } = useTheme();
-  const existing = [...(app.data.plans || [])]
-    .filter((v: AnyRecord) => v.type === "wellness")
-    .sort((a: AnyRecord, b: AnyRecord) =>
-      String(b.updatedAt || b.createdAt).localeCompare(
-        String(a.updatedAt || a.createdAt),
-      ),
-    )[0];
-  const [tasks, setTasks] = useState<AnyRecord[]>(
-    existing?.tasks || DEFAULT_PLAN.map((v) => ({ ...v, completed: false })),
-  );
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-  const savedPlan = useRef<AnyRecord | null>(existing || null);
-  async function save(nextTasks = tasks) {
-    if (saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      savedPlan.current = await app.save("plans", {
-        ...(savedPlan.current?.id ? { id: savedPlan.current.id } : {}),
-        type: "wellness",
-        title: "Your next 3 days",
-        tasks: nextTasks,
-        createdAt: savedPlan.current?.createdAt || stamp(),
-        updatedAt: stamp(),
-        completed: nextTasks.every((v) => v.completed),
-      });
-      setSaved(true);
-      setEditing(false);
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <Screen>
-      <Header />
-      <PageIntro title={"Your wellness\nplan"}>
-        A simple, supportive plan for the next three days. Make it your own.
-      </PageIntro>
-      <View style={[styles.between, { marginBottom: 12 }]}>
-        <Heading small>Your next 3 days</Heading>
-        <Pressable
-          accessibilityRole="button"
-          disabled={saving}
-          onPress={() => setEditing(!editing)}
-          style={[
-            styles.chip,
-            { borderColor: colors.border, backgroundColor: colors.surface },
-          ]}
-        >
-          <Copy style={{ fontSize: 12 }}>
-            {editing ? "Close editor" : "Edit plan"}
-          </Copy>
-        </Pressable>
-      </View>
-      {tasks.map((task, index) => (
-        <Card key={index} style={{ padding: 16, marginBottom: 12 }}>
-          <View style={styles.cardTop}>
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityLabel={`Day ${index + 1}: ${task.title}`}
-              disabled={saving}
-              accessibilityState={{ checked: !!task.completed }}
-              aria-checked={!!task.completed}
-              onPress={() => {
-                setTasks(
-                  tasks.map((v, n) =>
-                    n === index ? { ...v, completed: !v.completed } : v,
-                  ),
-                );
-                setSaved(false);
-              }}
-              style={styles.checkbox}
-            >
-              <Mark
-                name={task.completed ? "checkmark-circle" : "ellipse-outline"}
-                color={colors.primary}
-                size={29}
-              />
-            </Pressable>
-            <View style={{ flex: 1 }}>
-              <Copy style={{ fontSize: 12, marginBottom: 3 }}>
-                Day {index + 1}
-              </Copy>
-              {editing ? (
-                <TextInput
-                  accessibilityLabel={`Day ${index + 1} activity`}
-                  value={task.title}
-                  editable={!saving}
-                  maxLength={90}
-                  onChangeText={(title) => {
-                    setTasks(
-                      tasks.map((v, n) => (n === index ? { ...v, title } : v)),
-                    );
-                    setSaved(false);
-                  }}
-                  style={[
-                    styles.field,
-                    {
-                      color: colors.text,
-                      borderColor: colors.border,
-                      backgroundColor: colors.surface2,
-                      minHeight: 50,
-                      marginVertical: 5,
-                    },
-                  ]}
-                />
-              ) : (
-                <Heading small style={{ fontSize: 26 }}>
-                  {task.title}
-                </Heading>
-              )}
-              <Copy style={{ fontSize: 13, lineHeight: 20, marginTop: 3 }}>
-                {task.description}
-              </Copy>
-            </View>
-          </View>
-          {!editing && (
-            <View style={{ marginTop: 13 }}>
-              <Button
-                title="Open practice"
-                icon="arrow-forward"
-                variant="secondary"
-                onPress={() => app.navigate(task.action || "reflection")}
-              />
-            </View>
-          )}
-        </Card>
-      ))}
-      <ErrorNote error={error} />
-      {saved && (
-        <Hint>Your plan is saved. Progress appears in your Journey.</Hint>
-      )}
-      <Button
-        title={saving ? "Saving…" : saved ? "Plan saved" : "Save plan"}
-        onPress={() => {
-          if (tasks.some((v) => !v.title.trim())) {
-            setError("Give each day a short activity title.");
-            return;
-          }
-          save();
-        }}
-        disabled={saving || saved}
-      />
-    </Screen>
-  );
-}
-
 function Affirmation() {
   const app = useApp();
-  const { colors, resolved } = useTheme();
+  const { colors } = useTheme();
   const challengeOnly = app.route === "challenge";
   const text = todayAffirmation();
   const day = localDay();
@@ -3206,34 +3570,28 @@ function Affirmation() {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro
-        title={challengeOnly ? "Daily challenge" : "Today’s\naffirmation"}
-      />
+    <Screen variant="nested">
+      {challengeOnly && (
+        <ScenePage
+          title="Daily challenge"
+          kind="breathing"
+          description="Make a few minutes for yourself today."
+          meta={complete ? "Completed today" : "3 minutes · At your pace"}
+        />
+      )}
       {!challengeOnly && (
-        <Card
-          style={{
-            padding: 24,
-            marginBottom: 20,
-            minHeight: 230,
-            backgroundColor:
-              resolved === "dark" ? colors.surface : colors.lavenderSurface,
-            borderColor:
-              resolved === "dark" ? colors.border : colors.lavenderSurface,
-          }}
-        >
+        <ScenePage title="Today’s affirmation" kind="checkin">
           <Text
             style={[
               styles.affirmation,
               {
-                color: resolved === "dark" ? colors.text : colors.lavenderText,
+                color: colors.lavenderText,
               },
             ]}
           >
             {text}
           </Text>
-          <View style={{ marginTop: 25 }}>
+          <View style={styles.affirmationAction}>
             <Button
               title={
                 busy === "affirmation"
@@ -3246,9 +3604,11 @@ function Affirmation() {
               disabled={!!busy || isSaved}
             />
           </View>
-        </Card>
+        </ScenePage>
       )}
-      <Card style={{ padding: 20 }}>
+      <Card
+        style={{ padding: spacing.card, backgroundColor: colors.sageSurface }}
+      >
         {!challengeOnly && (
           <View style={styles.cardTop}>
             <Mark name="leaf-outline" />
@@ -3313,6 +3673,7 @@ function Affirmation() {
 
 function SavedAffirmations() {
   const app = useApp();
+  const { colors } = useTheme();
   const [error, setError] = useState("");
   const [removing, setRemoving] = useState("");
   const records = (app.data.plans || []).filter(
@@ -3330,35 +3691,52 @@ function SavedAffirmations() {
     }
   }
   return (
-    <Screen>
-      <Header />
-      <PageIntro title={"Words to\nreturn to"}>
-        Your saved affirmations, whenever you need a gentle reminder.
-      </PageIntro>
-      {records.length ? (
-        records.map((record: AnyRecord) => (
-          <Card key={record.id} style={{ padding: 20, marginBottom: 14 }}>
-            <Heading small style={{ fontSize: 30, lineHeight: 35 }}>
-              {record.text}
-            </Heading>
-            <View style={{ marginTop: 16 }}>
-              <Button
-                title={
-                  removing === record.id ? "Removing…" : "Remove from saved"
-                }
-                variant="secondary"
-                onPress={() => remove(record.id)}
-                disabled={!!removing}
+    <Screen variant="nested">
+      <ScenePage
+        title="Saved affirmations"
+        kind="checkin"
+        description={
+          records.length
+            ? "Words you’ve chosen to keep close."
+            : "Save a thought from Today’s affirmation to return to it here."
+        }
+        meta={
+          records.length
+            ? `${records.length} saved`
+            : "No saved affirmations yet"
+        }
+      />
+      {records.length
+        ? records.map((record: AnyRecord) => (
+            <View
+              key={record.id}
+              style={[
+                styles.writingDesk,
+                styles.featureSection,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Mark
+                name="bookmark-outline"
+                size={19}
+                color={colors.lavenderText}
               />
+              <Heading small style={{ fontSize: 30, lineHeight: 35 }}>
+                {record.text}
+              </Heading>
+              <View style={{ marginTop: 16 }}>
+                <Button
+                  title={
+                    removing === record.id ? "Removing…" : "Remove from saved"
+                  }
+                  variant="ghost"
+                  onPress={() => remove(record.id)}
+                  disabled={!!removing}
+                />
+              </View>
             </View>
-          </Card>
-        ))
-      ) : (
-        <Hint>
-          No saved affirmations yet. Save a thought from Today’s affirmation to
-          return to it here.
-        </Hint>
-      )}
+          ))
+        : null}
       <ErrorNote error={error} />
       <Button
         title="Today’s affirmation"
@@ -3377,7 +3755,20 @@ export default function WellnessScreen({ name }: { name: string }) {
   if (name === "grounding") return <Grounding params={params} />;
   if (name === "checkin") return <Checkin />;
   if (name === "assessments") return <Assessments />;
-  if (name === "assessment") return <Assessment params={params} />;
+  if (name === "assessment") {
+    const definition = ASSESSMENTS.find(({ id }) => id === params.id);
+    return definition ? (
+      <Assessment key={definition.id} definition={definition} />
+    ) : (
+      <MissingWellnessItem
+        title="Check-in unavailable"
+        description="This reflection is no longer available. Choose another check-in to continue."
+        icon="clipboard-outline"
+        action="View check-ins"
+        destination="assessments"
+      />
+    );
+  }
   if (name === "assessment-result") return <AssessmentResult params={params} />;
   if (name === "breathing" || name === "moment")
     return <Breathing params={params} />;
@@ -3387,29 +3778,181 @@ export default function WellnessScreen({ name }: { name: string }) {
   if (name === "reflection-detail") return <ReflectionDetail params={params} />;
   if (name === "session-detail") return <SessionDetail params={params} />;
   if (name === "resources") return <Resources />;
-  if (name === "resource" || name === "sleep")
-    return (
-      <Resource
-        params={name === "sleep" ? { ...params, id: "sleep" } : params}
+  if (name === "resource" || name === "sleep") {
+    const guide = RESOURCE_GUIDES.find(
+      ({ id }) => id === (name === "sleep" ? "sleep" : params.id),
+    );
+    return guide ? (
+      <Resource key={guide.id} guide={guide} />
+    ) : (
+      <MissingWellnessItem
+        title="Guide unavailable"
+        description="This guide is no longer available. You can choose another guide from the library."
+        icon="book-outline"
+        action="Browse resources"
+        destination="resources"
       />
     );
-  if (name === "plan") return <Plan />;
+  }
   if (name === "affirmation" || name === "challenge") return <Affirmation />;
   if (name === "saved-affirmations") return <SavedAffirmations />;
   return <Resources />;
 }
 
+function MissingWellnessItem({
+  title,
+  description,
+  icon,
+  action,
+  destination,
+}: {
+  title: string;
+  description: string;
+  icon: string;
+  action: string;
+  destination: "resources" | "assessments";
+}) {
+  const app = useApp();
+  return (
+    <Screen variant="nested">
+      <NestedHeader
+        title={destination === "resources" ? "Resources" : "Check-ins"}
+        onBack={app.back}
+      />
+      <NestedState title={title} description={description} icon={icon}>
+        <Button title={action} onPress={() => app.navigate(destination)} />
+      </NestedState>
+    </Screen>
+  );
+}
+
 const styles = StyleSheet.create({
   copy: { fontFamily: F.body, fontSize: 15, lineHeight: 23 },
   heading: { fontFamily: F.heading, letterSpacing: -0.6 },
-  header: {
+  flexCopy: { flex: 1, minWidth: 0 },
+  featureSection: { marginBottom: spacing.section },
+  sceneBack: { alignSelf: "flex-start", marginBottom: spacing.row },
+  savedList: { marginBottom: spacing.section },
+  shelfItem: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 28,
-    minHeight: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: "hidden",
+    marginBottom: spacing.compact,
   },
-  brand: { fontFamily: F.heading, fontSize: 29, letterSpacing: -0.6 },
+  shelfMain: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 94,
+    flexDirection: "row",
+    gap: spacing.row,
+    alignItems: "center",
+    padding: spacing.compact,
+    paddingRight: spacing.row,
+  },
+  shelfThumb: {
+    width: 70,
+    minHeight: 70,
+    alignSelf: "stretch",
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 11,
+  },
+  shelfCopy: { flex: 1, minWidth: 0, gap: 4, paddingVertical: 4 },
+  shelfTitle: { fontSize: 25, lineHeight: 26 },
+  shelfDetail: { fontSize: 13, lineHeight: 19 },
+  shelfTrailing: { paddingRight: 4 },
+  previousReflection: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.compact,
+    marginBottom: spacing.row,
+  },
+  moodPanel: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: spacing.compact + 3,
+    marginBottom: spacing.section,
+  },
+  checkinWriting: {
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: spacing.card,
+    paddingBottom: spacing.row,
+  },
+  checkinField: { marginVertical: spacing.compact, borderRadius: 12 },
+  draftCaption: { fontSize: 13, lineHeight: 20, marginVertical: spacing.row },
+  questionPanel: {
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: spacing.card + 4,
+    marginBottom: spacing.card,
+    gap: spacing.row,
+  },
+  senseRoute: {
+    flexDirection: "row",
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: spacing.row,
+  },
+  senseNode: { flex: 1, alignItems: "center", gap: 3 },
+  senseStage: {
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: spacing.card + 4,
+    marginBottom: spacing.card,
+  },
+  senseStageHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+    marginBottom: spacing.row,
+  },
+  guideTrail: {
+    borderWidth: 1,
+    borderRadius: 20,
+    overflow: "hidden",
+    marginBottom: spacing.row,
+  },
+  guideChapter: { padding: spacing.row },
+  writingDesk: {
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: spacing.card,
+    gap: spacing.compact,
+  },
+  writingLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+    flexWrap: "wrap",
+  },
+  writingField: {
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 0,
+    marginVertical: 0,
+    borderRadius: 0,
+  },
+  readerCopy: { fontSize: 17, lineHeight: 29 },
+  archiveRow: { borderWidth: 0, borderRadius: 0, marginBottom: 0 },
+  groundingProgress: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: spacing.section,
+  },
+  guideStep: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.row,
+  },
+  affirmationAction: { alignSelf: "flex-start", maxWidth: "100%" },
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -3440,23 +3983,32 @@ const styles = StyleSheet.create({
   action: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 13,
-    paddingVertical: 18,
-    minHeight: 86,
-    marginBottom: 3,
+    gap: spacing.row,
+    padding: spacing.row,
+    minHeight: 70,
+    marginBottom: spacing.compact,
+    borderWidth: 1,
+    borderRadius: 18,
   },
   iconBox: {
-    height: 46,
-    width: 46,
-    borderRadius: 23,
+    height: 42,
+    width: 42,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
   },
-  moodRow: { flexDirection: "row", gap: 5, marginTop: 16 },
+  moodRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: spacing.row,
+  },
+  tightMoodRow: { marginHorizontal: -7, gap: 4 },
   moodChoice: {
-    flex: 1,
-    minHeight: 84,
-    paddingVertical: 12,
+    flexGrow: 1,
+    minWidth: 44,
+    minHeight: 68,
+    paddingVertical: spacing.compact,
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
@@ -3483,6 +4035,7 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: "row", alignItems: "center", gap: 12 },
   cardFooter: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: 12,
     marginTop: 15,
@@ -3494,12 +4047,67 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   progressRow: { flexDirection: "row", gap: 5, marginTop: 14 },
+  daylightBreathArt: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    overflow: "hidden",
+  },
   momentArt: {
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 270,
-    marginTop: 18,
-    marginBottom: 6,
+    marginVertical: spacing.compact,
+  },
+  breathStage: {
+    alignItems: "center",
+    borderRadius: 26,
+    borderWidth: 1,
+    paddingHorizontal: spacing.card,
+    paddingVertical: spacing.row,
+    overflow: "hidden",
+  },
+  breathTitle: {
+    textAlign: "center",
+    fontStyle: "italic",
+    fontSize: 38,
+    lineHeight: 43,
+  },
+  breathContext: { textAlign: "center", fontSize: 13, lineHeight: 20 },
+  breathTime: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 5,
+    marginTop: spacing.row,
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  breathClock: {
+    fontSize: 26,
+    lineHeight: 31,
+    fontVariant: ["tabular-nums"],
+    fontFamily: F.strong,
+  },
+  breathTotal: { fontSize: 14, fontVariant: ["tabular-nums"] },
+  breathTrack: {
+    alignSelf: "stretch",
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+    marginVertical: spacing.compact,
+  },
+  breathDurations: {
+    justifyContent: "center",
+    marginTop: spacing.row,
+    marginBottom: 0,
+  },
+  breathBookmark: { marginTop: spacing.row, alignItems: "center" },
+  stackedChoices: { flexDirection: "column", alignItems: "stretch" },
+  feedbackOptions: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.compact,
+    marginTop: spacing.row,
   },
   feedbackOption: {
     flex: 1,
@@ -3510,6 +4118,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 9,
   },
+  feedbackOptionStacked: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    minHeight: 48,
+    paddingHorizontal: spacing.row,
+    paddingVertical: spacing.compact,
+  },
   checkRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3519,6 +4134,7 @@ const styles = StyleSheet.create({
   },
   between: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 10,

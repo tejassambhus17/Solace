@@ -25,7 +25,9 @@ export class Store {
       target && existsSync(target) ? readFileSync(target) : undefined,
     );
     db.run("PRAGMA foreign_keys = ON");
-    db.run(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, created_at TEXT NOT NULL, personalization INTEGER NOT NULL DEFAULT 0, avatar TEXT);
+    db.run(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, created_at TEXT NOT NULL, personalization INTEGER NOT NULL DEFAULT 0, avatar TEXT,
+      wellness_goals TEXT NOT NULL DEFAULT '[]',
+      wellness_onboarding TEXT NOT NULL DEFAULT 'legacy' CHECK(wellness_onboarding IN ('legacy','pending','completed')));
       CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS google_identities (subject TEXT PRIMARY KEY, user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS records (id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, collection TEXT NOT NULL, json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(user_id, collection, id));
@@ -38,15 +40,43 @@ export class Store {
         source_conversation_id TEXT,
         expires_at INTEGER NOT NULL,
         PRIMARY KEY(user_id, id)
+      );
+      CREATE TABLE IF NOT EXISTS realtime_voice_leases (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        id TEXT NOT NULL UNIQUE,
+        day TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        provider_call_id TEXT,
+        hangup_attempts INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS realtime_voice_usage (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        day TEXT NOT NULL,
+        used_ms INTEGER NOT NULL CHECK(used_ms >= 0),
+        PRIMARY KEY(user_id, day)
+      );
+      CREATE TABLE IF NOT EXISTS realtime_voice_totals (
+        day TEXT PRIMARY KEY,
+        used_ms INTEGER NOT NULL CHECK(used_ms >= 0)
       );`);
     const store = new Store(db, SQL, target);
     // Existing installations keep their accounts and records when upgrading.
-    if (
-      !store
+    const userColumns = new Set(
+      store
         .all<{ name: string }>("PRAGMA table_info(users)")
-        .some((column) => column.name === "avatar")
-    )
+        .map(({ name }) => name),
+    );
+    if (!userColumns.has("avatar"))
       store.run("ALTER TABLE users ADD COLUMN avatar TEXT");
+    if (!userColumns.has("wellness_goals"))
+      store.run(
+        "ALTER TABLE users ADD COLUMN wellness_goals TEXT NOT NULL DEFAULT '[]'",
+      );
+    if (!userColumns.has("wellness_onboarding"))
+      store.run(
+        "ALTER TABLE users ADD COLUMN wellness_onboarding TEXT NOT NULL DEFAULT 'legacy' CHECK(wellness_onboarding IN ('legacy','pending','completed'))",
+      );
     store.run("DELETE FROM chat_requests WHERE expires_at <= ?", [Date.now()]);
     store.persist();
     return store;

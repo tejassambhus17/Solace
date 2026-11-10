@@ -27,6 +27,9 @@ function loadHelper(file, dependencies = {}) {
   return moduleValue.exports;
 }
 const timedPractices = loadHelper("../server/src/timed-practice-contract.ts");
+const explorePractices = loadHelper("explore-practices.ts", {
+  "./routes": loadHelper("routes.ts"),
+});
 const { getTimedPractice, timedPracticeDurations, timedPracticeFocuses } =
   timedPractices;
 const {
@@ -44,7 +47,7 @@ const {
   "../server/src/timed-practice-contract": timedPractices,
 });
 const { createExplorePractice, practiceDurations, practiceFocuses } =
-  loadHelper("explore-practices.ts");
+  explorePractices;
 const activity = () => ({
   version: 1,
   id: "qa-moment",
@@ -362,7 +365,7 @@ test("every Explore focus and duration opens a valid timed practice", () => {
 test("experience links accept known techniques and private roots, and reject arbitrary destinations", () => {
   const techniques = loadHelper("techniques.ts", {
     "../server/src/chat-practice": loadHelper("../server/src/chat-practice.ts"),
-    "./explore-practices": loadHelper("explore-practices.ts"),
+    "./explore-practices": explorePractices,
   });
   const { experienceDestination } = loadHelper("experience-links.ts", {
     "./routes": loadHelper("routes.ts"),

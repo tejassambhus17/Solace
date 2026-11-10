@@ -476,7 +476,7 @@ export function createGoogleAuthRoutes({
         // Google-only accounts have no password credential. Email/password
         // login performs the normal dummy scrypt operation for this marker.
         store.run(
-          "INSERT INTO users(id,email,name,password,created_at) VALUES(?,?,?,?,?)",
+          "INSERT INTO users(id,email,name,password,created_at,wellness_onboarding) VALUES(?,?,?,?,?,'pending')",
           [owner, email, name, "", new Date().toISOString()],
         );
         insertIdentity(owner);

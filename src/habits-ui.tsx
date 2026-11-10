@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   AppState,
-  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -11,7 +10,6 @@ import {
 import {
   addHabitDays,
   habitDay,
-  habitGardenStages,
   habitRevisionOn,
   habitTarget,
   habitWeekStart,
@@ -26,7 +24,7 @@ import {
   type HabitSchedule,
 } from "../server/src/habit-contract";
 import { useReducedMotion } from "./Companion";
-import { useTheme } from "./theme";
+import { artGradient, useTheme } from "./theme";
 import { AppText, Icon, coverImageStyle } from "./ui";
 
 export const habitCategoryLabels: Record<HabitCategory, string> = {
@@ -155,18 +153,25 @@ export function habitToday(habit?: Habit, now?: Date) {
 
 const noHabits: readonly Habit[] = [];
 
-export function useHabitClock(habits: readonly Habit[] | Habit = noHabits) {
+export function useHabitClock(
+  habits: readonly Habit[] | Habit = noHabits,
+  extraZone?: string,
+) {
   const [now, setNow] = useState(() => new Date());
   const zones = useMemo(() => {
     const records = "timeZone" in habits ? [habits] : habits;
     return [...new Set(records.map(({ timeZone }) => timeZone))];
   }, [habits]);
   useEffect(() => {
-    const timer = setInterval(() => {
+    const refreshDay = () => {
       if (AppState.currentState !== "active" && AppState.currentState != null)
         return;
       const instant = new Date();
-      const activeZones = [localHabitZone(), ...zones];
+      const activeZones = [
+        localHabitZone(),
+        ...zones,
+        ...(extraZone ? [extraZone] : []),
+      ];
       setNow((previous) =>
         activeZones.some(
           (zone) => habitDay(zone, previous) !== habitDay(zone, instant),
@@ -174,7 +179,9 @@ export function useHabitClock(habits: readonly Habit[] | Habit = noHabits) {
           ? instant
           : previous,
       );
-    }, 60_000);
+    };
+    refreshDay();
+    const timer = setInterval(refreshDay, 60_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") setNow(new Date());
     });
@@ -182,7 +189,7 @@ export function useHabitClock(habits: readonly Habit[] | Habit = noHabits) {
       clearInterval(timer);
       subscription.remove();
     };
-  }, [zones]);
+  }, [zones, extraZone]);
   return now;
 }
 
@@ -284,7 +291,7 @@ export function HabitMeter({
   total: number;
   label: string;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const percent =
     total > 0
       ? Math.min(100, Math.max(0, Math.round((value / total) * 100)))
@@ -298,13 +305,19 @@ export function HabitMeter({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      style={[styles.meter, { backgroundColor: colors.border }]}
+      style={[
+        styles.meter,
+        {
+          backgroundColor:
+            resolved === "dark" ? colors.border : colors.surface2,
+        },
+      ]}
     >
       <View
         style={{
           width: `${percent}%`,
           height: "100%",
-          backgroundColor: colors.primary,
+          backgroundColor: resolved === "dark" ? colors.primary : colors.accent,
           borderRadius: 8,
         }}
       />
@@ -361,7 +374,7 @@ export function HabitChoice({
   icon?: string;
   disabled?: boolean;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const foreground = selected ? colors.primaryText : colors.text;
   return (
     <Pressable
@@ -374,7 +387,11 @@ export function HabitChoice({
         styles.choice,
         {
           backgroundColor: selected ? colors.primary : colors.surface,
-          borderColor: selected ? colors.primary : colors.border,
+          borderColor: selected
+            ? resolved === "dark"
+              ? colors.primary
+              : colors.accent
+            : colors.border,
           opacity: disabled ? 0.5 : pressed ? 0.75 : 1,
         },
       ]}
@@ -394,7 +411,7 @@ export function HabitWeekStrip({
   today: string;
   progress: readonly HabitProgress[];
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const start = habitWeekStart(today);
   const completions = new Set(
     progress.filter(({ complete }) => complete).map(({ day }) => day),
@@ -422,7 +439,11 @@ export function HabitWeekStrip({
                   backgroundColor: complete
                     ? colors.sageSurface
                     : colors.surface,
-                  borderColor: current ? colors.primary : colors.border,
+                  borderColor: current
+                    ? resolved === "dark"
+                      ? colors.primary
+                      : colors.accent
+                    : colors.border,
                 },
               ]}
               aria-hidden
@@ -450,12 +471,13 @@ export const gardenLabels: Record<HabitGarden["stage"], string> = {
   flourishing: "Flourishing garden",
 };
 
-const landscapes = {
-  dark: require("../assets/profile-mountains-dark.jpg"),
-  light: require("../assets/profile-mountains-light.jpg"),
+const gardenArtwork: Record<HabitGarden["stage"], number> = {
+  seed: require("../assets/habits-garden-seed.jpg"),
+  sprout: require("../assets/habits-garden-sprout.jpg"),
+  growing: require("../assets/habits-garden-growing.jpg"),
+  blooming: require("../assets/habits-garden-blooming.jpg"),
+  flourishing: require("../assets/habits-garden-flourishing.jpg"),
 };
-const foliage = require("../assets/botanical-compact.png");
-const bloom = require("../assets/redesign-lotus.png");
 
 export function GardenScene({
   stage,
@@ -468,125 +490,69 @@ export function GardenScene({
   const reduced = useReducedMotion();
   const last = useRef(stage);
   const [arrival] = useState(() => new Animated.Value(1));
-  const index = habitGardenStages.findIndex((item) => item.stage === stage);
   useEffect(() => {
-    if (last.current === stage) return;
+    const earned = last.current !== stage;
     last.current = stage;
-    if (reduced) {
+    if (
+      !earned ||
+      compact ||
+      reduced ||
+      AppState.currentState === "background"
+    ) {
       arrival.setValue(1);
       return;
     }
-    arrival.setValue(0);
+    arrival.setValue(0.72);
     const animation = Animated.timing(arrival, {
       toValue: 1,
-      duration: 280,
+      duration: 340,
       useNativeDriver: Platform.OS !== "web",
       isInteraction: false,
     });
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") return;
+      animation.stop();
+      arrival.setValue(1);
+    });
     animation.start();
-    return () => animation.stop();
-  }, [stage, reduced, arrival]);
-  const shift = arrival.interpolate({
-    inputRange: [0, 1],
-    outputRange: [7, 0],
-  });
+    return () => {
+      subscription.remove();
+      animation.stop();
+    };
+  }, [stage, compact, reduced, arrival]);
   return (
     <View
       accessible
       accessibilityRole="image"
-      accessibilityLabel={`${gardenLabels[stage]} in a botanical landscape`}
+      accessibilityLabel={`${gardenLabels[stage]} in a sunset garden`}
       style={[
         styles.gardenScene,
-        { minHeight: compact ? 124 : 208, backgroundColor: colors.heroSurface },
+        { minHeight: compact ? 132 : 180, backgroundColor: colors.bg },
+        !compact && styles.fullGarden,
+        !compact && resolved === "light" && styles.daylightGarden,
       ]}
     >
-      <Image
+      <Animated.Image
         accessible={false}
-        source={landscapes[resolved]}
+        source={gardenArtwork[stage]}
         resizeMode="cover"
         fadeDuration={0}
-        style={coverImageStyle}
+        style={[coverImageStyle, { opacity: arrival }]}
       />
-      <View
-        pointerEvents="none"
-        aria-hidden
-        style={[
-          styles.gardenPlot,
-          { backgroundColor: colors.overlay, width: compact ? 110 : 144 },
-        ]}
-      />
-      <Animated.View
-        aria-hidden
-        style={[
-          styles.gardenPlant,
-          { transform: [{ translateY: shift }], opacity: arrival },
-        ]}
-      >
-        {index === 0 ? (
-          <View
-            style={[
-              styles.seed,
-              { backgroundColor: colors.peach, borderColor: colors.peachText },
-            ]}
-          />
-        ) : (
-          <>
-            <Image
-              accessible={false}
-              source={foliage}
-              resizeMode="contain"
-              fadeDuration={0}
-              style={[
-                styles.sprout,
-                {
-                  width: compact
-                    ? index === 1
-                      ? 61
-                      : 104
-                    : index === 1
-                      ? 86
-                      : 150,
-                  height: compact ? 72 : 112,
-                },
-              ]}
-            />
-            {index >= 3 && (
-              <Image
-                accessible={false}
-                source={bloom}
-                resizeMode="contain"
-                fadeDuration={0}
-                style={[
-                  styles.bloom,
-                  { width: compact ? 62 : 86, height: compact ? 48 : 67 },
-                ]}
-              />
-            )}
-            {index === 4 && (
-              <>
-                <Image
-                  accessible={false}
-                  source={bloom}
-                  resizeMode="contain"
-                  fadeDuration={0}
-                  style={[styles.sideBloom, { left: 0 }]}
-                />
-                <Image
-                  accessible={false}
-                  source={bloom}
-                  resizeMode="contain"
-                  fadeDuration={0}
-                  style={[styles.sideBloom, { right: 0 }]}
-                />
-              </>
-            )}
-          </>
-        )}
-      </Animated.View>
+      {!compact && resolved === "dark" && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            artGradient(
+              `linear-gradient(0deg, ${colors.bg} 0%, ${colors.bg}00 30%)`,
+            ),
+          ]}
+        />
+      )}
     </View>
   );
 }
-
 export function occurrenceLabel(
   habit: Habit,
   day: string,
@@ -646,28 +612,13 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderRadius: 18,
   },
-  gardenPlant: {
-    alignItems: "center",
-    justifyContent: "flex-end",
-    width: 143,
-    minHeight: 62,
-    marginBottom: 11,
+  fullGarden: {
+    aspectRatio: 2,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
-  gardenPlot: {
-    position: "absolute",
-    bottom: 8,
-    height: 17,
-    borderRadius: 25,
+  daylightGarden: {
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
   },
-  seed: {
-    width: 16,
-    height: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 9,
-    transform: [{ rotate: "-28deg" }],
-    marginBottom: 4,
-  },
-  sprout: { transform: [{ rotate: "50deg" }], marginBottom: -7 },
-  bloom: { position: "absolute", bottom: 18 },
-  sideBloom: { position: "absolute", bottom: 5, width: 44, height: 36 },
 });

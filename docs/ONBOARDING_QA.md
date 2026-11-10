@@ -1,5 +1,25 @@
 # Solace first-launch walkthrough
 
+## Single-screen introduction and optional goals
+
+The signed-out welcome presents four illustrated features and distinct Get started and Log in actions. About can replay the welcome without touching device or account progress. The device still saves the introduction decision before entering auth. After authentication, pending accounts can choose goals or use Skip for now to finish without preferences. The API stores an empty goal list and account completion together. A retry cannot erase later edits. Chosen goals keep the existing personalized first action, with a direct path to Today. Profile shares the redesigned goal cards.
+
+The welcome and picker use the existing logo, illustration assets, typography and lavender accent on white or black. Scrollable content and safe-area-aware actions support short screens. Goal choices retain semantic checkboxes, keyboard selection on web, and reduced-motion selection feedback.
+
+The final Chromium preview rendered both screens at 320, 390 and 430 px in both themes. The short 320 px view keeps the welcome headline, the first two feature titles and Get started in the initial viewport. All four tiles fit at 390 and 430 px. The first render review caught images inheriting their intrinsic heights on web. Explicit responsive photo heights corrected the crops and brought the content back into view.
+
+| Screen | Light | Dark |
+| --- | --- | --- |
+| Welcome | [320 px](../work/onboarding-redesign/final/intro-light-320.png) · [390 px](../work/onboarding-redesign/final/intro-light-390.png) · [430 px](../work/onboarding-redesign/final/intro-light-430.png) | [320 px](../work/onboarding-redesign/final/intro-dark-320.png) · [390 px](../work/onboarding-redesign/final/intro-dark-390.png) · [430 px](../work/onboarding-redesign/final/intro-dark-430.png) |
+| Goal picker | [320 px](../work/onboarding-redesign/final/goals-light-320.png) · [390 px](../work/onboarding-redesign/final/goals-light-390.png) · [430 px](../work/onboarding-redesign/final/goals-light-430.png) | [320 px](../work/onboarding-redesign/final/goals-dark-320.png) · [390 px](../work/onboarding-redesign/final/goals-dark-390.png) · [430 px](../work/onboarding-redesign/final/goals-dark-430.png) |
+| Selected goals | [390 px](../work/onboarding-redesign/final/goals-light-390-selected.png) | [390 px](../work/onboarding-redesign/final/goals-dark-390-selected.png) |
+
+The browser run used the current Express API and a disposable SQLite fixture. It verified first signup without a Today flash, multi-select across a theme change, selection retention after a failed save, and the personalized first action after retry. A completed account bypassed both steps after reload and sign-in. Profile edits and About replay preserved saved state. A second pending account could skip with exactly zero goals and retain its records without seeing the other account’s data. [Browser results](../work/onboarding-redesign/final/browser-result.json) · [First recommendation](../work/onboarding-redesign/final/recommendation-dark-390.png)
+
+TypeScript, Prettier, 187 server tests, 50 navigation tests, and 91 session-state tests passed. The changes are in source and a local web preview. The updated client and optional-goals API need to ship together when released. Native builds, device verification, and deployment were held.
+
+## Earlier five-page walkthrough
+
 The five illustrated pages introduce Solace, Companion, My Journal, Explore and Moments, and Journey. The walkthrough reuses approved light and dark artwork and supports swiping, progress announcements, Back, Next, Skip and Get started. Smaller screens and larger text can scroll the page content while keeping the actions reachable. Reduce Motion removes animated button-driven paging.
 
 Get started opens account creation. Skip opens login. Both routes use the existing forms, Google sign-in and recovery. Solace saves the walkthrough decision on the installation before navigating. A restored or expired session takes the usual session path, and a recognized existing account marks the walkthrough complete for that installation. Signed-out installations with no prior completion marker can take or skip the new tour once.

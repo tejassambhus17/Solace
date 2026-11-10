@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,11 +13,260 @@ import { getReply, type AIConfig } from "../src/ai.js";
 import { parseTrustProxyHops } from "../src/config.js";
 import { hashPassword } from "../src/auth.js";
 import { AVATAR_MAX_BYTES, AVATAR_PIXELS } from "../src/avatar.js";
+import { openAIEvents, openAIResponse } from "./openai-fixture.js";
+import {
+  appActionCapabilityHeader,
+  appActionCapabilityVersion,
+} from "../src/companion-app-action.js";
 const ai: AIConfig = {
   mode: "offline",
   model: "test",
   baseUrl: "https://api.openai.com/v1",
 };
+function liveReply(reply: string, practice = "none") {
+  return openAIResponse(
+    JSON.stringify({
+      reply,
+      practice,
+      basis: practice === "none" ? "general" : "conversation",
+    }),
+    true,
+  );
+}
+
+test("chat returns an opted-in app proposal, replays its ID and never applies a mutation itself", async () => {
+  const { store, create } = await fixture();
+  const originalFetch = globalThis.fetch;
+  const tools: unknown[] = [];
+  let proposal: object = {
+    kind: "navigate",
+    destination: "wellness-toolkit",
+  };
+  globalThis.fetch = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    tools.push(body.tools);
+    if (!body.tools) return liveReply("Let's talk it through.");
+    assert.equal(body.tools[0].name, "solace_app_action");
+    assert.equal(body.parallel_tool_calls, false);
+    assert.equal(body.store, false);
+    assert.equal(typeof body.input, "string");
+    return openAIEvents({
+      type: "response.completed",
+      response: {
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            name: "solace_app_action",
+            call_id: "call_1",
+            status: "completed",
+            arguments: JSON.stringify({ action: proposal }),
+          },
+        ],
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const owner = await create("app-actions-owner@example.com");
+    const other = await create("app-actions-other@example.com");
+    const app = createApp({
+      store,
+      ai: { ...ai, mode: "live", apiKey: "test-only" },
+      rateLimits: false,
+    });
+    const preflight = await request(app)
+      .options("/api/chat")
+      .set("Origin", "http://localhost:8081")
+      .set("Access-Control-Request-Method", "POST")
+      .set(
+        "Access-Control-Request-Headers",
+        "authorization, content-type, x-solace-app-actions",
+      )
+      .expect(204);
+    assert.match(
+      preflight.headers["access-control-allow-headers"],
+      /x-solace-app-actions/i,
+    );
+    const send = (
+      token: string,
+      data: object,
+      version: string = appActionCapabilityVersion,
+    ) => {
+      const call = request(app)
+        .post("/api/chat")
+        .auth(token, { type: "bearer" });
+      if (version) call.set(appActionCapabilityHeader, version);
+      return call.send(data);
+    };
+    const draft = {
+      text: "Please navigate to the toolkit.",
+      requestId: randomUUID(),
+    };
+    const first = (await send(owner.token, draft).expect(200)).body;
+    assert.deepEqual(first.appAction, { ...proposal, id: first.appAction.id });
+    assert.match(first.reply, /pass.*to the app/i);
+    const retry = (await send(owner.token, draft).expect(200)).body;
+    assert.deepEqual(retry.appAction, first.appAction);
+    assert.equal(tools.length, 1);
+    assert.ok(tools[0]);
+    assert.equal(
+      store.all("SELECT id FROM records WHERE collection='habits'").length,
+      0,
+    );
+    const legacy = (await send(owner.token, draft, "").expect(200)).body;
+    assert.equal(legacy.appAction, undefined);
+    await send(other.token, {
+      ...draft,
+      conversationId: first.conversation.id,
+    }).expect(404);
+
+    proposal = { kind: "navigate", destination: "https://example.com" };
+    const refused = (
+      await send(owner.token, {
+        text: "Please navigate to my journal overview",
+      }).expect(200)
+    ).body;
+    assert.equal(refused.appAction, undefined);
+    assert.match(refused.reply, /couldn’t prepare/i);
+    const ordinary = (
+      await send(owner.token, {
+        text: "I have been thinking about my habits.",
+      }).expect(200)
+    ).body;
+    assert.equal(ordinary.appAction, undefined);
+    assert.equal(tools.at(-1), undefined);
+    const cancelled = (await send(owner.token, { text: "Cancel" }).expect(200))
+      .body;
+    assert.equal(cancelled.appAction.kind, "cancel");
+  } finally {
+    globalThis.fetch = originalFetch;
+    store.close();
+  }
+});
+test("reported theme and walking requests survive authenticated chat turns and use the existing habit API", async () => {
+  const { store, app, create } = await fixture();
+  try {
+    const owner = await create("app-action-flow@example.com");
+    const other = await create("app-action-isolation@example.com");
+    const send = (
+      text: string,
+      conversationId?: string,
+      version: string = appActionCapabilityVersion,
+      requestId = randomUUID(),
+    ) =>
+      request(app)
+        .post("/api/chat")
+        .auth(owner.token, { type: "bearer" })
+        .set(appActionCapabilityHeader, version)
+        .send({ text, conversationId, requestId });
+    for (const [phrase, mode] of [
+      ["Turn on light mode.", "light"],
+      ["Change my appearance to dark.", "dark"],
+      ["Use my phone’s theme.", "system"],
+    ]) {
+      const { body } = await send(phrase, undefined, "1").expect(200);
+      assert.deepEqual(body.appAction, {
+        kind: "theme",
+        mode,
+        id: body.appAction.id,
+      });
+      assert.doesNotMatch(body.reply, /switched|enabled/i);
+    }
+    const { body: opening } = await send("Create a habit for walking.").expect(
+      200,
+    );
+    const conversationId = opening.conversation.id;
+    assert.match(opening.reply, /how often/i);
+    assert.equal(opening.appAction, undefined);
+    const unrelated = await send("Daily.").expect(200);
+    assert.equal(unrelated.body.appAction, undefined);
+    await request(app)
+      .post("/api/chat")
+      .auth(other.token, { type: "bearer" })
+      .set(appActionCapabilityHeader, appActionCapabilityVersion)
+      .send({ text: "Daily", conversationId })
+      .expect(404);
+    const { body: cadence } = await send("Daily.", conversationId).expect(200);
+    assert.match(cadence.reply, /like a reminder/i);
+    const { body: proposal } = await send(
+      "No reminder.",
+      conversationId,
+    ).expect(200);
+    assert.deepEqual(proposal.appAction, {
+      kind: "habit-create",
+      name: "Walking",
+      schedule: "daily",
+      id: proposal.appAction.id,
+    });
+    const legacyConfirmation = await send("Yes.", conversationId, "1").expect(
+      200,
+    );
+    assert.match(legacyConfirmation.body.reply, /confirmation button/i);
+    assert.equal(legacyConfirmation.body.appAction, undefined);
+    const requestId = randomUUID();
+    const { body: confirmed } = await send(
+      "Yes.",
+      conversationId,
+      "2",
+      requestId,
+    ).expect(200);
+    assert.deepEqual(confirmed.appAction, {
+      kind: "confirm",
+      targetId: proposal.appAction.id,
+      id: confirmed.appAction.id,
+    });
+    const { body: replayed } = await send(
+      "Yes.",
+      conversationId,
+      "2",
+      requestId,
+    ).expect(200);
+    assert.deepEqual(replayed.appAction, confirmed.appAction);
+    const repeat = await send("Yes.", conversationId).expect(200);
+    assert.equal(repeat.body.appAction, undefined);
+    assert.equal(
+      store.all("SELECT id FROM records WHERE collection='habits'").length,
+      0,
+    );
+    const draft = {
+      id: `companion-${proposal.appAction.id}`,
+      name: proposal.appAction.name,
+      category: "self-care",
+      icon: "leaf",
+      color: "lavender",
+      goal: { type: "completion" },
+      schedule: { type: proposal.appAction.schedule },
+      reminderTime: null,
+      timeZone: "UTC",
+    };
+    const createHabit = () =>
+      request(app)
+        .post("/api/habits")
+        .auth(owner.token, { type: "bearer" })
+        .send(draft);
+    const { body: saved } = await createHabit().expect(201);
+    const idempotent = await createHabit().expect(200);
+    assert.equal(idempotent.body.habit.id, saved.habit.id);
+    const state = await request(app)
+      .get("/api/state")
+      .auth(owner.token, { type: "bearer" })
+      .expect(200);
+    assert.equal(
+      state.body.data.habits.filter(
+        (habit: { id: string }) => habit.id === draft.id,
+      ).length,
+      1,
+    );
+    const privateState = await request(app)
+      .get("/api/state")
+      .auth(other.token, { type: "bearer" })
+      .expect(200);
+    assert.equal(privateState.body.data.habits.length, 0);
+  } finally {
+    store.close();
+  }
+});
+
 test("proxy hops configuration rejects ambiguous or out-of-range values", () => {
   assert.equal(parseTrustProxyHops(undefined), 0);
   for (const value of ["0", "1", "2", "3"]) {
@@ -333,6 +582,73 @@ test("database and auth persist across reopen; export and account deletion work"
     rmSync(directory, { recursive: true, force: true });
   }
 });
+test("follow-up check-ins survive duplicate retries and export as private JSON", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "solace-export-"));
+  const { app, create, store } = await fixture();
+  try {
+    const a = await create("follow-up@example.com");
+    const b = await create("empty-export@example.com");
+    const auth = { Authorization: `Bearer ${a.token}` };
+    const emptyAuth = { Authorization: `Bearer ${b.token}` };
+    const entry = {
+      id: "after-moment-session-export-test",
+      mood: "Okay",
+      tags: [],
+      note: "",
+      day: "2026-11-08",
+      createdAt: "2026-11-08T14:31:00.000Z",
+    };
+    await request(app)
+      .post("/api/records/checkins")
+      .set(auth)
+      .send(entry)
+      .expect(201);
+    await request(app)
+      .post("/api/records/checkins")
+      .set(auth)
+      .send(entry)
+      .expect(409);
+    for (const [headers, expected] of [
+      [auth, [entry]],
+      [emptyAuth, []],
+    ] as const) {
+      const response = await request(app)
+        .get("/api/export")
+        .set(headers)
+        .expect(
+          "Content-Disposition",
+          /attachment; filename="solace-export.json"/,
+        )
+        .expect(200);
+      const file = join(directory, "solace-export.json");
+      writeFileSync(file, response.text);
+      const raw = readFileSync(file, "utf8");
+      const data = JSON.parse(raw);
+      assert.ok(Number.isFinite(Date.parse(data.exportedAt)));
+      assert.equal(data.data.checkins.length, expected.length);
+      for (const [index, record] of expected.entries())
+        for (const [key, value] of Object.entries(record))
+          assert.deepEqual(data.data.checkins[index][key], value);
+      assert.ok(!raw.includes(a.token) && !raw.includes(b.token));
+      assert.ok(
+        !raw.includes(
+          expected.length
+            ? "empty-export@example.com"
+            : "follow-up@example.com",
+        ),
+      );
+      assert.ok(
+        !Object.keys(data.user).some((key) =>
+          /password|secret|token/i.test(key),
+        ),
+      );
+    }
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("explicit live mode without provider key does not pretend to be live", async () => {
   await assert.rejects(
     getReply(
@@ -383,24 +699,9 @@ test("live provider sends bounded context with store:false and extracts output b
   let captured: Record<string, any> | undefined;
   globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
     captured = JSON.parse(String(init.body));
-    return new Response(
-      JSON.stringify({
-        output: [
-          {
-            type: "message",
-            content: [
-              {
-                type: "output_text",
-                text: JSON.stringify({
-                  reply: "We can take a short breathing pause, if you like.",
-                  practice: "breathing",
-                }),
-              },
-            ],
-          },
-        ],
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
+    return liveReply(
+      "We can take a short breathing pause, if you like.",
+      "breathing",
     );
   }) as typeof fetch;
   try {
@@ -419,6 +720,8 @@ test("live provider sends bounded context with store:false and extracts output b
     assert.equal(captured?.store, false);
     assert.equal(captured?.input[0].content, "I feel tense");
     assert.equal(captured?.text.format.name, "solace_chat_turn");
+    assert.equal(captured?.text.format.strict, true);
+    assert.equal(captured?.stream, true);
     assert.match(captured?.instructions, /Prefers short sessions/);
   } finally {
     globalThis.fetch = original;
@@ -716,10 +1019,7 @@ test("concurrent chat is bounded and a late provider response cannot revive a de
   globalThis.fetch = (async () => {
     started();
     await providerRelease;
-    return new Response(
-      JSON.stringify({ output_text: "Here is a thoughtful reply." }),
-      { status: 200 },
-    );
+    return liveReply("Here is a thoughtful reply.");
   }) as typeof fetch;
   try {
     const account = await create("race@example.com");
@@ -800,7 +1100,7 @@ test("a late reply cannot overwrite a new conversation that reused a deleted ID"
   globalThis.fetch = (async () => {
     start();
     await released;
-    return new Response(JSON.stringify({ output_text: "Private reply" }));
+    return liveReply("Private reply");
   }) as typeof fetch;
   try {
     const { token } = await create("replacement@example.com");
@@ -848,13 +1148,7 @@ test("chat retries replay a durable, account-scoped turn and cannot restore a de
   let providerCalls = 0;
   globalThis.fetch = (async () => {
     providerCalls++;
-    return new Response(
-      JSON.stringify({
-        output: [
-          { content: [{ type: "output_text", text: "We can take a pause." }] },
-        ],
-      }),
-    );
+    return liveReply("We can take a pause.");
   }) as typeof fetch;
   const makeLive = (store: Store) =>
     createApp({
@@ -934,6 +1228,22 @@ test("chat retries replay a durable, account-scoped turn and cannot restore a de
     rmSync(folder, { recursive: true, force: true });
   }
 });
+test("readiness stays available without consuming the general request quota", async () => {
+  const store = await Store.open(":memory:");
+  try {
+    const api = request(createApp({ store, ai }));
+    const check = () => api.get("/api/state").expect(401);
+    assert.match((await check()).headers.ratelimit, /remaining=179/);
+    const health = await api.get("/api/health").expect(200);
+    assert.equal(health.body.ok, true);
+    assert.equal(health.headers["cache-control"], "no-store");
+    assert.equal(health.headers.ratelimit, undefined);
+    assert.match((await check()).headers.ratelimit, /remaining=178/);
+  } finally {
+    store.close();
+  }
+});
+
 test("development CORS allows explicit loopback aliases and configured origins stay restricted", async () => {
   const { app, store } = await fixture();
   try {
@@ -1070,10 +1380,7 @@ test("renaming a conversation while a reply is pending survives the reply commit
   globalThis.fetch = (async () => {
     started();
     await providerRelease;
-    return new Response(
-      JSON.stringify({ output_text: "We can take it slowly." }),
-      { status: 200 },
-    );
+    return liveReply("We can take it slowly.");
   }) as typeof fetch;
   try {
     const account = await create("rename-pending@example.com");
@@ -1135,25 +1442,53 @@ test("provider transport and malformed responses are recoverable and do not save
       ai: { ...ai, mode: "live", apiKey: "test-only" },
       rateLimits: false,
     });
-    const invalidBodies = [
-      "not JSON",
-      "null",
-      JSON.stringify({
-        output: [{ content: [{ type: "output_text", text: 7 }] }],
-      }),
-      JSON.stringify({ status: "incomplete", output_text: "Partial reply" }),
-      JSON.stringify({
-        output_text: "Refused output",
-        output: [{ content: [{ type: "refusal", refusal: "Refused" }] }],
-      }),
-      JSON.stringify({ output_text: "a".repeat(10001) }),
-      JSON.stringify({ output_text: "Valid reply", data: "a".repeat(262144) }),
+    const completed = (content: Record<string, unknown>) => ({
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [content],
+        },
+      ],
+    });
+    const invalidReplies = [
+      () => {
+        throw new TypeError("fetch failed");
+      },
+      () =>
+        new Response("data: not JSON\n\n", {
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      () => openAIEvents({ type: "response.completed", response: null }),
+      () =>
+        openAIEvents({
+          type: "response.completed",
+          response: completed({ type: "output_text", text: 7 }),
+        }),
+      () =>
+        openAIEvents({
+          type: "response.incomplete",
+          response: {
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+          },
+        }),
+      () =>
+        openAIEvents({
+          type: "response.completed",
+          response: completed({ type: "refusal", refusal: "Refused" }),
+        }),
+      () => liveReply("a".repeat(10_001)),
+      () =>
+        openAIEvents({
+          type: "response.output_text.delta",
+          delta: "a".repeat(1024 * 1024),
+        }),
     ];
-    for (const body of [undefined, ...invalidBodies]) {
-      globalThis.fetch = (async () => {
-        if (body === undefined) throw new TypeError("fetch failed");
-        return new Response(body, { status: 200 });
-      }) as typeof fetch;
+    for (const reply of invalidReplies) {
+      globalThis.fetch = (async () => reply()) as typeof fetch;
       const failed = await request(app)
         .post("/api/chat")
         .set(auth)
@@ -1168,9 +1503,7 @@ test("provider transport and malformed responses are recoverable and do not save
       );
     }
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ output_text: "We can take a pause." }), {
-        status: 200,
-      })) as typeof fetch;
+      liveReply("We can take a pause.")) as typeof fetch;
     // Every failure releases the chat lock, and a retry commits exactly one turn.
     const retried = await request(app)
       .post("/api/chat")

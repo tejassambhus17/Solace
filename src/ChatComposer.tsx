@@ -1,3 +1,4 @@
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import React, { useLayoutEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,18 +15,36 @@ export const chatControlSize = 48;
 const lineHeight = 22;
 const inputPadding = 10;
 
+export function VoiceWaveform({
+  color,
+  size = 20,
+}: {
+  color: string;
+  size?: number;
+}) {
+  return (
+    <MaterialCommunityIcons
+      name="waveform"
+      size={size}
+      color={color}
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      allowFontScaling={false}
+    />
+  );
+}
+
 export function ChatComposerInput({
   inputRef,
   value,
   editable,
   onChangeText,
-  onFocus,
 }: {
   inputRef: React.RefObject<React.ElementRef<typeof TextInput> | null>;
   value: string;
   editable: boolean;
   onChangeText: (text: string) => void;
-  onFocus: () => void;
 }) {
   const { colors, resolved } = useTheme();
   const { width, height, fontScale } = useWindowDimensions();
@@ -50,11 +69,24 @@ export function ChatComposerInput({
     // RN Web measures scrollHeight at the current height. Temporarily remove
     // the height so wrapped text can shrink as well as grow.
     const previousHeight = element.style.height;
+    const previousScroll = element.scrollTop;
     element.style.height = "0px";
     const measured = element.scrollHeight + 2;
     element.style.height = previousHeight;
+    element.scrollTop = previousScroll;
     setContentHeight(measured);
   }, [inputRef, value, width, fontScale]);
+
+  useLayoutEffect(() => {
+    if (Platform.OS !== "web" || !focused || contentHeight <= maxHeight) return;
+    const element = inputRef.current as unknown as HTMLTextAreaElement | null;
+    if (
+      element?.selectionStart === value.length &&
+      element.selectionEnd === value.length
+    ) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [inputRef, value, contentHeight, maxHeight, focused]);
 
   return (
     <TextInput
@@ -67,10 +99,7 @@ export function ChatComposerInput({
       selectionColor={colors.accent}
       value={value}
       onChangeText={onChangeText}
-      onFocus={() => {
-        setFocused(true);
-        onFocus();
-      }}
+      onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       onContentSizeChange={
         Platform.OS === "web"
@@ -79,8 +108,9 @@ export function ChatComposerInput({
               setContentHeight(Math.ceil(nativeEvent.contentSize.height) + 2)
       }
       multiline
+      underlineColorAndroid="transparent"
       numberOfLines={Platform.OS === "web" ? 1 : undefined}
-      scrollEnabled={contentHeight > maxHeight}
+      scrollEnabled
       editable={editable}
       maxLength={4000}
       style={[
@@ -88,8 +118,12 @@ export function ChatComposerInput({
         {
           height: inputHeight,
           color: colors.text,
-          backgroundColor: resolved === "dark" ? "#2C243CF5" : "#FFF8F2F7",
-          borderColor: focused ? colors.primary : colors.border,
+          backgroundColor: resolved === "dark" ? "#2C243CF5" : colors.surface,
+          borderColor: focused
+            ? resolved === "dark"
+              ? colors.primary
+              : colors.accent
+            : colors.border,
         },
       ]}
     />
@@ -99,45 +133,48 @@ export function ChatComposerInput({
 export function ChatComposerControl({
   icon,
   label,
+  hint,
   onPress,
   tone = "quiet",
   disabled = false,
   busy = false,
-  expanded,
 }: {
   icon: string;
   label: string;
+  hint?: string;
   onPress: () => void;
-  tone?: "quiet" | "primary" | "selected" | "recording";
+  tone?: "quiet" | "primary" | "live" | "recording";
   disabled?: boolean;
   busy?: boolean;
-  expanded?: boolean;
 }) {
   const { colors, resolved } = useTheme();
   const primary = tone === "primary" && (!disabled || busy);
   const recording = tone === "recording";
-  const selected = tone === "selected";
+  const live = tone === "live";
   const fill = primary
     ? colors.primary
     : recording
       ? colors.peachSurface
-      : selected
+      : live
         ? colors.lavenderSurface
         : resolved === "dark"
           ? "#302838F2"
-          : "#F0EEE0F5";
+          : colors.surface2;
   const ink = primary
     ? colors.primaryText
     : recording
       ? colors.danger
       : disabled
         ? colors.muted
-        : colors.text;
+        : live
+          ? colors.lavenderText
+          : colors.text;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled, busy, expanded }}
+      accessibilityHint={hint}
+      accessibilityState={{ disabled, busy }}
       aria-disabled={disabled}
       aria-busy={busy}
       disabled={disabled}
@@ -153,6 +190,8 @@ export function ChatComposerControl({
     >
       {busy ? (
         <ActivityIndicator size="small" color={ink} />
+      ) : icon === "waveform" ? (
+        <VoiceWaveform color={ink} />
       ) : (
         <Icon name={icon} size={21} color={ink} />
       )}
@@ -164,6 +203,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     minWidth: 0,
+    includeFontPadding: false,
     paddingHorizontal: 12,
     paddingVertical: inputPadding,
     borderWidth: 1,

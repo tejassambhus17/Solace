@@ -13,12 +13,13 @@ const {
 
 function clientEnvironment(executable, env = process.env) {
   const next = runtimeEnvironment(executable, env);
-  // Private server configuration is never loaded into or forwarded to Metro.
+  // Also scrub credentials left over in the shell from older providers.
   for (const name of Object.keys(next))
     if (
       /^(?:OPENAI|GEMINI)_/i.test(name) ||
       [
         "AI_MODE",
+        "AI_PROVIDER",
         "DATABASE_PATH",
         "TRUST_PROXY_HOPS",
         "ALLOWED_ORIGINS",

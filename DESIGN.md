@@ -4,7 +4,7 @@
 
 The botanical references in `design/references/00-home-tabs-light.png` and `00-home-tabs-dark.png` establish the identity: editorial serif headings, readable sans serif text, sculpted petals and leaves, warm light, and generous spacing. Device bezels are presentation chrome, not app UI.
 
-The latest supplied Today, Explore, and Solace frames define their scenic artwork, layout, and controls. Light uses ivory, muted olive, and violet accents. Dark uses black and graphite beneath individually generated night scenes, with champagne actions. Preserve all original reference images and source artwork.
+The latest supplied Today screenshot is the light-mode regression reference. Light uses a soft off-white canvas, white reading surfaces, plum text, and lavender actions. Keep natural greens and warm highlights in the artwork. Use a local reading panel or a narrow edge fade where text shares the scene. Dark uses its approved black, graphite, and twilight treatments. Preserve all original reference images and source artwork.
 
 ## Theme tokens
 
@@ -12,25 +12,27 @@ Use semantic tokens from `src/theme.tsx` rather than screenshot inversion or per
 
 | Role | Light | Dark |
 |---|---|---|
-| Canvas | `#FBF0E8` | `#000000` |
-| Surface | `#FFF8F2` | `#141416` |
-| Raised surface | `#EEE8D6` | `#202022` |
-| Main text | `#183A2B` | `#F4EEE6` |
-| Secondary text | `#626B5D` | `#B6B0AA` |
-| Primary action | `#2D5038` | `#E7C7A8` |
-| On-primary text | `#FFF9EC` | `#2B211A` |
-| Border | `#E6DACE` | `#2C2B2F` |
-| Hero base | `#F2E5D3` | `#181719` |
+| Canvas | `#FAF8FC` | `#000000` |
+| Surface | `#FFFFFF` | `#141416` |
+| Raised surface | `#F3EDF8` | `#202022` |
+| Main text | `#2B2038` | `#F4EEE6` |
+| Secondary text | `#65586E` | `#B6B0AA` |
+| Primary action | `#D8B4F0` | `#D8B4F0` |
+| On-primary text | `#2B2038` | `#251732` |
+| Border | `#DDD3E5` | `#2C2B2F` |
+| Hero base | `#F1EAF5` | `#181719` |
 
 Lilac, peach and sage remain small accents and semantic activity tones. Dark pairs are `#211E27`/`#D7C8E6`, `#28201D`/`#E8C5AD`, and `#1D2521`/`#C0D3C6`. Avoid broad green tint and large saturated purple blocks. Color lives primarily in the botanical artwork, selected mood, icon details and the primary action.
 
-The light secondary-text adjustment to `#626B5D` preserves the visual identity while reaching a measured 4.54:1 against the raised surface. Token measurements do not certify every image/text combination; record actual browser and native checks separately in `docs/VERIFICATION.md`.
+Use rich plum `#634579` for light-mode focus outlines, progress marks, and small high-contrast icons. Lavender is the action fill. Reserve pale lavender and semantic peach or sage fills for grouping and feedback. Token measurements cover the specified pairs. Record actual browser and native checks separately in `docs/VERIFICATION.md`.
 
 ## Typography and composition
 
 Cormorant Garamond headings and Inter body/UI text retain the editorial identity. Reserve the largest headings for arrival and the featured practice. Supporting labels remain compact and readable. Use body text around 14–16 points and touch controls at least 44 points high, with native Android targets sized appropriately.
 
-Keep four main tabs in order: **Today, Solace, Journey, Profile**. The labeled Explore compass between Solace and Journey opens the practice library as a secondary destination. Tapping it from a library detail returns to the open library. Back from Explore restores its originating screen. Auth and immersive activities may suppress the bar. Wide web previews remain a centered mobile column.
+Nested task screens can opt into the shared `Screen` nested variant or use `NestedHeader` in a custom list or sheet. Keep the 48 dp back target, allow the serif title to wrap, and use the existing semantic card surfaces and spacing for controls. Keep purpose-built artwork, player chrome and writing surfaces where their layout already serves the task. [Nested screen audit](docs/SOLACE_SCREEN_DESIGN_AUDIT.md)
+
+Keep the five main tabs in order: **Today, Solace, Explore, Journey, Profile**. Explore opens the practice library. Reselecting an active tab returns to its root, and changing tabs retains their existing stack and scroll behavior. Auth and immersive activities may suppress the bar. Wide web previews remain a centered mobile column.
 
 ## Today and the daily pause
 
@@ -73,7 +75,7 @@ Original petal, botanical, stillness and night assets remain available. Preserve
 
 ## Navigation, motion and native boundaries
 
-The floating navigation rail shares its measured height with screen/composer clearance and respects safe-area insets. Native keyboards hide it. Supported iOS uses actual Expo GlassView only after both capability checks and with Reduce Transparency off; older supported iOS uses native blur, and the accessibility fallback is opaque. Android uses an opaque tonal capsule, selected icon indicator and native ripple. The web shows fallback layout, not proof of system glass.
+The floating navigation rail shares its measured height with screen/composer clearance and respects safe-area insets. Native keyboards hide it. Supported iOS uses Expo GlassView after both capability checks and with Reduce Transparency off. Light mode tints that material with a pale lavender veil and a defined edge. Older supported iOS uses native blur, and the accessibility fallback is opaque. Android and web use the translucent light tonal capsule with stronger plum ink, or the existing dark capsule. Web rendering covers the fallback only.
 
 This remains a custom tab/stack implementation, not UIKit native tab navigation. Native iOS edge-swipe back is not implemented; Android predictive-Back integration and installed-device keyboard/gesture behavior remain follow-up work. Keep these limits distinct from the working detail Back buttons/hardware-Back handling.
 

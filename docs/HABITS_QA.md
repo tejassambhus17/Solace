@@ -1,17 +1,25 @@
 # Solace Habits
 
-Solace Habits adds private scheduled goals, progress history and a growing garden to the existing five-tab app. The garden uses existing Solace artwork and changes through Seed, Sprout, Growing, Blooming and Flourishing at 0, 1, 5, 12 and 25 earned habit-days.
+Solace Habits brings private scheduled goals, progress history and a growing garden into one hub with Today, My Habits, Insights and Garden sections. Seed is the starting state. Sprout, Growing, Blooming and Flourishing are earned after 1, 5, 12 and 25 distinct habit-day completions. Garden progress measures earned milestones out of those four.
 
 ## Navigation
 
 | Entry | Destination |
 | --- | --- |
-| Explore → Healthy Habit Builder | Your habits dashboard, then Add habit, Habit library, details, insights or garden |
-| Today → Today’s Habits | Up to three eligible habits with quick logging, plus View all habits and selected details |
-| Journey → Habit Progress | Habit insights, with weekly, monthly and individual history |
+| Explore → Healthy Habit Builder | Habits hub, Today section |
+| Today → Today’s Habits | View all opens the same Today section. A habit opens its details with the hub on the originating stack. |
+| Journey → Habit Progress | Habits hub, Insights section. A valid selected range is passed through. |
 | Companion → Plan a habit or Explore a suggested habit | A proposal sheet, followed by an editable create or edit screen after the user chooses Review |
 | Profile → Habit reminders | Reminder preferences for active and paused habits through the existing notification coordinator |
-| Local habit notification | Explore → Your habits → the identified active habit, or the dashboard when the habit is unavailable |
+| Local habit notification | Explore → Habits → the identified active habit, or Habits Today when the habit is unavailable |
+| Legacy library, insights and garden destinations | Existing route names resolve to My Habits, Insights and Garden in the canonical hub. A legacy per-habit insights link retains the habit filter. |
+
+## Implementation map
+
+- The router keeps one hub entry in the originating tab stack. The hub retains each visited section with its scroll position and view state. The existing draft-exit guard protects Create and Edit when a section is reselected.
+- `HabitsHub` mounts the extracted `TabRail` with four destinations. The rail retains the measured spotlight, native gesture handling, and supported iOS Liquid Glass. Older iOS uses the established blur when permitted. Android and reduced-transparency configurations use the existing fallback surface.
+- The old dashboard and library views are consolidated into the Today and My Habits panels. Habit details, create/edit forms and reminder preferences continue to use their existing authenticated writes and notification coordinator.
+- Today counts active, due fixed occurrences and displays flexible targets separately. Insights uses dated schedule revisions, distinguishes completed days from completed occurrences and habit definitions, and separates elapsed fixed misses from unfinished goals. Garden uses the same persisted stage for its illustration and milestone timeline.
 
 ## Data and calculation rules
 
@@ -25,7 +33,9 @@ Solace Habits adds private scheduled goals, progress history and a growing garde
 
 The Companion assistant supports a starter, small routine, simplification, frequency adjustment, restart and a short progress reflection. It uses the existing configured provider and labels built-in guidance when live AI is unavailable. Provider responses are constrained to validated proposals. Reviewing a proposal opens an editable form. Habit creation and changes require a separate explicit Save. Optional progress context requires personalization consent and the user’s selection. The safety route remains in place for urgent messages.
 
-## Verification and remaining device checks
+## Previous Habits verification
+
+The evidence below predates the four-section redesign. See the [current verification record](VERIFICATION.md#four-section-habits-hub) for this update.
 
 - All 114 backend tests passed. They cover SQLite reopen, cross-account isolation, export and account deletion, validation, retries, revision conflicts, schedule and goal history, calendar boundaries, breathing link deduplication and monotonic garden growth.
 - The configured provider returned a valid habit proposal in a disposable live smoke test. The account had zero habits before explicit approval and one after Save. No production account data was used.
@@ -38,6 +48,12 @@ The Companion assistant supports a starter, small routine, simplification, frequ
 - On physical Android and iOS, enable and deny reminders, change a time, background the app through a scheduled delivery, tap it and verify the habit. Pause, archive and sign out and verify pending notifications are removed. Repeat after a device time-zone change. Check TalkBack or VoiceOver, large text and Reduce Motion on the dashboard, editor and garden.
 
 ## Files
+
+- Four-section redesign — `src/screens/HabitsHub.tsx`, `src/screens/HabitsTodaySection.tsx`, `src/screens/HabitsManagementSection.tsx`, `src/screens/HabitsSectionPieces.tsx`, `src/screens/HabitsInsights.tsx`, `src/screens/HabitsGardenSection.tsx`, `src/screens/Habits.tsx`, `src/screens/HabitsEditor.tsx`, `src/habits-ui.tsx`, and `assets/habits-*.jpg`.
+- Rail, routes and entry points for this update — `src/Navigation.tsx`, `src/routes.ts`, `src/store.tsx`, `App.tsx`, and `src/screens/HabitEntryPoints.tsx`.
+- Calculations and regression coverage for this update — `server/src/habit-contract.ts`, `server/tests/habits.test.ts`, `scripts/test-navigation.cjs`, and `scripts/test-session-state.cjs`.
+
+Earlier feature implementation files
 
 - Shared contract and API — `server/src/habit-contract.ts`, `server/src/habits.ts`, `server/src/app.ts`, `server/tests/habits.test.ts`.
 - AI — `server/src/habit-ai-contract.ts`, `server/src/habit-ai.ts`, `server/tests/habit-ai.test.ts`, `src/screens/HabitAssistant.tsx`, `src/screens/Core.tsx`.

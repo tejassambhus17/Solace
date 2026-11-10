@@ -1,5 +1,21 @@
 # Artwork provenance
 
+## Home Quick Actions
+
+`today-quick-breathe.jpg`, `today-quick-reflect.jpg` and `today-quick-focus.jpg` are 312 × 312 optimized crops of an ImageGen artwork sheet based on the written forest, reflective lake and mountain sunrise directions. Sleep reuses `redesign-explore-sleep.jpg`. Both themes use the same images, with separate contrast overlays, icons and labels drawn by the app.
+
+## Habits hub
+
+`habits-sunset-header.jpg` is an optimized 1080 × 360 ImageGen landscape based on the approved botanical sunset reference. Five 764 × 337 garden images show the established Seed, Sprout, Growing, Blooming and Flourishing stages in the same landscape. The first frame shows planted soil and a seed. The shared Garden scene selects its image from the saved stage. All cards, controls and statistics are drawn separately by the app.
+
+## Journal editor header
+
+`journal-editor-window.jpg` is a 1170 × 543 crop of ImageGen artwork based on the approved Journal reference. The arched sunset window, book, lantern and foliage are illustrated. The title, date and controls are rendered separately by the app.
+
+## Launcher icon appearances
+
+The six 1024 × 1024 PNGs in `assets/app-icons/` reuse the original translucent three-petal `petal.png` artwork from Solace’s launcher identity. They share the same petal proportions and use a tightly cropped source with stray edge pixels removed. The light and dark compositions use warm cream `#FAEFE2` and midnight plum `#191321`. The iOS dark variant uses transparent padding for the system background. The iOS tinted variant is grayscale. Android uses matching transparent color and monochrome layers with the same alpha mask, fitted within the 66 dp adaptive icon safe area. Platform masks supply the final shape. The in-app header continues to use `redesign-lotus.png`. [Apple asset catalog guidance](https://developer.apple.com/documentation/xcode/configuring-your-app-icon?changes=_3), [Android adaptive icons](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)
+
 ## Scenic Today, Explore, and Solace redesign
 
 ImageGen recreated the supplied sunrise, lotus pond, woodland companion, violet lake, and ringed lake as matched light and dark artwork. It also generated the guided breath sunrise, four square Explore illustrations, and the transparent lotus mark. The `redesign-*.jpg` files were cropped and compressed for the app. The small chat avatar is a crop of the woodland scene. The art contains no app copy or controls. The screens render text, data, and actions separately.
@@ -42,3 +58,49 @@ Four optimized 1120 × 373 JPEGs were generated with built-in ImageGen. The app 
 | `profile-footer-dark.jpg` | Low, subdued aubergine ridges beneath a blank near-black plum field. |
 
 Prompts excluded interface elements, text, people, and foreground objects. The four JPEGs total about 83 KB.
+
+## Voice Companion dusk and dawn
+
+The built-in ImageGen tool created two 852 × 1846 portrait scenes from the approved Voice Companion reference and the existing Solace lotus artwork. The app bundles them as progressive JPEGs. Together they occupy 177 KB. The status, waveform, labels, and controls are rendered separately in React Native.
+
+| File | Prompt summary |
+|---|---|
+| `voice-companion-night.jpg` | A continuous midnight-plum sky, violet mountain ridges, sunset on the right, and a reflective lake. Center the established peach and lavender lotus at about half the viewport width. Use thin, translucent halo ribbons and keep botanical accents at the outer corners. |
+| `voice-companion-dawn.jpg` | Keep the night scene's composition, focal point, and lotus proportions. Use a warm ivory dawn sky, pale sage ridges, peach sunrise, a light reflective lake, and muted botanical accents. |
+
+Both prompts reserved quiet top and bottom space for live UI and excluded text, icons, frames, and interface controls.
+The moving voice scene uses a registered pair per theme. `voice-night-plate.jpg` and `voice-dawn-plate.jpg` retain the original full-frame artwork around the petal matte. ImageGen reconstructed only the scenery hidden by the blossom. The composited clean plates keep the mountain and lake framing, baked energy rings, and water reflections fixed.
+
+`voice-night-lotus.png` and `voice-dawn-lotus.png` use the original petal pixels with a transparent feathered edge. Each 460 × 240 crop starts at (195, 770) in the source canvas. The original complete scenes serve as the immediate loading and Reduce Motion artwork.
+
+<details>
+<summary>ImageGen prompt set</summary>
+
+Each prompt used the shared paragraph followed by the corresponding appearance paragraph.
+
+**Shared paragraph**
+
+> Create ONLY a full-bleed portrait mobile app BACKGROUND ART PLATE, very tall 9:19.5 composition. Reference image 1 is the approved interface screenshot for exact scene composition. Reference image 2 is the existing Solace lotus artwork as subject identity and visual style reference. Remove all interface from reference 1, reconstruct the environmental artwork behind it. Absolutely NO text, glyphs, microphone, circles used as buttons, waveform bars, menus, navigation, clocks, borders, phone frame, widgets, panels, or UI. The single centered Solace lotus is the same realistic sculpted faceless luminous pink/peach petal identity as reference 2. Lotus across ONLY about 48% of image width (x26%–74%), petal crown at y43%, petal base y54%. Flower must NOT dominate the full width. Calm continuous water underneath with delicate elliptical ripples and muted light reflection fading by y64%. Mountain silhouettes along y39%–48%, small sun at x69%, y40%. A very thin, nearly transparent organically curved violet refraction canopy arches from y31% around the flower to y55%, like thin glass filaments. The refraction arcs are integrated into the scene, with flower visually in front. Absolutely NO thick ribbon, upright hoop, strong artificial ring or bright halo obscuring petals. Dainty leaf silhouettes only clipped in upper-left and far bottom corners. Image remains dark/quiet or cream/quiet above y28% and below y66% to ensure readable overlaid native text and controls. Entire environment fades smoothly into quiet top and bottom, no separate image rectangle, no horizontal seam, no dividing bands. High-end coherent cinematic digital painting, restrained saturation, refined atmospheric perspective. Keep the detailed scene spatially centered exactly as reference 1.
+
+**Dark appearance**
+
+> DARK theme artwork. Preserve the reference's deep midnight aubergine sky and violet lake, dark lavender-gray mountain layers, warm peach and amber sun on the right, radiant apricot and pale lavender petals. The very top and lower third are softly textured near-black plum (#161225), with very subtle aubergine leaf silhouettes. Overall luminosity concentrated in the restrained sunset and lotus. The reference should be recognizable as the same cinematic landscape after the controls are removed.
+
+**Light appearance**
+
+> LIGHT theme artwork. Translate the same composition into a soft misty sunrise. Cream and pale rose upper and lower zones (#FBF0E8) with atmospheric warmth. Distant pale lavender and desaturated sage mountains, light apricot sunrise, muted silvery blue-lavender lake, luminous pink-peach petals. Sage botanical leaf silhouettes at corners, gently translucent. Lake reflects pastel sunrise and lotus, retaining enough depth and localized value contrast to distinguish the flower and its thin translucent lavender canopy. Upper and lower thirds stay warmly light for forest-green typography. Avoid harsh white and dark green forest framing.
+
+</details>
+
+## Wellness goals
+
+ImageGen created four text-free illustrations for the goal picker and first recommendation. The dawn and twilight backgrounds are 910-pixel-wide portrait JPEGs. The two new card illustrations are 720 × 480. Together these four assets occupy about 312 KiB.
+
+| File | ImageGen prompt summary |
+|---|---|
+| `goals-dawn.jpg` | Portrait mountain sunrise with pink and ivory mist in the middle, soft lavender mountain layers and sunlight near the top, golden leaves in the top right, and lavender and pink flowers at the bottom corners. |
+| `goals-twilight.jpg` | Portrait twilight counterpart with violet mountain layers near the top, a faint moon, a botanical sprig, dark plum mist through the middle, and restrained night flowers in the bottom corners. |
+| `goals-feelings.jpg` | A recognizable pink flowering tree beside a still lake with soft sunrise, lavender mountains, and a reflection. Landscape thumbnail composition. |
+| `goals-sleep.jpg` | A bright crescent in an indigo sky, billowing pink and lavender clouds, and a few restrained stars. Landscape thumbnail composition. |
+
+The cards for calm, habits, focus, and exploration reuse the existing Solace lake lotus, balanced stones, mountain sunrise, and sunlit forest illustrations. All copy, branding, and interactions render in React Native.

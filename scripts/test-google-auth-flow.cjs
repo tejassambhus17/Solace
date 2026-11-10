@@ -63,6 +63,23 @@ test("redemption includes the app’s S256 proof and the browser’s one-time ha
   ]);
 });
 
+test("normalized native callback URLs redeem the same one-time handoff", async () => {
+  for (const url of [
+    `${callbackUrl}#`,
+    `${GOOGLE_RETURN_URL}/?handoff=${handoff}`,
+    `${GOOGLE_RETURN_URL}/?handoff=${handoff}#`,
+  ]) {
+    const fixture = harness({ open: async () => ({ type: "success", url }) });
+    assert.equal(await fixture.run(), "complete");
+    assert.deepEqual(fixture.events.at(-1), [
+      "complete",
+      flowId,
+      "ab".repeat(32),
+      handoff,
+    ]);
+  }
+});
+
 test("closing the browser does not redeem a session", async () => {
   for (const type of ["cancel", "dismiss"]) {
     const fixture = harness({ open: async () => ({ type }) });
@@ -80,11 +97,14 @@ test("the app rejects other redirects and callbacks carrying URL credentials", a
     "solace://google-auth-similar",
     "solace://google-auth?token=fake",
     "solace://google-auth#id_token=fake",
+    `solace://name:password@google-auth?handoff=${handoff}`,
     "https://example.invalid/google-auth",
     `${GOOGLE_RETURN_URL}?handoff=too-short`,
+    `${GOOGLE_RETURN_URL}/other?handoff=${handoff}`,
     `${callbackUrl}&handoff=${handoff}`,
     `${callbackUrl}&access_token=fake`,
     `${callbackUrl}#id_token=fake`,
+    `${callbackUrl}#\n`,
   ]) {
     const fixture = harness({ open: async () => ({ type: "success", url }) });
     await assert.rejects(fixture.run(), /could not return/);
@@ -154,6 +174,68 @@ test("start and redemption failures do not show success or leak diagnostic text"
     googleAuthMessage({ code: "GOOGLE_CANCELLED" }, true),
     /linking was cancelled/,
   );
+});
+
+test("native browser, return and finish failures show distinct safe messages", async () => {
+  const privateError = new Error("private diagnostic detail");
+  for (const [overrides, stage, message] of [
+    [
+      {
+        open: async () => {
+          throw privateError;
+        },
+      },
+      "browser",
+      /sign-in window couldn’t open/,
+    ],
+    [
+      { open: async () => ({ type: "success", url: "solace://wrong" }) },
+      "return",
+      /without a valid sign-in confirmation/,
+    ],
+    [
+      {
+        complete: async () => {
+          throw privateError;
+        },
+      },
+      "finish",
+      /returned to Solace, but sign-in couldn’t finish/,
+    ],
+  ]) {
+    const fixture = harness(overrides);
+    await assert.rejects(fixture.run(), (error) => {
+      assert.equal(error.stage, stage);
+      assert.match(googleAuthMessage(error), message);
+      assert.doesNotMatch(
+        googleAuthMessage(error),
+        /private diagnostic detail/,
+      );
+      return true;
+    });
+  }
+});
+
+test("completion preserves known server errors and rate limit guidance", async () => {
+  for (const [code, status, message] of [
+    ["GOOGLE_EMAIL_IN_USE", 409, /link Google in Account settings/],
+    ["RATE_LIMITED", 429, /too many attempts/],
+  ]) {
+    const fixture = harness({
+      complete: async () => {
+        throw Object.assign(new Error("private diagnostic detail"), {
+          code,
+          status,
+        });
+      },
+    });
+    await assert.rejects(fixture.run(), (error) => {
+      assert.equal(error.code, code);
+      assert.equal(error.status, status);
+      assert.match(googleAuthMessage(error), message);
+      return true;
+    });
+  }
 });
 
 function linkHookHarness() {

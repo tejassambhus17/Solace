@@ -12,6 +12,41 @@ export type ReminderInput = {
   enabled: boolean;
   habitId?: string;
 };
+export type ReminderPermission =
+  "checking" | "allowed" | "blocked" | "web-preview" | "unknown";
+
+async function reminderChannelBlocked() {
+  if (Platform.OS !== "android") return false;
+  const channel = await Notifications.getNotificationChannelAsync("wellness");
+  return channel?.importance === Notifications.AndroidImportance.NONE;
+}
+
+export async function readReminderPermission(): Promise<ReminderPermission> {
+  if (Platform.OS === "web") return "web-preview";
+  const permission = await Notifications.getPermissionsAsync();
+  return permission.granted && !(await reminderChannelBlocked())
+    ? "allowed"
+    : "blocked";
+}
+
+export async function readReminderDelivery(userId: string) {
+  const permission = await readReminderPermission();
+  const scheduled = new Set<string>();
+  if (permission === "allowed" && userId) {
+    await restorationTail;
+    await mapWriteTail;
+    const [map, notifications] = await Promise.all([
+      readScheduleMap(userId),
+      Notifications.getAllScheduledNotificationsAsync(),
+    ]);
+    const active = new Set(notifications.map(({ identifier }) => identifier));
+    for (const [id, ids] of Object.entries(map)) {
+      if (ids.length && ids.every((identifier) => active.has(identifier)))
+        scheduled.add(id);
+    }
+  }
+  return { permission, scheduled };
+}
 const destinations: Record<string, string> = {
   checkin: "checkin",
   affirmation: "affirmation",
@@ -62,7 +97,7 @@ async function scheduleDeviceReminder(
   if (!permission.granted && requestPermission)
     permission = await Notifications.requestPermissionsAsync();
   assertCurrent();
-  if (!permission.granted)
+  if (!permission.granted || (await reminderChannelBlocked()))
     throw new Error(
       "Notifications are not allowed. Enable them in your phone settings, then try again.",
     );
@@ -250,9 +285,9 @@ async function restoreSchedules(userId: string, reminders: any[]) {
       else await AsyncStorage.setItem(localKey(userId), value);
     });
   try {
-    const permission = await Notifications.getPermissionsAsync();
+    const permission = await readReminderPermission();
     if (!isCurrent()) return;
-    if (!permission.granted) {
+    if (permission !== "allowed") {
       await writeMapIfCurrent(null);
       return;
     }
@@ -303,7 +338,7 @@ export async function testNotification() {
   assertCurrent();
   const permission = await Notifications.requestPermissionsAsync();
   assertCurrent();
-  if (!permission.granted)
+  if (!permission.granted || (await reminderChannelBlocked()))
     throw new Error("Please allow notifications in your phone settings.");
   const id = await Notifications.scheduleNotificationAsync({
     content: {

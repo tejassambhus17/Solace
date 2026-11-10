@@ -1,547 +1,853 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  Animated,
+  AppState,
   BackHandler,
-  Keyboard,
-  Platform,
+  Modal,
+  Pressable,
   ScrollView,
+  StyleSheet,
   useWindowDimensions,
   View,
+  type Animated,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Companion, useReducedMotion } from "../Companion";
-import { VoiceControls } from "../VoiceControls";
-import type { VoiceControlStage } from "../VoiceControlsImpl";
-import { spacing, useScreenGutter } from "../layout";
-import { useApp } from "../store";
-import { useTheme } from "../theme";
 import {
-  AppText,
-  BotanicalBackdrop,
-  Button,
-  IconButton,
-  Input,
-  Row,
-} from "../ui";
-import { companionSendError } from "./ChatDetails";
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { VoiceWaveform } from "../ChatComposer";
+import { useReducedMotion } from "../Companion";
+import { spacing, useScreenGutter } from "../layout";
+import { routes } from "../routes";
+import { beginVoiceTiming, markVoiceTiming } from "../realtime-timing";
+import { readVoiceSessionState } from "../realtime-voice-state";
+import { useApp } from "../store";
+import { artGradient, useTheme } from "../theme";
+import { AppText, Button, Card, Icon } from "../ui";
+import { useRealtimeVoice } from "../useRealtimeVoice";
+import {
+  CompanionActionDialog,
+  useCompanionActions,
+} from "./CompanionAppActions";
+import { useVoiceLevel, VoiceBackdrop, VoiceMeter } from "./VoiceTalkArtwork";
 
-const MESSAGE_LIMIT = 4000;
-const METER_BARS = 13;
-const stages: Record<
-  VoiceControlStage | "replying",
-  [title: string, detail: string]
-> = {
-  idle: [
-    "Talk to Solace",
-    "Record a short message, review the words, then send.",
-  ],
-  preparing: [
-    "Starting microphone",
-    "Allow microphone access to start recording.",
-  ],
-  listening: [
-    "Solace is listening",
-    "Stop to transcribe, or discard the recording.",
-  ],
-  transcribing: [
-    "Transcribing your recording",
-    "Your words will appear in an editable draft.",
-  ],
-  cancelling: [
-    "Discarding recording",
-    "You can record again or type your message.",
-  ],
-  review: ["Review transcript", "Check the words before you send."],
-  replying: [
-    "Solace is replying",
-    "Your draft is kept while you wait for a reply.",
-  ],
-  "starting-playback": ["Preparing spoken reply", "Audio is getting ready."],
-  speaking: [
-    "Solace is speaking",
-    "You can mute or stop playback at any time.",
-  ],
-};
+const voiceDisclosure =
+  "Live voice sends microphone audio to OpenAI and uses an AI-generated voice. Solace saves available transcripts in your conversation.";
 
 export function VoiceTalkScreen() {
   const app = useApp();
   const { colors, resolved } = useTheme();
+  const { height, fontScale, width } = useWindowDimensions();
+  const safe = useSafeAreaInsets();
   const gutter = useScreenGutter();
-  const compact = useWindowDimensions().width < 360;
-  const reduceMotion = useReducedMotion();
+  const reduced = useReducedMotion();
+  const usableHeight = height - safe.top - safe.bottom;
+  const compact = width < 360 || usableHeight < 680 || fontScale > 1.25;
   const initialId =
     typeof app.params.id === "string" ? app.params.id : undefined;
-  const [id, setId] = useState(initialId);
-  const beganOnNewChat = useRef(
-    !initialId || app.params.openedNewChat === true,
-  );
-  const draftKey = id || "new";
-  const [draft, setDraft] = useState(app.chatDrafts[draftKey] || "");
-  const draftRef = useRef(draft);
-  const [recordedDraft, setRecordedDraft] = useState(false);
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const pending = sendingMessage || !!app.chatPending[draftKey];
-  const [failure, setFailure] = useState<{
-    message: string;
-    retryText?: string;
-  }>();
-  const [voiceStage, setVoiceStage] = useState<VoiceControlStage>("idle");
-  const [muted, setMuted] = useState(false);
-  const [meter] = useState(() => new Animated.Value(0));
-  const [bars] = useState(() =>
-    Array.from({ length: METER_BARS }, () => new Animated.Value(-1)),
-  );
-  const samples = useRef<number[]>([]);
-  const barStyles = useMemo(
-    () =>
-      bars.map((value) => ({
-        opacity: value.interpolate({
-          inputRange: [-1, 0],
-          outputRange: [0, 1],
-          extrapolate: "clamp",
-        }),
-        transform: [
-          {
-            scaleY: value.interpolate({
-              inputRange: [0, 1],
-              outputRange: [2 / 21, 1],
-              extrapolate: "clamp",
-            }),
-          },
-        ],
-      })),
-    [bars],
-  );
-  const updateMeter = useCallback(
-    (level: number | null) => {
-      if (level === null || reduceMotion) {
-        if (samples.current.length) {
-          samples.current = [];
-          bars.forEach((bar) => bar.setValue(-1));
-          meter.setValue(0);
-        }
-        return;
+  const voice = useRealtimeVoice(app, initialId);
+  const { state, muted, error } = voice;
+  const autoStart = useRef(app.params.autoStart === true);
+  const transport =
+    voice.transport === "idle" && autoStart.current
+      ? "connecting"
+      : voice.transport;
+  const layoutMarked = useRef(false);
+  const leaving = useRef(false);
+  const leave = useRef(() => {});
+  const actions = useCompanionActions(app, {
+    beforeNavigation: () => leave.current(),
+    onResult: async (actionId, result) => {
+      if (!state || leaving.current || transport !== "ready") return;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4500);
+      try {
+        await app.reportVoiceActionResult(
+          state.id,
+          actionId,
+          result,
+          controller.signal,
+        );
+      } catch {
+        // The on-screen result still reflects the completed operation.
+      } finally {
+        clearTimeout(timeout);
       }
-      samples.current = [...samples.current.slice(-(METER_BARS - 1)), level];
-      const emptyBars = METER_BARS - samples.current.length;
-      bars.forEach((bar, index) =>
-        bar.setValue(samples.current[index - emptyBars] ?? -1),
-      );
-      Animated.timing(meter, {
-        toValue: level,
-        duration: 110,
-        useNativeDriver: Platform.OS !== "web",
-        isInteraction: false,
-      }).start();
     },
-    [bars, meter, reduceMotion],
+    verifyConfirmation: async (id) => {
+      if (!state || leaving.current || transport !== "ready")
+        throw new Error(
+          "The voice session ended. Ask again in chat to confirm the action.",
+        );
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4500);
+      try {
+        const latest = readVoiceSessionState(
+          await app.voiceSessionStatus(state.id, undefined, controller.signal),
+          state.id,
+          state.revision,
+        );
+        if (
+          leaving.current ||
+          latest.phase !== "listening" ||
+          latest.userSpeaking ||
+          (latest.pendingActionId ?? latest.appAction?.id) !== id
+        )
+          throw new Error(
+            "That voice action is no longer pending. Ask Solace again when you’re ready.",
+          );
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  });
+  const actionEvents = useRef(actions);
+  actionEvents.current = actions;
+  const conversationId = useRef(voice.conversationId);
+  conversationId.current = voice.conversationId;
+  const lastOfferedAction = useRef<string | undefined>(undefined);
+  const start = useRef(voice.start);
+  const clearEntryIntent = useRef(() => app.setParams({ autoStart: false }));
+  const [options, setOptions] = useState(false);
+  const [foreground, setForeground] = useState(
+    () => AppState.currentState == null || AppState.currentState === "active",
   );
-  const [autoReadId, setAutoReadId] = useState<string>();
-  const [revealReplyId, setRevealReplyId] = useState<string>();
-  const [replyLayout, setReplyLayout] = useState<{
-    id?: string;
-    top: number;
-  }>();
-  const [expandedMessage, setExpandedMessage] = useState<string>();
-  const revealedReply = useRef<string | undefined>(undefined);
-  const mounted = useRef(false);
-  const sending = useRef(false);
-  const scroll = useRef<React.ElementRef<typeof ScrollView>>(null);
-  const close = useRef(() => {});
-  const currentId = useRef(id);
-  currentId.current = id;
-  const conversation = app.data.conversations.find(
-    (record) => record.id === id,
-  );
-  const messages = Array.isArray(conversation?.messages)
-    ? conversation.messages
-    : [];
-  const latestReply = messages.findLast(
-    (message) => message.role === "assistant",
-  );
-  const latestMessage = messages.findLast((message) => message.role === "user");
-  const lastMessage =
-    typeof latestMessage?.content === "string" ? latestMessage.content : "";
-  const longMessage =
-    lastMessage.length > 120 || /\n[\s\S]*\n/.test(lastMessage);
-  const messageKey = latestMessage?.id ?? `legacy-${messages.length}`;
-  const messageExpanded = expandedMessage === messageKey;
-  const replyText =
-    typeof latestReply?.content === "string" ? latestReply.content : "";
-  const needsSupport =
-    latestReply?.support === true || latestReply?.safety === true;
-  const replyLabel = needsSupport
-    ? "Support guidance"
-    : latestReply?.provider === "offline"
-      ? "Built-in reply"
-      : latestReply?.provider === "live"
-        ? "AI reply"
-        : "Solace reply";
-  const recordingBusy = [
-    "preparing",
-    "listening",
-    "transcribing",
-    "cancelling",
-  ].includes(voiceStage);
-  const canSend =
-    !!draft.trim() && !pending && !recordingBusy && voiceStage !== "review";
-  const canRetry = !!failure?.retryText && failure.retryText === draft.trim();
-  const stage = pending
-    ? "replying"
-    : voiceStage === "idle" && recordedDraft && draft.trim()
-      ? "review"
-      : voiceStage;
-  const [stageTitle, stageDetail] = stages[stage];
-  const companionState =
-    stage === "listening" || stage === "speaking"
-      ? stage
-      : recordingBusy || pending || stage === "starting-playback"
-        ? "thinking"
-        : "idle";
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) =>
+      setForeground(next === "active"),
+    );
+    const current = AppState.currentState;
+    setForeground(current == null || current === "active");
+    return () => subscription.remove();
+  }, []);
+  const active =
+    transport === "connecting" ||
+    transport === "ready" ||
+    transport === "reconnecting";
+  const connected = transport === "ready";
+  const appAction = state?.appAction;
+  const pendingActionId = state?.pendingActionId;
+  useEffect(() => {
+    const { receive, cancelPending } = actionEvents.current;
+    const offered = lastOfferedAction.current;
+    if (
+      !connected ||
+      !foreground ||
+      state?.userSpeaking ||
+      state?.phase !== "listening" ||
+      !appAction ||
+      leaving.current
+    ) {
+      if (offered && (!connected || !foreground || offered !== pendingActionId))
+        cancelPending(offered);
+      return;
+    }
+    if (offered && offered !== appAction.id && offered !== pendingActionId)
+      cancelPending(offered);
+    lastOfferedAction.current = pendingActionId ?? appAction.id;
+    receive(appAction, conversationId.current());
+  }, [
+    appAction,
+    connected,
+    foreground,
+    pendingActionId,
+    state?.phase,
+    state?.userSpeaking,
+  ]);
+  const phase =
+    state?.phase === "support"
+      ? "support"
+      : !connected
+        ? transport
+        : state?.phase === "speaking" || state?.phase === "thinking"
+          ? state.phase
+          : muted
+            ? "muted"
+            : state?.userSpeaking || voice.mediaAcknowledged
+              ? "listening"
+              : "ready";
+  const connectionError = phase === "failed" || phase === "disconnected";
+  const copy = {
+    idle: ["Ready to talk", "I’m here whenever you’re ready."],
+    connecting: ["Connecting…", "Connecting to Solace…"],
+    ready: ["Connected", "You can start speaking whenever you’re ready."],
+    listening: ["Listening…", "I’m here, go ahead…"],
+    thinking: ["Thinking…", "Taking a moment to respond…"],
+    speaking: ["Speaking…", "Solace is speaking. You can jump in anytime."],
+    muted: ["Muted", "Unmute when you’re ready to talk."],
+    reconnecting: ["Reconnecting…", "Finding our connection…"],
+    disconnected: [
+      "Connection lost",
+      error ?? "Try again or continue in chat.",
+    ],
+    failed: ["Couldn’t connect", error ?? "Try again or continue in chat."],
+    support: ["Support right now", "Take a moment to read this guidance."],
+  }[phase];
+  const motion =
+    phase === "idle" || connectionError || phase === "support"
+      ? "resting"
+      : connected && muted
+        ? "muted"
+        : phase;
+  const signal = connected
+    ? phase === "speaking"
+      ? "output"
+      : phase === "listening" && state?.userSpeaking && !muted
+        ? "input"
+        : undefined
+    : undefined;
+  const motionPaused = reduced || !foreground || options;
+  const level = useVoiceLevel(signal, voice.readAudioLevels, motionPaused);
+  const accent = resolved === "dark" ? colors.lavender : colors.lavenderText;
+  const liveStatus =
+    phase === "reconnecting"
+      ? "Reconnecting"
+      : connected && voice.connectedAt && phase !== "connecting"
+        ? "Live"
+        : active
+          ? "Connecting"
+          : phase === "idle"
+            ? "Ready"
+            : "Offline";
 
-  close.current = () => {
-    if (beganOnNewChat.current && currentId.current)
-      app.navigate("chat", { id: currentId.current });
-    else if (app.canGoBack) app.back();
-    else app.navigate("chat", { id: currentId.current });
+  leave.current = () => {
+    if (leaving.current) return;
+    leaving.current = true;
+    const current = voice.conversationId();
+    // The local peer closes immediately. Finish refreshes history in the
+    // background when the server confirms any last turn.
+    void voice.finish();
+    if (current && current !== initialId) {
+      const draft = app.chatDrafts.new;
+      if (draft && !app.chatDrafts[current]) {
+        app.setChatDraft(current, draft);
+        app.setChatDraft("new", "", draft);
+      }
+      app.navigate(routes.companion, {
+        id: current,
+        originCheckinId: app.params.originCheckinId,
+      });
+    } else if (app.canGoBack) app.back();
+    else app.navigate(routes.companion, { id: current });
   };
   useEffect(() => {
-    mounted.current = true;
+    leaving.current = false;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      close.current();
+      leave.current();
       return true;
     });
+    const auto = autoStart.current
+      ? setTimeout(() => {
+          autoStart.current = false;
+          clearEntryIntent.current();
+          void start.current();
+        }, 0)
+      : undefined;
     return () => {
-      mounted.current = false;
       back.remove();
+      clearTimeout(auto);
     };
   }, []);
-  useEffect(() => () => meter.stopAnimation(), [meter]);
-  useEffect(() => {
-    if (
-      !revealReplyId ||
-      replyLayout?.id !== revealReplyId ||
-      revealedReply.current === revealReplyId
-    )
-      return;
-    revealedReply.current = revealReplyId;
-    scroll.current?.scrollTo({
-      y: Math.max(0, replyLayout.top - spacing.row),
-      animated: !reduceMotion,
-    });
-  }, [revealReplyId, replyLayout, reduceMotion]);
-
-  function writeDraft(text: string) {
-    draftRef.current = text;
-    if (failure && failure.retryText !== text.trim()) setFailure(undefined);
-    setDraft(text);
-    app.setChatDraft(draftKey, text);
-  }
-
-  function useTranscript(text: string) {
-    const existing = draftRef.current.trimEnd();
-    const next = existing ? `${existing}\n${text}` : text;
-    if (next.length > MESSAGE_LIMIT) {
-      setFailure({
-        message: "Shorten the draft to make room for this transcript.",
-      });
-      return false;
-    }
-    setFailure(undefined);
-    setRecordedDraft(true);
-    writeDraft(next);
-    return true;
-  }
-
-  async function send() {
-    const savedDraft = draftRef.current;
-    const text = savedDraft.trim();
-    if (!text || !canSend || sending.current) return;
-    sending.current = true;
-    setSendingMessage(true);
-    setFailure(undefined);
-    Keyboard.dismiss();
-    try {
-      const result = await app.chat(text, id);
-      app.setChatDraft(draftKey, "", savedDraft);
-      if (!mounted.current) return;
-      const nextId = result.conversation.id;
-      const assistant = result.conversation.messages.findLast(
-        (message: { role: string }) => message.role === "assistant",
-      );
-      currentId.current = nextId;
-      draftRef.current = "";
-      setDraft("");
-      setRecordedDraft(false);
-      setId(nextId);
-      app.setParams({ id: nextId, openedNewChat: beganOnNewChat.current });
-      if (typeof assistant?.id === "string") setRevealReplyId(assistant.id);
-      if (
-        typeof assistant?.id === "string" &&
-        !assistant.support &&
-        !assistant.safety
-      )
-        setAutoReadId(assistant.id);
-    } catch (error) {
-      if (mounted.current)
-        setFailure({
-          message: companionSendError(error),
-          retryText: text,
-        });
-    } finally {
-      sending.current = false;
-      if (mounted.current) setSendingMessage(false);
-    }
-  }
 
   return (
-    <SafeAreaView
-      edges={["top", "bottom"]}
-      style={{ flex: 1, backgroundColor: colors.bg }}
+    <View
+      onLayout={() => {
+        if (layoutMarked.current) return;
+        layoutMarked.current = true;
+        markVoiceTiming("layout");
+      }}
+      style={[
+        styles.frame,
+        { backgroundColor: resolved === "dark" ? "#161125" : colors.bg },
+      ]}
     >
-      <Row
-        style={{
-          paddingHorizontal: gutter,
-          paddingVertical: 5,
-          justifyContent: "space-between",
-          borderBottomWidth: 1,
-          borderBottomColor: colors.border,
-        }}
-      >
-        <IconButton
-          name="arrow-back"
-          label="End voice talk and return to chat"
-          size={48}
-          onPress={() => close.current()}
-        />
-        <AppText
-          variant="heading"
-          accessibilityRole="header"
-          style={{ flex: 1, textAlign: "center" }}
-        >
-          Voice talk
-        </AppText>
-        <IconButton
-          name={muted ? "volume-mute-outline" : "volume-medium-outline"}
-          label={muted ? "Unmute spoken replies" : "Mute spoken replies"}
-          size={48}
-          onPress={() => setMuted((current) => !current)}
-        />
-      </Row>
-      <ScrollView
-        ref={scroll}
-        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingHorizontal: gutter,
-          paddingTop: spacing.screenTop,
-          paddingBottom: spacing.bottom,
-          gap: spacing.card,
-        }}
+      <VoiceBackdrop
+        motion={motion}
+        level={level}
+        signal={signal}
+        paused={motionPaused}
+      />
+      <SafeAreaView
+        edges={["top", "bottom", "left", "right"]}
+        style={styles.frame}
       >
         <View
-          style={{
-            overflow: "hidden",
-            borderRadius: 24,
-            borderWidth: 1,
-            borderColor: colors.heroBorder,
-            backgroundColor:
-              resolved === "light" ? colors.peachSurface : colors.heroSurface,
-            paddingHorizontal: spacing.card,
-            paddingTop: spacing.compact,
-            paddingBottom: spacing.card,
-            alignItems: "center",
-          }}
+          style={[
+            styles.header,
+            { paddingHorizontal: Math.max(8, gutter - 11) },
+          ]}
         >
-          <BotanicalBackdrop style={{ right: -54, top: -60, opacity: 0.2 }} />
-          <Companion
-            size={compact ? 76 : 96}
-            state={companionState}
-            soundMotion={meter}
+          <VoiceControl
+            icon="arrow-back"
+            accessibilityLabel="Back to Companion"
+            onPress={() => leave.current()}
+            size={34}
           />
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={{
-              flexDirection: "row",
-              height: 25,
-              alignItems: "center",
-              gap: 3,
-            }}
-          >
-            {voiceStage === "listening" &&
-              !reduceMotion &&
-              barStyles.map((motion, index) => (
-                <Animated.View
-                  key={index}
-                  style={[
-                    {
-                      width: 3,
-                      height: 21,
-                      borderRadius: 2,
-                      backgroundColor: colors.lavenderText,
-                    },
-                    motion,
-                  ]}
-                />
-              ))}
+          <View style={styles.headerTitle}>
+            <VoiceWaveform color={accent} size={22} />
+            <AppText
+              variant="body"
+              accessibilityRole="header"
+              style={styles.headerText}
+            >
+              Voice Companion
+            </AppText>
           </View>
-          <AppText
-            variant="title"
-            accessibilityRole="header"
-            accessibilityLiveRegion="polite"
-            style={{
-              textAlign: "center",
-              fontSize: compact ? 30 : 34,
-              lineHeight: compact ? 34 : 38,
-              marginTop: 3,
-            }}
-          >
-            {stageTitle}
-          </AppText>
-          <AppText
-            variant="caption"
-            color={resolved === "light" ? colors.peachText : colors.muted}
-            style={{ textAlign: "center", marginTop: 8, maxWidth: 270 }}
-          >
-            {stageDetail} {muted && "Spoken replies are muted."}
-          </AppText>
+          <VoiceControl
+            icon="ellipsis-horizontal"
+            accessibilityLabel="Voice options"
+            onPress={() => setOptions(true)}
+            size={34}
+          />
         </View>
-        <VoiceControls
-          variant="talk"
-          disabled={pending}
-          muted={muted}
-          reply={replyText}
-          autoReadKey={
-            autoReadId === latestReply?.id && !needsSupport
-              ? autoReadId
-              : undefined
-          }
-          onTranscript={useTranscript}
-          onStage={setVoiceStage}
-          onMeter={updateMeter}
-          renderComposer={(microphone, playback) => (
-            <View style={{ gap: spacing.row }}>
-              <View style={{ alignItems: "center", paddingBottom: 3 }}>
-                {microphone}
-                {!!playback && (
-                  <View style={{ position: "absolute", right: 0, top: 13 }}>
-                    {playback}
-                  </View>
-                )}
-              </View>
-              <View style={{ gap: 7 }}>
-                <AppText variant="label">
-                  {recordedDraft ? "Review your transcript" : "Your message"}
-                </AppText>
-                <Input
-                  accessibilityLabel={
-                    recordedDraft ? "Review your transcript" : "Your message"
-                  }
-                  placeholder="Type your message here"
-                  value={draft}
-                  editable={!pending && !recordingBusy}
-                  multiline
-                  maxLength={MESSAGE_LIMIT}
-                  onChangeText={writeDraft}
-                  onFocus={() => {
-                    if (!replyText)
-                      scroll.current?.scrollToEnd({ animated: false });
-                  }}
-                  style={{ minHeight: 82, borderRadius: 16 }}
-                />
-                {!!failure && (
-                  <AppText
-                    variant="caption"
-                    accessibilityRole="alert"
-                    color={colors.danger}
-                  >
-                    {failure.message} {canRetry && "Your draft is still here."}
-                  </AppText>
-                )}
-              </View>
-              <Button
-                title={canRetry ? "Retry message" : "Send message"}
-                icon={canRetry ? "refresh-outline" : "paper-plane-outline"}
-                disabled={!canSend}
-                loading={pending}
-                onPress={() => void send()}
+        <ScrollView
+          style={styles.frame}
+          contentContainerStyle={[
+            styles.body,
+            { paddingTop: compact ? 8 : 25, paddingBottom: compact ? 16 : 36 },
+          ]}
+          contentInsetAdjustmentBehavior="never"
+          bounces={false}
+          overScrollMode="never"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.identity, { paddingHorizontal: gutter }]}>
+            <AppText
+              variant="title"
+              accessibilityRole="header"
+              style={styles.solace}
+            >
+              Solace
+            </AppText>
+            <AppText
+              variant="body"
+              color={colors.muted}
+              accessibilityLiveRegion="polite"
+              style={styles.center}
+            >
+              {copy[0]}
+            </AppText>
+            <View style={{ marginTop: compact ? 4 : 9 }}>
+              <VoiceMeter
+                level={level}
+                color={accent}
+                compact={compact}
+                ready={connected && !muted}
               />
             </View>
-          )}
-        />
-        {!!replyText && (
-          <View
-            key={latestReply?.id ?? "reply"}
-            onLayout={({ nativeEvent }) =>
-              setReplyLayout({ id: latestReply?.id, top: nativeEvent.layout.y })
-            }
-            style={{
-              gap: 10,
-              padding: 16,
-              borderRadius: 18,
-              backgroundColor: colors.surface,
-              borderWidth: 1,
-              borderColor: colors.border,
-            }}
-          >
-            <Row style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-              <AppText variant="label" accessibilityRole="header">
-                {replyLabel}
-              </AppText>
-              {(stage === "starting-playback" || stage === "speaking") && (
-                <AppText variant="caption" color={colors.muted}>
-                  {stage === "speaking" ? "Reading aloud" : "Preparing audio…"}
-                </AppText>
-              )}
-            </Row>
-            <AppText accessibilityLiveRegion="polite" selectable>
-              {replyText}
-            </AppText>
-            {needsSupport && (
-              <Button
-                title="Find human support"
-                variant="secondary"
-                icon="heart-outline"
-                onPress={() => app.navigate("support")}
-              />
-            )}
-            {!!lastMessage && (
-              <View style={{ gap: 4 }}>
-                <AppText
-                  variant="caption"
-                  color={colors.muted}
-                  selectable
-                  numberOfLines={
-                    longMessage && !messageExpanded ? 3 : undefined
-                  }
-                >
-                  You: {lastMessage}
-                </AppText>
-                {longMessage && (
-                  <Button
-                    title={messageExpanded ? "Show less" : "Show full message"}
-                    variant="ghost"
-                    onPress={() =>
-                      setExpandedMessage(
-                        messageExpanded ? undefined : messageKey,
-                      )
-                    }
-                    style={{ alignSelf: "flex-start", minHeight: 44 }}
-                  />
-                )}
-              </View>
-            )}
           </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+
+          <View
+            testID="voice-scene"
+            pointerEvents="none"
+            style={[
+              styles.sceneSpace,
+              {
+                minHeight: Math.max(
+                  96,
+                  Math.min(width * 0.55, usableHeight * 0.25),
+                ),
+              },
+            ]}
+          />
+
+          <View
+            style={[
+              styles.lower,
+              {
+                paddingHorizontal: width >= 370 ? Math.max(gutter, 32) : gutter,
+              },
+            ]}
+          >
+            <AppText
+              variant="heading"
+              color={connectionError ? colors.danger : colors.text}
+              style={[
+                styles.guidance,
+                compact && styles.compactGuidance,
+                connectionError && {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderRadius: 16,
+                  paddingHorizontal: 12,
+                  paddingVertical: 4,
+                },
+              ]}
+              accessibilityRole={connectionError ? "alert" : undefined}
+            >
+              {copy[1]}
+            </AppText>
+            {phase === "support" && !!state?.support && (
+              <Card style={{ gap: spacing.row, marginTop: spacing.compact }}>
+                <AppText accessibilityRole="alert" selectable>
+                  {state.support}
+                </AppText>
+                <Button
+                  title="Find human support"
+                  variant="secondary"
+                  icon="heart-outline"
+                  onPress={() => app.navigate("support")}
+                />
+              </Card>
+            )}
+
+            <View
+              testID="voice-session-controls"
+              style={[styles.controls, { marginTop: compact ? 14 : 36 }]}
+            >
+              <View
+                style={[styles.controlSlot, { paddingTop: compact ? 8 : 15 }]}
+              >
+                <VoiceControl
+                  icon={
+                    voice.speakerphone === undefined
+                      ? "volume-high-outline"
+                      : voice.speakerphone
+                        ? "volume-high-outline"
+                        : "volume-low-outline"
+                  }
+                  label={
+                    voice.speakerphone === undefined
+                      ? "System audio"
+                      : "Speaker"
+                  }
+                  accessibilityLabel={
+                    voice.speakerphone ? "Prefer earpiece" : "Prefer speaker"
+                  }
+                  accessibilityHint="Changes the built-in speaker preference. The system can use connected headphones."
+                  selected={voice.speakerphone}
+                  onPress={
+                    voice.speakerphone === undefined
+                      ? undefined
+                      : () => void voice.toggleSpeakerphone()
+                  }
+                  disabled={!connected || voice.speakerBusy}
+                  size={compact ? 48 : 50}
+                />
+              </View>
+              <View style={styles.controlSlot}>
+                <VoiceControl
+                  icon={
+                    active
+                      ? "call"
+                      : phase === "support"
+                        ? "chatbubble-outline"
+                        : error
+                          ? "refresh"
+                          : "play"
+                  }
+                  label={
+                    active
+                      ? "End"
+                      : phase === "support"
+                        ? "Chat"
+                        : error
+                          ? "Retry"
+                          : "Start"
+                  }
+                  accessibilityLabel={
+                    active
+                      ? "End voice session"
+                      : phase === "support"
+                        ? "Continue in chat"
+                        : error
+                          ? "Retry live voice"
+                          : "Start live voice"
+                  }
+                  onPress={
+                    active || phase === "support"
+                      ? () => leave.current()
+                      : () => {
+                          beginVoiceTiming();
+                          void voice.start();
+                        }
+                  }
+                  disabled={!active && voice.ending}
+                  size={compact ? 64 : 80}
+                  primary
+                />
+              </View>
+              <View
+                style={[styles.controlSlot, { paddingTop: compact ? 8 : 15 }]}
+              >
+                <VoiceControl
+                  icon={muted ? "mic-off" : "mic-off-outline"}
+                  label={muted ? "Unmute" : "Mute"}
+                  accessibilityLabel={
+                    muted ? "Unmute microphone" : "Mute microphone"
+                  }
+                  onPress={voice.toggleMute}
+                  selected={muted}
+                  disabled={!connected}
+                  size={compact ? 48 : 50}
+                />
+              </View>
+            </View>
+            {!!voice.speakerError && (
+              <AppText
+                variant="caption"
+                accessibilityRole="alert"
+                color={colors.danger}
+                style={[styles.center, styles.footerCopy]}
+              >
+                {voice.speakerError}
+              </AppText>
+            )}
+            <VoiceLiveStatus
+              level={level}
+              label={liveStatus}
+              startedAt={voice.connectedAt}
+              compact={compact}
+              ready={connected && !muted}
+            />
+            {phase === "connecting" || phase === "idle" ? (
+              <AppText
+                variant="caption"
+                color={colors.muted}
+                style={styles.disclosure}
+              >
+                {voiceDisclosure}
+              </AppText>
+            ) : connectionError ? (
+              <View style={styles.footerCopy}>
+                <Button
+                  title="Continue in Chat"
+                  icon="chatbubble-outline"
+                  onPress={() => leave.current()}
+                />
+              </View>
+            ) : null}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+      <Modal
+        visible={options}
+        transparent
+        animationType={reduced ? "none" : "fade"}
+        onRequestClose={() => setOptions(false)}
+      >
+        <View style={styles.overlay}>
+          <Pressable
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.overlay },
+            ]}
+            onPress={() => setOptions(false)}
+            accessibilityLabel="Close voice options"
+          />
+          <View
+            accessibilityViewIsModal
+            style={[
+              styles.options,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <ScrollView bounces={false}>
+              <AppText variant="heading" accessibilityRole="header">
+                Voice & privacy
+              </AppText>
+              <AppText color={colors.muted} style={{ marginTop: spacing.row }}>
+                {voiceDisclosure}
+              </AppText>
+              <View style={{ marginTop: spacing.card, gap: spacing.compact }}>
+                <Button
+                  title="Continue in chat"
+                  onPress={() => {
+                    setOptions(false);
+                    leave.current();
+                  }}
+                />
+                <Button
+                  title="Close"
+                  variant="secondary"
+                  onPress={() => setOptions(false)}
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <CompanionActionDialog actions={actions} />
+    </View>
   );
 }
+
+function VoiceControl({
+  icon,
+  label,
+  accessibilityLabel,
+  accessibilityHint,
+  onPress,
+  size,
+  primary,
+  selected,
+  disabled,
+}: {
+  icon: string;
+  label?: string;
+  accessibilityLabel: string;
+  accessibilityHint?: string;
+  onPress?: () => void;
+  size: number;
+  primary?: boolean;
+  selected?: boolean;
+  disabled?: boolean;
+}) {
+  const { colors, resolved } = useTheme();
+  const dark = resolved === "dark";
+  const circle = [
+    styles.controlCircle,
+    {
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      borderWidth: primary ? 0 : 1,
+      borderColor: dark ? "#9A7BA153" : colors.lavender,
+      backgroundColor: primary
+        ? "#EABBD5"
+        : selected
+          ? colors.lavenderSurface
+          : dark
+            ? "#2C233C99"
+            : "#FBF7FDE8",
+    },
+    primary && styles.endGlow,
+    primary &&
+      artGradient(
+        dark
+          ? "linear-gradient(150deg, #F9D9ED 0%, #D69ACB 47%, #FFD4B8 96%)"
+          : "linear-gradient(150deg, #F3E5F9 0%, #CDB3E0 53%, #ECD5DE 100%)",
+      ),
+  ];
+  const controlFace = (
+    <View style={circle}>
+      {primary && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.endFace,
+            { borderRadius: size / 2 - 2 },
+            artGradient(
+              dark
+                ? "linear-gradient(145deg, #723B61 0%, #42244F 53%, #A04C60 100%)"
+                : "linear-gradient(145deg, #714C82 0%, #4B315F 55%, #825367 100%)",
+            ),
+          ]}
+        />
+      )}
+      <View style={icon === "call" ? styles.endGlyph : undefined}>
+        <Icon
+          name={icon}
+          size={primary ? 28 : size < 40 ? 17 : 20}
+          color={primary ? "#FFF1F7" : onPress ? colors.text : colors.muted}
+        />
+      </View>
+    </View>
+  );
+  const caption = label ? (
+    <AppText
+      variant="caption"
+      color={colors.muted}
+      style={styles.center}
+      accessible={!onPress}
+    >
+      {label}
+    </AppText>
+  ) : null;
+  if (!onPress)
+    return (
+      <View
+        accessible
+        accessibilityLabel="System audio routing"
+        style={styles.control}
+      >
+        {controlFace}
+        {caption}
+      </View>
+    );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled, selected }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.control,
+        { opacity: disabled ? 0.46 : pressed ? 0.72 : 1 },
+      ]}
+    >
+      {controlFace}
+      {caption}
+    </Pressable>
+  );
+}
+
+function VoiceLiveStatus({
+  level,
+  label,
+  startedAt,
+  compact,
+  ready,
+}: {
+  level: Animated.Value;
+  label: string;
+  startedAt?: number;
+  compact: boolean;
+  ready: boolean;
+}) {
+  const { colors, resolved } = useTheme();
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    setElapsed(0);
+    if (startedAt === undefined) return;
+    const tick = () =>
+      setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  const stamp =
+    startedAt === undefined
+      ? "--:--"
+      : [Math.floor(elapsed / 60), elapsed % 60]
+          .map((value) => String(value).padStart(2, "0"))
+          .join(":");
+  const accent = resolved === "dark" ? colors.lavender : colors.lavenderText;
+  return (
+    <View
+      testID="voice-live-status"
+      accessible
+      accessibilityLabel={`Live voice status, ${label}${startedAt === undefined ? "" : `, ${elapsed} seconds elapsed`}`}
+      style={[
+        styles.live,
+        {
+          marginTop: compact ? 16 : 32,
+          borderColor: resolved === "dark" ? "#9C739D68" : colors.lavender,
+          backgroundColor: resolved === "dark" ? "#30213D99" : "#FBF7FDD9",
+        },
+      ]}
+    >
+      <View style={styles.liveLabel}>
+        <View
+          style={[
+            styles.dot,
+            { backgroundColor: label === "Live" ? accent : colors.muted },
+          ]}
+        />
+        <AppText
+          variant="caption"
+          color={colors.muted}
+          style={{ flexShrink: 1 }}
+        >
+          {label}
+        </AppText>
+      </View>
+      <VoiceMeter level={level} color={accent} compact ready={ready} />
+      <AppText variant="caption" color={colors.muted} style={styles.elapsed}>
+        {stamp}
+      </AppText>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  frame: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  headerTitle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  headerText: {
+    textAlign: "center",
+    flexShrink: 1,
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  body: { flexGrow: 1 },
+  identity: { alignItems: "center", gap: 3 },
+  solace: { textAlign: "center", fontStyle: "italic", fontSize: 34 },
+  center: { textAlign: "center" },
+  sceneSpace: { flexGrow: 1 },
+  lower: { alignItems: "center", paddingTop: 2 },
+  guidance: {
+    textAlign: "center",
+    fontStyle: "italic",
+    fontSize: 19,
+    lineHeight: 29,
+    maxWidth: 410,
+  },
+  compactGuidance: { lineHeight: 25 },
+  controls: {
+    width: "100%",
+    maxWidth: 318,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  controlSlot: { flex: 1, alignItems: "center", justifyContent: "flex-end" },
+  control: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    flexShrink: 0,
+    maxWidth: "100%",
+    minWidth: 48,
+    minHeight: 48,
+  },
+  controlCircle: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  endGlow: { boxShadow: "0px 3px 17px #B8548C59" },
+  endFace: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    bottom: 2,
+    left: 2,
+    backgroundColor: "#67415E",
+  },
+  endGlyph: { transform: [{ rotate: "135deg" }] },
+  live: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    maxWidth: 460,
+    gap: 10,
+    minHeight: 46,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  liveLabel: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  elapsed: { flex: 1, textAlign: "right", fontVariant: ["tabular-nums"] },
+  footerCopy: { marginTop: 10 },
+  disclosure: { textAlign: "center", maxWidth: 380, marginTop: 10 },
+  overlay: {
+    flex: 1,
+    paddingHorizontal: 22,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  options: {
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: "85%",
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 20,
+  },
+});

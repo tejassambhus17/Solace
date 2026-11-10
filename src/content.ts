@@ -246,24 +246,6 @@ export const AFFIRMATIONS = [
   "I am allowed to begin again.",
 ];
 
-export const DEFAULT_PLAN = [
-  {
-    title: "Take a mindful pause",
-    description: "A few calm minutes to breathe and reset.",
-    action: "breathing",
-  },
-  {
-    title: "Do something kind",
-    description: "One small, kind action for yourself or someone else.",
-    action: "reflection",
-  },
-  {
-    title: "Notice a bright spot",
-    description: "Pause to notice one good thing, however small.",
-    action: "reflection",
-  },
-];
-
 export function localDay(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }

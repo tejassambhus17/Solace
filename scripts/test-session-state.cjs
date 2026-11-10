@@ -22,9 +22,13 @@ function harness(options = {}) {
   let cursor = 0;
   let heldWrite = null;
   let current;
+  let nativeAppState = options.nativeAppState ?? "active";
   const h = {
     storage,
+    vaultCreations: 0,
+    reminderCancellations: 0,
     appState(state) {
+      nativeAppState = state;
       for (const listener of appStateListeners) listener(state);
     },
     onRequest: async (route) => {
@@ -58,6 +62,9 @@ function harness(options = {}) {
     },
     useMemo(factory) {
       return factory();
+    },
+    useEffectEvent(callback) {
+      return callback;
     },
     useEffect(effect, deps) {
       const index = cursor++;
@@ -112,14 +119,32 @@ function harness(options = {}) {
     routes.exports,
   );
   const module = { exports: {} };
+  const wellnessGoals = { exports: {} };
+  new Function("module", "exports", compile("../server/src/wellness-goals.ts"))(
+    wellnessGoals,
+    wellnessGoals.exports,
+  );
   const deviceLock = { exports: {} };
   const journalRecord = { exports: {} };
+  const practiceFollowUp = { exports: {} };
+  new Function(
+    "module",
+    "exports",
+    "require",
+    compile("../src/practice-follow-up.ts"),
+  )(practiceFollowUp, practiceFollowUp.exports, () => routes.exports);
   const requireMock = (name) => {
+    if (name === "../server/src/companion-app-action")
+      return { appActionCapabilityHeader: "X-Solace-App-Actions" };
+    if (name === "../server/src/wellness-goals") return wellnessGoals.exports;
     if (name === "react") return react;
     if (name === "react-native")
       return {
         Platform: { OS: options.platform || "web" },
         AppState: {
+          get currentState() {
+            return nativeAppState;
+          },
           addEventListener: (_type, callback) => {
             appStateListeners.add(callback);
             return { remove: () => appStateListeners.delete(callback) };
@@ -135,9 +160,11 @@ function harness(options = {}) {
             throw Error("Protected device storage unavailable");
           if (settings?.requireAuthentication) {
             h.biometricReads = (h.biometricReads || 0) + 1;
-            if (h.biometricError) throw Error(h.biometricError);
+            const proof = await storageMock.getItem(key);
             if (h.biometricRead) await h.biometricRead;
+            if (h.biometricError) throw Error(h.biometricError);
             if (h.biometricInvalidated) return null;
+            return proof;
           }
           return storageMock.getItem(key);
         },
@@ -165,11 +192,21 @@ function harness(options = {}) {
         getEnrolledLevelAsync: async () => h.biometricLevel ?? 3,
         SecurityLevel: { BIOMETRIC_STRONG: 3 },
       };
-    if (name === "./offline") return offline.exports;
+    if (name === "./offline")
+      return {
+        ...offline.exports,
+        createOfflineVault(...args) {
+          h.vaultCreations += 1;
+          return offline.exports.createOfflineVault(...args);
+        },
+      };
+    if (name === "./notifications")
+      return { cancelAllReminders: async () => ++h.reminderCancellations };
     if (name === "./api-config") return apiConfig.exports;
     if (name === "./routes") return routes.exports;
     if (name === "./device-lock") return deviceLock.exports;
     if (name === "./journal-record") return journalRecord.exports;
+    if (name === "./practice-follow-up") return practiceFollowUp.exports;
     throw Error(`Unexpected dependency: ${name}`);
   };
   new Function(
@@ -303,11 +340,17 @@ function habitViews(readApp) {
     "../store": { useApp: readApp },
     "./theme": { useTheme: () => ({ colors: {}, resolved: "light" }) },
     "./ui": hosts("AppText", "Icon"),
-    "../ui": hosts("AppText", "Button", "Card", "Icon", "Input", "Screen"),
+    "../ui": hosts(
+      "AppText",
+      "Button",
+      "Card",
+      "Icon",
+      "Input",
+      "Screen",
+      "BotanicalBackdrop",
+    ),
     "../theme": { useTheme: () => ({ colors: {}, resolved: "light" }) },
     "./Companion": { useReducedMotion: () => true },
-    "./HabitsEditor": {},
-    "./HabitsInsights": {},
   };
   function load(file) {
     const filename = path.join(__dirname, file);
@@ -345,7 +388,10 @@ function habitViews(readApp) {
   const { TodayHabits, HabitJourneyEntry } = load(
     "../src/screens/HabitEntryPoints.tsx",
   );
-  const { HabitsScreen } = load("../src/screens/Habits.tsx");
+  dependencies["./HabitsSectionPieces"] = load(
+    "../src/screens/HabitsSectionPieces.tsx",
+  );
+  const { HabitsTodaySection } = load("../src/screens/HabitsTodaySection.tsx");
 
   function render(element) {
     const controls = [];
@@ -378,7 +424,13 @@ function habitViews(readApp) {
   return {
     today: () => render(TodayHabits({})),
     dashboard: () =>
-      render(HabitsScreen({ name: dependencies["../routes"].routes.habits })),
+      render(
+        HabitsTodaySection({
+          onOpenGarden() {},
+          onOpenInsights() {},
+          onOpenManagement() {},
+        }),
+      ),
     journey: (props = {}) =>
       render(
         HabitJourneyEntry({
@@ -544,17 +596,165 @@ test("a state snapshot started before a completed save cannot erase the newer re
   const held = deferred();
   h.onRequest = async (route) => {
     if (route === "/state") return held.promise;
-    if (route === "/records/reflections")
-      return ok({
-        record: { id: "new-reflection", text: "Saved after refresh began" },
-      });
     throw Error(`Unexpected request: ${route}`);
   };
   const refreshing = h.render().refresh();
-  await h.render().save("reflections", { text: "Saved after refresh began" });
+  h.onRequest = async (route, { body }) => {
+    assert.equal(route, "/records/reflections");
+    return ok({ record: JSON.parse(body) });
+  };
+  const saved = await h.render().save("reflections", {
+    text: "Saved after refresh began",
+  });
   held.resolve(ok({ user: { id: "account-a" }, data: empty() }));
   await refreshing;
-  assert.equal(h.render().data.reflections[0].id, "new-reflection");
+  assert.equal(h.render().data.reflections[0].id, saved.id);
+  h.close();
+});
+
+test("confirmed wellness goals and onboarding survive an older account refresh", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  const pendingState = deferred();
+  h.onRequest = async (route, options) => {
+    if (route === "/state") return pendingState.promise;
+    assert.equal(route, "/auth/wellness-goals");
+    assert.equal(options.method, "PATCH");
+    assert.equal(options.headers.Authorization, "Bearer token-account-a");
+    assert.deepEqual(JSON.parse(options.body), {
+      goals: ["sleep", "calm"],
+      completeOnboarding: true,
+    });
+    return ok({
+      user: {
+        id: "account-a",
+        wellnessGoals: ["calm", "sleep"],
+        wellnessOnboarding: "completed",
+      },
+    });
+  };
+  const refreshing = h.render().refresh();
+  assert.deepEqual(
+    Array.from(await h.render().saveWellnessGoals(["sleep", "calm"], true)),
+    ["calm", "sleep"],
+  );
+  pendingState.resolve(
+    ok({
+      user: {
+        id: "account-a",
+        wellnessGoals: [],
+        wellnessOnboarding: "pending",
+      },
+      data: empty(),
+    }),
+  );
+  await refreshing;
+  assert.equal(h.render().user.wellnessOnboarding, "completed");
+  assert.deepEqual(Array.from(h.render().user.wellnessGoals), [
+    "calm",
+    "sleep",
+  ]);
+});
+
+test("a malformed wellness save response cannot complete another account’s onboarding", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  h.onRequest = async () =>
+    ok({
+      user: {
+        id: "another-account",
+        wellnessGoals: ["sleep"],
+        wellnessOnboarding: "completed",
+      },
+    });
+  await assert.rejects(
+    h.render().saveWellnessGoals(["sleep"], true),
+    /confirm your saved goals/,
+  );
+  assert.equal(h.render().user.id, "account-a");
+  assert.equal(h.render().user.wellnessOnboarding, undefined);
+});
+
+test("a completed session retries once with its same ID when an optional origin disappeared", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  const sent = [];
+  const completion = {
+    id: "moment-session-recovery",
+    type: "breathing",
+    completed: true,
+    durationSec: 60,
+  };
+  h.onRequest = async (route, options) => {
+    assert.equal(route, "/records/sessions");
+    assert.equal(options.method, "POST");
+    sent.push(JSON.parse(options.body));
+    if (sent.length === 1)
+      return ok(
+        {
+          code: "PRACTICE_ORIGIN_NOT_FOUND",
+          error: "Starting context was removed",
+        },
+        404,
+      );
+    return ok({ record: sent[1] }, 201);
+  };
+  const linked = {
+    ...completion,
+    originCheckinId: "deleted-checkin",
+    sourceConversationId: "deleted-conversation",
+    originActionId: "old-proposal",
+  };
+  assert.equal((await h.render().save("sessions", linked)).id, completion.id);
+  assert.deepEqual(sent, [linked, completion]);
+  assert.equal(h.render().data.sessions.length, 1);
+});
+
+test("a delayed refresh cannot replace a newer account snapshot", async () => {
+  const h = await signedIn();
+  const delayed = deferred();
+  h.onRequest = async () => delayed.promise;
+  const first = h.render().refresh();
+  h.onRequest = accountTransport("account-a", "token-a", {
+    ...empty(),
+    checkins: [{ id: "new-checkin" }],
+  });
+  await h.render().refresh();
+  delayed.resolve(ok({ user: { id: "account-a" }, data: empty() }));
+  await first;
+  assert.equal(h.render().data.checkins[0].id, "new-checkin");
+  h.close();
+});
+
+test("the account provider retains one writing vault across rerenders", async () => {
+  const h = await signedIn();
+  for (let i = 0; i < 20; i++) h.render();
+  assert.equal(h.vaultCreations, 1);
+  h.close();
+});
+
+test("a mismatched save acknowledgement preserves the draft retry identity", async () => {
+  const h = await signedIn();
+  const requests = [];
+  h.onRequest = async (route, { body }) => {
+    assert.equal(route, "/records/checkins");
+    const record = JSON.parse(body);
+    requests.push(record);
+    return ok({ record: requests.length === 1 ? { id: "unrelated" } : record });
+  };
+  const entry = { mood: "Okay", day: "2026-11-08" };
+  await assert.rejects(h.render().save("checkins", entry), /couldn’t confirm/);
+  assert.equal(h.render().data.checkins.length, 0);
+  const saved = await h.render().save("checkins", entry);
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(h.render().data.checkins[0].id, saved.id);
+  h.onRequest = async () => ok({});
+  await assert.rejects(
+    h.render().save("sessions", { id: "completed-practice", completed: true }),
+    /couldn’t confirm/,
+  );
+  assert.equal(h.render().data.sessions.length, 0);
+  h.close();
 });
 
 test("logout wins over a delayed device token write and cannot restore a stale session", async () => {
@@ -642,7 +842,7 @@ test("details keep their originating tab and main destinations start a stack wit
   assert.equal(app.activeTab, "chat");
   assert.equal(app.params.id, "conversation-a");
   assert.equal(app.params.context, "Resume this thought");
-  assert.equal(app.canGoBack, false);
+  assert.equal(app.canGoBack, true);
   app.navigate("breathing", { conversationId: "conversation-a" });
   h.render().navigate("feedback");
   assert.equal(h.render().activeTab, "chat");
@@ -692,6 +892,109 @@ test("Explore is a tab with a root and preserves its branch and view across swit
   h.render().navigate("explore");
   assert.equal(h.render().route, "explore");
   assert.equal(h.render().params.exploreView.category, "Sleep");
+});
+
+test("tab switches keep all five detail stacks, while active taps return to their own roots", async () => {
+  const h = await signedIn();
+  const routes = [
+    { tab: "today", root: "today", detail: "checkin" },
+    { tab: "chat", root: "solace", detail: "history" },
+    { tab: "explore", root: "explore", detail: "wellness-tools" },
+    { tab: "journey", root: "journey", detail: "journey-activity" },
+    { tab: "profile", root: "profile", detail: "settings" },
+  ];
+  const rootState = new Map();
+  const detailState = new Map();
+
+  for (const { tab, detail } of routes) {
+    h.render().setTab(tab);
+    if (tab === "chat") h.render().switchSolaceMode("companion");
+    h.render().setParams({ scrollY: 240 });
+    rootState.set(tab, h.render());
+    h.render().navigate(detail);
+    h.render().setParams({ scrollY: 120, filter: "saved" });
+    detailState.set(tab, h.render());
+  }
+
+  for (const { tab, root, detail } of routes) {
+    const switchedFrom = h.render();
+    switchedFrom.setTab(tab, "switch");
+    switchedFrom.setTab(tab, "switch");
+    let app = h.render();
+    assert.equal(app.activeTab, tab);
+    assert.equal(app.route, detail);
+    assert.equal(app.routeKey, detailState.get(tab).routeKey);
+    assert.equal(app.params, detailState.get(tab).params);
+    assert.equal(app.canGoBack, true);
+
+    app.setTab(tab, "switch");
+    assert.equal(h.render().route, detail);
+    app.setTab(tab, "reselect");
+    app.setTab(tab, "reselect");
+    app = h.render();
+    assert.equal(app.activeTab, tab);
+    assert.equal(app.route, root);
+    assert.equal(app.canGoBack, false);
+    if (tab !== "chat") {
+      assert.equal(app.routeKey, rootState.get(tab).routeKey);
+      assert.equal(app.params, rootState.get(tab).params);
+    }
+
+    app.setTab(tab, "reselect");
+    assert.equal(h.render().routeKey, app.routeKey);
+    assert.equal(h.render().params, app.params);
+    assert.equal(h.render().route, root);
+  }
+  h.close();
+});
+
+test("a stale tab reselection cannot reset a newer detail or switch to an inactive tab", async () => {
+  const h = await signedIn();
+  h.render().setTab("explore");
+  h.render().navigate("wellness-tools");
+  const oldDetail = h.render();
+  oldDetail.setTab("explore", "reselect");
+  assert.equal(h.render().route, "explore");
+  h.render().navigate("timed-practice");
+  const currentDetail = h.render();
+  oldDetail.setTab("explore", "reselect");
+  currentDetail.setTab("profile", "reselect");
+  assert.equal(h.render().routeKey, currentDetail.routeKey);
+  assert.equal(h.render().route, "timed-practice");
+  h.close();
+});
+
+test("reselecting Solace lands on its chooser without discarding Journal or Companion writing", async () => {
+  const h = await signedIn();
+  h.render().setTab("chat");
+  h.render().switchSolaceMode("journal");
+  h.render().navigate("journal-editor");
+  const journal = { title: "Unfinished entry", text: "A quiet morning" };
+  h.render().setEditorDraft("journal:new", journal);
+  h.render().setTab("explore");
+  h.render().setTab("chat");
+  assert.equal(h.render().route, "journal-editor");
+  assert.deepEqual({ ...h.render().editorDrafts["journal:new"] }, journal);
+
+  h.render().setTab("chat", "reselect");
+  assert.equal(h.render().route, "solace");
+  assert.equal(h.render().canGoBack, false);
+  h.render().setTab("today");
+  h.render().setTab("chat");
+  assert.equal(h.render().route, "solace");
+  h.render().switchSolaceMode("journal");
+  h.render().navigate("journal-editor");
+  assert.deepEqual({ ...h.render().editorDrafts["journal:new"] }, journal);
+
+  h.render().navigate("chat", { id: "conversation-a" });
+  h.render().setChatDraft("conversation-a", "An unfinished reply");
+  h.render().setTab("chat", "reselect");
+  assert.equal(h.render().route, "solace");
+  h.render().switchSolaceMode("companion");
+  assert.equal(h.render().route, "chat");
+  assert.equal(h.render().params.id, "conversation-a");
+  assert.equal(h.render().chatDrafts["conversation-a"], "An unfinished reply");
+  h.close();
 });
 
 test("rapid wellness tool taps add one Explore detail and preserve its saved view on Back", async () => {
@@ -747,13 +1050,52 @@ test("Solace modes keep their own route and Journal handoff returns to its origi
   h.close();
 });
 
+test("Back from either Solace mode opens the landing page and retains its state", async () => {
+  const h = await signedIn();
+  h.render().setTab("explore");
+  h.render().navigate("wellness-tools");
+  h.render().navigate("chat", { id: "saved-conversation" });
+  h.render().setChatDraft("saved-conversation", "Keep this unsent reply");
+  const chat = h.render();
+  assert.equal(chat.canGoBack, true);
+  chat.back();
+  chat.back();
+  assert.equal(h.render().route, "solace");
+  assert.equal(h.render().activeTab, "chat");
+  h.render().switchSolaceMode("companion");
+  assert.equal(h.render().params.id, "saved-conversation");
+  assert.equal(
+    h.render().chatDrafts["saved-conversation"],
+    "Keep this unsent reply",
+  );
+  h.render().navigate("journal", { entryDay: "2026-11-10" });
+  h.render().navigate("journal-editor");
+  const draft = { title: "Draft title", text: "Keep this unsaved journal" };
+  h.render().setEditorDraft("journal:new", draft);
+  h.render().back();
+  assert.equal(h.render().route, "journal");
+  assert.equal(h.render().canGoBack, true);
+  h.render().back();
+  assert.equal(h.render().route, "solace");
+  h.render().switchSolaceMode("journal");
+  assert.equal(h.render().params.entryDay, "2026-11-10");
+  assert.deepEqual({ ...h.render().editorDrafts["journal:new"] }, draft);
+  h.render().setTab("explore");
+  assert.equal(h.render().route, "wellness-tools");
+  h.close();
+});
+
 const biometricPolicyKey = "solace.biometric.policy.v1";
 const biometricProofKey = "solace.biometric.proof.v1";
 
 async function biometricAccount(data = empty(), options = {}) {
   const h = harness({ platform: "android", ...options });
   await settle();
-  h.onRequest = accountTransport("biometric-owner", "session-token", data);
+  const transport = accountTransport("biometric-owner", "session-token", data);
+  h.onRequest = (route) =>
+    route === "/auth/me"
+      ? ok({ user: { id: "biometric-owner" } })
+      : transport(route);
   await h.render().signIn("synthetic@solace.test", "test-only-password");
   h.render();
   return h;
@@ -798,32 +1140,101 @@ test("biometric lock checks hardware, enrollment, and strong Android security be
   h.close();
 });
 
-test("a protected cold session restores only after a successful biometric read", async () => {
-  const setup = await biometricAccount();
+test("cold start automatically prompts once in the foreground and waits for the saved account", async () => {
+  const setup = await biometricAccount(empty(), { platform: "ios" });
   await setup.render().updateDeviceLock({ appDelay: 60, journal: false });
-  const h = harness({ platform: "android", storage: setup.storage });
+  const h = harness({
+    platform: "ios",
+    storage: setup.storage,
+    nativeAppState: "inactive",
+  });
   setup.close();
+  const nativeProof = deferred();
+  const savedAccount = deferred();
+  h.biometricRead = nativeProof.promise;
   const requests = [];
   h.onRequest = async (route, options) => {
     requests.push(route);
     assert.equal(options.headers.Authorization, "Bearer session-token");
+    await savedAccount.promise;
     return accountTransport("biometric-owner", "session-token")(route);
   };
+  assert.equal(h.render().appUnlock.phase, "checking");
+  await until(() => h.render().appUnlock.phase === "locked");
+  assert.equal(h.biometricReads ?? 0, 0);
+  assert.equal(h.render().user, null);
+  assert.deepEqual(requests, []);
+
+  h.appState("active");
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  assert.equal(h.render().appUnlock.phase, "prompting");
+  h.appState("inactive");
+  h.render();
+  h.appState("active");
+  h.render();
   await settle();
+  assert.equal(h.biometricReads, 1);
   assert.equal(h.render().appLocked, true);
   assert.equal(h.render().user, null);
   assert.deepEqual(requests, []);
-  h.biometricError = "User canceled";
-  await assert.rejects(h.render().unlockDeviceLock("app"), /did not finish/);
+
+  nativeProof.resolve();
+  await until(() => requests.length === 1);
   assert.equal(h.render().appLocked, true);
-  assert.deepEqual(requests, []);
-  h.biometricError = null;
-  await h.render().unlockDeviceLock("app");
+  assert.equal(h.render().user, null);
+  savedAccount.resolve();
+  await until(() => h.render().appUnlock.phase === "unlocked");
   assert.equal(h.render().user.id, "biometric-owner");
   assert.equal(h.render().appLocked, false);
+  assert.equal(h.biometricReads, 1);
   assert.deepEqual(requests, ["/state"]);
   h.close();
 });
+
+for (const failure of ["User canceled", "Authentication failed"]) {
+  test(`automatic biometric fallback waits for a manual retry after ${failure.toLowerCase()}`, async () => {
+    const setup = await biometricAccount();
+    await setup.render().updateDeviceLock({ appDelay: 0, journal: false });
+    const h = harness({ platform: "android", storage: setup.storage });
+    setup.close();
+    h.biometricError = failure;
+    const requests = [];
+    h.onRequest = (route) => {
+      requests.push(route);
+      return accountTransport("biometric-owner", "session-token")(route);
+    };
+    await until(() => h.render().appUnlock.phase === "fallback");
+    assert.equal(h.render().appUnlock.canRetry, true);
+    assert.match(h.render().appUnlock.message, /confirmation did not finish/);
+    assert.equal(h.render().user, null);
+    assert.deepEqual(requests, []);
+
+    // Native interruptions and further real app resumes keep the same failed
+    // lock event in fallback until the user chooses what to do.
+    h.appState("inactive");
+    h.render();
+    h.appState("active");
+    h.render();
+    h.appState("background");
+    h.render();
+    h.appState("active");
+    h.render();
+    await settle();
+    assert.equal(h.render().appUnlock.phase, "fallback");
+    assert.equal(h.biometricReads, 1);
+
+    h.biometricError = null;
+    await h.render().unlockDeviceLock("app");
+    assert.equal(h.render().appUnlock.phase, "unlocked");
+    assert.equal(h.render().user.id, "biometric-owner");
+    assert.equal(h.biometricReads, 2);
+    assert.deepEqual(requests, ["/state"]);
+    h.close();
+  });
+}
 
 test("a biometric proof for one account never restores another account's saved credential", async () => {
   const setup = await biometricAccount();
@@ -837,26 +1248,70 @@ test("a biometric proof for one account never restores another account's saved c
       { id: "other-journal", kind: "journal", text: "Other account" },
     ],
   });
-  await settle();
-  await h.render().unlockDeviceLock("app");
+  await until(() => h.render().sessionExpired);
   assert.equal(h.render().user, null);
+  assert.equal(h.render().appLocked, false);
   assert.equal(h.render().data.reflections.length, 0);
+  assert.equal(h.biometricReads, 1);
   assert.equal(h.storage.has("solace.session"), false);
   h.close();
 });
 
-test("expired or changed biometric enrollment keeps startup private and permits normal sign-in recovery", async () => {
+for (const timing of ["cold", "resumed"]) {
+  test(`an expired server session requires normal sign-in after a ${timing} biometric unlock`, async () => {
+    const setup = await biometricAccount();
+    await setup.render().updateDeviceLock({ appDelay: 0, journal: false });
+    const cold = timing === "cold";
+    const h = cold
+      ? harness({ platform: "android", storage: setup.storage })
+      : setup;
+    if (cold) setup.close();
+    const requests = [];
+    h.onRequest = (route) => {
+      requests.push(route);
+      return ok({ error: "Session expired" }, 401);
+    };
+    if (!cold) {
+      h.render();
+      h.appState("background");
+      h.render();
+      h.appState("active");
+    }
+    await until(() => h.render().sessionExpired);
+    assert.equal(h.render().appLocked, false);
+    assert.equal(h.render().token, null);
+    await until(() => !h.storage.has("solace.session"));
+    assert.deepEqual(requests, [cold ? "/state" : "/auth/me"]);
+    assert.equal(h.biometricReads, 1);
+    h.appState("background");
+    h.render();
+    h.appState("active");
+    h.render();
+    await settle();
+    assert.equal(h.render().sessionExpired, true);
+    assert.equal(h.render().appLocked, false);
+    assert.equal(h.biometricReads, 1);
+
+    h.onRequest = accountTransport("biometric-owner", "new-server-session");
+    await h.render().signIn("synthetic@solace.test", "test-only-password");
+    assert.equal(h.render().sessionExpired, false);
+    assert.equal(h.render().token, "new-server-session");
+    assert.equal(h.biometricReads, 1);
+    h.close();
+  });
+}
+
+test("changed biometric enrollment keeps startup private and permits normal sign-in recovery", async () => {
   const setup = await biometricAccount();
   await setup.render().updateDeviceLock({ appDelay: 0, journal: true });
   const h = harness({ platform: "android", storage: setup.storage });
   setup.close();
   h.onRequest = accountTransport("biometric-owner", "fresh-server-session");
-  await settle();
   h.biometricInvalidated = true;
-  await assert.rejects(
-    h.render().unlockDeviceLock("app"),
-    /Biometrics may have changed/,
-  );
+  await until(() => h.render().appUnlock.phase === "fallback");
+  assert.match(h.render().appUnlock.message, /Biometrics may have changed/);
+  assert.equal(h.render().appUnlock.canRetry, false);
+  assert.equal(h.biometricReads, 1);
   assert.equal(h.render().user, null);
   assert.equal(h.render().appLocked, true);
   await h.render().signOut();
@@ -870,10 +1325,78 @@ test("expired or changed biometric enrollment keeps startup private and permits 
   h.close();
 });
 
-test("temporary inactive events preserve the session and the configured background threshold locks on resume", async () => {
+test("missing enrollment keeps the account locked without invoking a native prompt", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 60, journal: false });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  h.biometricEnrolled = false;
+  await until(() => h.render().appUnlock.phase === "fallback");
+  assert.equal(h.render().appUnlock.canRetry, false);
+  assert.equal(h.render().appLocked, true);
+  assert.equal(h.render().user, null);
+  assert.equal(h.biometricReads ?? 0, 0);
+  h.close();
+});
+
+test("enrollment lost during the automatic prompt disables biometric retry", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 60, journal: false });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  const proof = deferred();
+  h.biometricRead = proof.promise;
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  h.biometricEnrolled = false;
+  h.biometricError = "No biometrics enrolled";
+  proof.resolve();
+  await until(() => h.render().appUnlock.phase === "fallback");
+  assert.equal(h.render().appUnlock.canRetry, false);
+  assert.equal(h.render().appLocked, true);
+  assert.equal(h.render().user, null);
+  assert.equal(h.lastRequestUrl, undefined);
+  h.close();
+});
+
+test("backgrounding during a biometric prompt keeps the app locked without prompting again", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 0, journal: false });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  const proof = deferred();
+  h.biometricRead = proof.promise;
+  const requests = [];
+  h.onRequest = (route) => {
+    requests.push(route);
+    return accountTransport("biometric-owner", "session-token")(route);
+  };
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  h.appState("background");
+  assert.equal(h.render().privacyCovered, true);
+  proof.resolve();
+  await until(() => h.render().appUnlock.phase === "fallback");
+  assert.equal(h.render().appUnlock.canRetry, true);
+  assert.equal(h.render().user, null);
+  assert.deepEqual(requests, []);
+  h.appState("active");
+  h.render();
+  await settle();
+  assert.equal(h.render().appUnlock.phase, "fallback");
+  assert.equal(h.biometricReads, 1);
+  h.close();
+});
+
+test("the configured background threshold prompts once and restores the previous tab and route", async () => {
   const h = await biometricAccount();
   await h.render().updateDeviceLock({ appDelay: 60, journal: false });
-  h.render();
+  h.render().navigate("journey");
+  h.render().navigate("journey-activity", { day: "2026-11-06" });
   h.now = 1000;
   h.appState("inactive");
   assert.equal(h.render().privacyCovered, true);
@@ -884,14 +1407,74 @@ test("temporary inactive events preserve the session and the configured backgrou
   h.now += 59000;
   h.appState("active");
   assert.equal(h.render().appLocked, false);
+  assert.equal(h.biometricReads ?? 0, 0);
+  const proof = deferred();
+  const accountCheck = deferred();
+  h.biometricRead = proof.promise;
+  const requests = [];
+  h.onRequest = async (route, options) => {
+    requests.push(route);
+    assert.equal(options.headers.Authorization, "Bearer session-token");
+    await accountCheck.promise;
+    return ok({ user: { id: "biometric-owner" } });
+  };
   h.appState("background");
   h.now += 61000;
   h.appState("active");
   assert.equal(h.render().appLocked, true);
   assert.equal(h.render().token, "session-token");
-  await h.render().unlockDeviceLock("app");
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  proof.resolve();
+  await until(() => requests.length === 1);
+  assert.equal(h.render().appLocked, true);
+  accountCheck.resolve();
+  await until(() => h.render().appUnlock.phase === "unlocked");
   assert.equal(h.render().appLocked, false);
+  assert.deepEqual(requests, ["/auth/me"]);
+  assert.equal(h.render().activeTab, "journey");
+  assert.equal(h.render().route, "journey-activity");
+  assert.equal(h.render().params.day, "2026-11-06");
+  for (const route of ["today", "profile", "explore", "journey"])
+    h.render().navigate(route);
+  h.render();
+  await settle();
   assert.equal(h.biometricReads, 1);
+  h.close();
+});
+
+test("a transient warm session check keeps Solace locked until manual retry restores the prior route", async () => {
+  const h = await biometricAccount();
+  await h.render().updateDeviceLock({ appDelay: 0, journal: false });
+  h.render().navigate("journey");
+  h.render().navigate("journey-activity", { day: "2026-11-06" });
+  h.render();
+  let checks = 0;
+  h.onRequest = (route) => {
+    assert.equal(route, "/auth/me");
+    return ++checks === 1
+      ? ok({ error: "Temporarily unavailable" }, 503)
+      : ok({ user: { id: "biometric-owner" } });
+  };
+  h.appState("background");
+  h.render();
+  h.appState("active");
+  await until(() => h.render().appUnlock.phase === "fallback");
+  assert.equal(h.render().appUnlock.canRetry, true);
+  assert.equal(h.render().appLocked, true);
+  assert.equal(h.render().sessionExpired, false);
+  assert.equal(h.biometricReads, 1);
+
+  await h.render().unlockDeviceLock("app");
+  const app = h.render();
+  assert.equal(app.appUnlock.phase, "unlocked");
+  assert.equal(app.route, "journey-activity");
+  assert.equal(app.params.day, "2026-11-06");
+  assert.equal(app.token, "session-token");
+  assert.equal(h.biometricReads, 2);
+  assert.equal(checks, 2);
   h.close();
 });
 
@@ -900,7 +1483,9 @@ test("immediate lock aborts sensitive requests and never starts two biometric pr
   await h.render().updateDeviceLock({ appDelay: 0, journal: false });
   const response = deferred();
   let signal;
-  h.onRequest = async (_route, options) => {
+  h.onRequest = async (route, options) => {
+    if (route === "/auth/me") return ok({ user: { id: "biometric-owner" } });
+    assert.equal(route, "/state");
     signal = options.signal;
     await response.promise;
     return ok({ user: { id: "biometric-owner" }, data: empty() });
@@ -915,15 +1500,64 @@ test("immediate lock aborts sensitive requests and never starts two biometric pr
   assert.equal(signal.aborted, true);
   response.resolve();
   assert.match((await result).message, /session changed/);
-  h.appState("active");
   const held = deferred();
   h.biometricRead = held.promise;
-  const unlock = h.render().unlockDeviceLock("app");
-  await assert.rejects(h.render().unlockDeviceLock("app"), /already open/);
+  assert.equal(h.biometricReads ?? 0, 0);
+  h.appState("active");
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  const duplicate = h
+    .render()
+    .unlockDeviceLock("app")
+    .catch(() => {});
+  h.render();
+  await settle();
+  assert.equal(h.biometricReads, 1);
   held.resolve();
-  await unlock;
+  await duplicate;
+  await until(() => h.render().appUnlock.phase === "unlocked");
   assert.equal(h.render().appLocked, false);
   assert.equal(h.biometricReads, 1);
+  h.close();
+});
+
+test("a pending automatic proof cannot restore the old session after logout and account switch", async () => {
+  const setup = await biometricAccount();
+  await setup.render().updateDeviceLock({ appDelay: 60, journal: false });
+  const h = harness({ platform: "android", storage: setup.storage });
+  setup.close();
+  const proof = deferred();
+  h.biometricRead = proof.promise;
+  const requests = [];
+  h.onRequest = (route) => {
+    requests.push(route);
+    return accountTransport("biometric-owner", "session-token")(route);
+  };
+  await until(() => {
+    h.render();
+    return h.biometricReads === 1;
+  });
+  await h.render().signOut();
+  assert.equal(h.render().appLocked, false);
+  assert.equal(h.storage.has("solace.session"), false);
+  assert.equal(h.storage.has(biometricPolicyKey), false);
+  assert.equal(h.storage.has(biometricProofKey), false);
+  assert.deepEqual(requests, ["/auth/logout"]);
+
+  h.onRequest = (route) => {
+    requests.push(route);
+    return accountTransport("new-owner", "new-token")(route);
+  };
+  await h.render().signIn("another@solace.test", "test-only-password");
+  proof.resolve();
+  await until(() => !h.render().deviceLockBusy);
+  assert.equal(h.render().appUnlock.phase, "unlocked");
+  assert.equal(h.render().user.id, "new-owner");
+  assert.equal(h.render().token, "new-token");
+  assert.equal(h.biometricReads, 1);
+  assert.deepEqual(requests, ["/auth/logout", "/auth/login", "/state"]);
   h.close();
 });
 
@@ -943,11 +1577,14 @@ test("immediate biometric lock still checkpoints the most recent private draft",
   );
   const restored = harness({ platform: "android", storage: h.storage });
   h.close();
+  const proof = deferred();
+  restored.biometricRead = proof.promise;
   restored.onRequest = accountTransport("biometric-owner", "session-token");
-  await settle();
+  await until(() => restored.render().appUnlock.phase === "prompting");
   assert.equal(restored.render().appLocked, true);
   assert.equal(restored.render().editorDrafts["journal:new"], undefined);
-  await restored.render().unlockDeviceLock("app");
+  proof.resolve();
+  await until(() => restored.render().appUnlock.phase === "unlocked");
   assert.equal(restored.render().editorDrafts["journal:new"].text, draft.text);
   restored.close();
 });
@@ -1024,6 +1661,30 @@ test("Journey opens a Journal record on Solace and back returns to the same Jour
   assert.equal(h.render().activeTab, "journey");
   assert.equal(h.render().route, "journey-activity");
   assert.equal(h.render().params.day, "2026-11-06");
+  h.close();
+});
+
+test("a Companion recommendation opens one player and Back preserves the dismissed suggestion on its own chat", async () => {
+  const h = await signedIn();
+  h.render().navigate("chat", { id: "recommendation-chat" });
+  const chat = h.render();
+  chat.setParams({ dismissedPractice: "assistant-first" });
+  const player = {
+    techniqueId: "wind-down",
+    source: "chat",
+    conversationId: "recommendation-chat",
+  };
+  chat.navigate("moment-player", player);
+  chat.navigate("moment-player", player);
+  assert.equal(h.render().route, "moment-player");
+  for (const [key, value] of Object.entries(player))
+    assert.equal(h.render().params[key], value);
+  h.render().back();
+  assert.equal(h.render().route, "chat");
+  assert.equal(h.render().params.id, "recommendation-chat");
+  assert.equal(h.render().params.dismissedPractice, "assistant-first");
+  h.render().navigate("chat", { id: "another-chat" });
+  assert.equal(h.render().params.dismissedPractice, undefined);
   h.close();
 });
 
@@ -1119,7 +1780,8 @@ test("habit reflection preserves the active conversation and Back returns to Hab
   assert.equal(h.render().params.habitAssistant, "reflect");
   h.render().setParams({ habitAssistant: undefined });
   h.render().back();
-  assert.equal(h.render().route, "habit-insights");
+  assert.equal(h.render().route, "habits");
+  assert.equal(h.render().params.section, "insights");
   h.render().setTab("chat");
   assert.equal(h.render().params.id, "saved-conversation");
   assert.equal(h.render().params.habitAssistant, undefined);
@@ -1281,7 +1943,10 @@ test("Journey Habit Progress uses the selected range, saved garden, and one insi
   assert.doesNotMatch(beforeHabit.text, /0%/);
 
   week.press(week.labels[0]);
-  assert.equal(h.render().route, "habit-insights");
+  assert.equal(h.render().route, "habits");
+  assert.equal(h.render().params.section, "insights");
+  assert.equal(h.render().params.insightsStartDay, "2026-11-09");
+  assert.equal(h.render().params.insightsEndDay, "2026-11-09");
   h.render().back();
   assert.equal(h.render().route, "journey");
   assert.deepEqual(requests, ["/state"]);
@@ -1291,6 +1956,45 @@ test("Journey Habit Progress uses the selected range, saved garden, and one insi
   restored.onRequest = account;
   await until(() => restored.render().user?.id === "account-a");
   assert.equal(habitViews(restored.render).journey(allTime).text, all.text);
+});
+
+test("Habit sections, legacy links and drill-downs share one retained hub per originating stack", async (t) => {
+  const h = await signedIn();
+  t.after(() => h.close());
+  h.render().setTab("explore");
+  h.render().navigate("habits");
+  const root = h.render().routeKey;
+  assert.equal(h.render().params.section, "today");
+  h.render().navigate("habit-library");
+  assert.equal(h.render().route, "habits");
+  assert.equal(h.render().routeKey, root);
+  assert.equal(h.render().params.section, "my-habits");
+  h.render().navigate("habit-details", { id: "walk" });
+  const detail = h.render().routeKey;
+  assert.equal(h.render().habitHub.key, root);
+  h.render().setTab("profile");
+  h.render().setTab("explore");
+  assert.equal(h.render().routeKey, detail);
+  h.render().navigate("habits", { section: "my-habits" });
+  assert.equal(h.render().routeKey, root);
+  h.render().navigate("habit-insights", { id: "walk" });
+  assert.equal(h.render().params.section, "insights");
+  assert.equal(h.render().params.insightsHabitId, "walk");
+  h.render().navigate("habit-garden");
+  assert.equal(h.render().params.section, "garden");
+  assert.equal(h.render().routeKey, root);
+  h.render().back();
+  assert.equal(h.render().route, "explore");
+  h.render().setTab("today");
+  h.render().navigate("habit-details", { id: "walk", day: "2026-11-09" });
+  assert.equal(h.render().activeTab, "today");
+  assert.equal(h.render().route, "habit-details");
+  assert.equal(h.render().params.day, "2026-11-09");
+  h.render().back();
+  assert.equal(h.render().route, "habits");
+  assert.equal(h.render().params.section, "today");
+  h.render().back();
+  assert.equal(h.render().route, "today");
 });
 
 test("Today completion and Undo update the dashboard and Journey from confirmed account data", async (t) => {
@@ -1339,7 +2043,7 @@ test("Today completion and Undo update the dashboard and Journey from confirmed 
     before.labels.filter((label) => label?.startsWith("Open ")),
     previewLabels,
   );
-  assert.match(view.dashboard().text, /0 of 4 completed/);
+  assert.match(view.dashboard().text, /0 completed 4 remaining 4 scheduled/);
   assert.match(view.journey().text, /0 Actions completed/);
   assert.match(view.journey().text, /0% Scheduled goals met/);
 
@@ -1355,8 +2059,8 @@ test("Today completion and Undo update the dashboard and Journey from confirmed 
   completed.press("View all habits");
   assert.equal(h.render().route, "habits");
   const dashboard = view.dashboard();
-  assert.match(dashboard.text, /1 of 4 completed/);
-  assert.ok(dashboard.labels.includes("View Drink water"));
+  assert.match(dashboard.text, /1 completed 3 remaining 4 scheduled/);
+  assert.ok(dashboard.labels.includes("Open Drink water"));
   assert.match(view.journey().text, /1 Actions completed/);
   assert.match(view.journey().text, /25% Scheduled goals met/);
   assert.match(view.journey().text, /Garden.*Sprout/);
@@ -1366,7 +2070,7 @@ test("Today completion and Undo update the dashboard and Journey from confirmed 
   view.today().press("Undo Evening stretch");
   await until(() => h.render().data.habitProgress[0]?.complete === false);
   assert.match(view.today().text, /0 of 4 scheduled completed/);
-  assert.match(view.dashboard().text, /0 of 4 completed/);
+  assert.match(view.dashboard().text, /0 completed 4 remaining 4 scheduled/);
   assert.match(view.journey().text, /0 Actions completed/);
   assert.match(view.journey().text, /0% Scheduled goals met/);
   assert.match(view.journey().text, /Garden.*Sprout/);
@@ -1395,19 +2099,34 @@ test("switching Solace modes does not restore an exited immersive practice", asy
   h.close();
 });
 
-test("a Solace link or tab switch leaves an Explore practice at its detail", async () => {
+test("a Solace link leaves an Explore practice at its detail", async () => {
   const h = await signedIn();
-  for (const leave of [
-    (app) => app.switchSolaceMode("journal"),
-    (app) => app.setTab("journey"),
-  ]) {
-    h.render().navigate("explore");
-    h.render().navigate("technique-detail", { id: "box-breathing" });
-    h.render().navigate("moment-player", { techniqueId: "box-breathing" });
-    leave(h.render());
-    h.render().setTab("explore");
-    assert.equal(h.render().route, "technique-detail");
-  }
+  h.render().navigate("explore");
+  h.render().navigate("technique-detail", { id: "box-breathing" });
+  h.render().navigate("moment-player", { techniqueId: "box-breathing" });
+  h.render().switchSolaceMode("journal");
+  h.render().setTab("explore");
+  assert.equal(h.render().route, "technique-detail");
+  h.close();
+});
+
+test("tab switching and reselection cannot bypass the active practice exit", async () => {
+  const h = await signedIn();
+  h.render().setTab("explore");
+  h.render().navigate("technique-detail", { id: "box-breathing" });
+  h.render().navigate("moment-player", { techniqueId: "box-breathing" });
+  const active = h.render();
+  active.setTab("explore", "reselect");
+  active.setTab("journey", "switch");
+  assert.equal(h.render().activeTab, "explore");
+  assert.equal(h.render().route, "moment-player");
+  assert.equal(h.render().routeKey, active.routeKey);
+  assert.equal(h.render().params.techniqueId, "box-breathing");
+  h.render().back();
+  assert.equal(h.render().route, "technique-detail");
+  h.render().setTab("journey", "switch");
+  h.render().setTab("explore", "switch");
+  assert.equal(h.render().route, "technique-detail");
   h.close();
 });
 
@@ -1525,6 +2244,37 @@ test("network-failed writing is marked device-only, survives refresh, and reconc
   await h.render().flushPendingWrites();
   assert.equal(h.render().pendingWrites.length, 0);
   assert.equal(h.render().data.checkins.length, 1);
+  assert.equal(h.render().data.checkins[0].localOnly, undefined);
+  h.close();
+});
+
+test("a linked practice mood uses the protected POST queue with a stable identity", async () => {
+  const h = await signedIn();
+  const id = "after-moment-session-linked";
+  const entry = {
+    id,
+    mood: "Okay",
+    note: "",
+    tags: [],
+    createdAt: "2026-11-08T14:31:00.000Z",
+    day: "2026-11-08",
+  };
+  h.onRequest = async () => {
+    throw Error("Simulated connection failure");
+  };
+  const local = await h.render().save("checkins", entry);
+  assert.equal(local.id, id);
+  assert.equal(local.localOnly, true);
+  h.onRequest = async (route, options) => {
+    assert.equal(route, "/records/checkins");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), entry);
+    return ok({ record: entry });
+  };
+  await h.render().flushPendingWrites();
+  assert.equal(h.render().pendingWrites.length, 0);
+  assert.equal(h.render().data.checkins.length, 1);
+  assert.equal(h.render().data.checkins[0].id, id);
   assert.equal(h.render().data.checkins[0].localOnly, undefined);
   h.close();
 });
@@ -1867,6 +2617,9 @@ test("malformed API responses preserve a usable session and hide proxy HTML", as
   h.onRequest = async () =>
     ok({ user: { id: "account-a" }, data: { checkins: null } });
   await assert.rejects(h.render().refresh(), /could not read your saved space/);
+  h.onRequest = async () =>
+    ok({ user: { id: "account-a" }, data: { checkins: [null] } });
+  await assert.rejects(h.render().refresh(), /could not read your saved space/);
   assert.equal(h.render().user.id, "account-a");
   assert.equal(h.render().data.checkins.length, 0);
   h.close();
@@ -1917,11 +2670,13 @@ test("account deletion cannot commit online before erasure, and credential clean
   h.failSecureRemove = (key) => key.includes("solace.writing");
   await assert.rejects(h.render().deleteAccount(), /storage unavailable/);
   assert.equal(deleted, 0);
+  assert.equal(h.reminderCancellations, 0);
   assert.equal(h.render().user.id, "account-a");
   h.failSecureRemove = (key) => key === "solace.session";
   await h.render().deleteAccount();
   let app = h.render();
   assert.equal(deleted, 1);
+  assert.equal(h.reminderCancellations, 1);
   assert.equal(app.user, null);
   assert.equal(app.token, null);
   assert.match(app.sessionError, /online account was deleted/);
@@ -1942,11 +2697,29 @@ test("a native token removal failure does not leave logout busy or callbacks sta
   await assert.rejects(h.render().signOut(), /storage unavailable/);
   const app = h.render();
   assert.equal(app.busy, false);
+  assert.equal(h.reminderCancellations, 0);
   assert.match(app.offlineError, /could not clear its saved sign-in/);
   h.failSecureRemove = null;
   await app.signOut();
+  assert.equal(h.reminderCancellations, 1);
   assert.equal(h.render().user, null);
   assert.equal(h.storage.size, 0);
+  h.close();
+});
+
+test("a failed online deletion keeps the active account's device reminders", async () => {
+  const h = await signedIn();
+  const existing = h.onRequest;
+  h.onRequest = (route, options) =>
+    route === "/account"
+      ? Promise.resolve(ok({ error: "Service temporarily unavailable" }, 503))
+      : existing(route, options);
+  await assert.rejects(
+    h.render().deleteAccount(),
+    /Service temporarily unavailable/,
+  );
+  assert.equal(h.render().user.id, "account-a");
+  assert.equal(h.reminderCancellations, 0);
   h.close();
 });
 
@@ -2066,6 +2839,105 @@ test("feature calls use authenticated structured routes and voice preserves its 
   assert.equal(seen[3].options.headers["Content-Type"], "audio/mp4");
   assert.equal(seen[3].options.headers.Authorization, "Bearer token-account-a");
   assert.equal(seen[3].options.body, audio);
+  h.close();
+});
+
+test("spoken playback sends owned IDs and rejects bytes after logout", async () => {
+  const h = await signedIn();
+  const audio = new ArrayBuffer(100);
+  const available = {
+    ok: true,
+    headers: new Headers({ "content-type": "audio/mpeg" }),
+    arrayBuffer: async () => audio,
+  };
+  h.onRequest = async (route, options) => {
+    assert.equal(route, "/voice/speech");
+    assert.deepEqual(JSON.parse(options.body), {
+      conversationId: "saved-conversation",
+      messageId: "saved-reply",
+    });
+    assert.equal(options.headers.Authorization, "Bearer token-account-a");
+    return available;
+  };
+  assert.equal(
+    await h.render().speakVoiceReply("saved-conversation", "saved-reply"),
+    audio,
+  );
+  h.onRequest = async () => ({ ...available, headers: new Headers() });
+  await assert.rejects(
+    h.render().speakVoiceReply("saved-conversation", "saved-reply"),
+    /read the reply/,
+  );
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  h.onRequest = async (route, options) => {
+    if (route === "/auth/logout") return ok({});
+    started.resolve(options.signal);
+    await release.promise;
+    return available;
+  };
+  const pending = h
+    .render()
+    .speakVoiceReply("saved-conversation", "saved-reply");
+  const rejected = assert.rejects(pending, /cancelled|changed|sign in/i);
+  const signal = await started.promise;
+  await h.render().signOut();
+  assert.equal(signal.aborted, true);
+  release.resolve();
+  await rejected;
+  h.close();
+});
+
+test("live voice uses the current account and cancels a pending status on logout", async () => {
+  const h = await signedIn();
+  const voice = h.render();
+  const controller = new AbortController();
+  const start = {
+    id: "fixture-voice",
+    answer: "fixture-answer",
+    state: { revision: 1 },
+  };
+  const arrived = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  h.onRequest = async (route, options) => {
+    if (route === "/auth/logout") return ok({});
+    assert.equal(options.headers.Authorization, "Bearer token-account-a");
+    assert.equal(options.method, "POST");
+    switch (route) {
+      case "/voice/realtime":
+        assert.deepEqual(JSON.parse(options.body), {
+          offer: "fixture-offer",
+          conversationId: "saved-conversation",
+        });
+        return ok(start);
+      case "/voice/realtime/fixture-voice/end":
+        return ok({ phase: "disconnected" });
+      case "/voice/realtime/fixture-voice/status":
+        assert.deepEqual(JSON.parse(options.body), { revision: 1 });
+        arrived.resolve(options.signal);
+        await release.promise;
+        return ok({ revision: 2 });
+      default:
+        assert.fail("Unexpected voice route " + route);
+    }
+  };
+  const opened = await voice.startVoiceSession(
+    "fixture-offer",
+    "saved-conversation",
+    controller.signal,
+  );
+  assert.equal(opened.id, start.id);
+  assert.equal(opened.answer, start.answer);
+  assert.equal(opened.state.revision, 1);
+  assert.equal((await voice.endVoiceSession(start.id)).phase, "disconnected");
+  const pending = voice.voiceSessionStatus(start.id, 1, controller.signal);
+  const rejected = assert.rejects(pending, /cancelled|changed|sign in/i);
+  const signal = await arrived.promise;
+  await h.render().signOut();
+  assert.equal(signal.aborted, true);
+  release.resolve();
+  await rejected;
+  await assert.rejects(voice.endVoiceSession(start.id), /changed|sign in/i);
   h.close();
 });
 

@@ -1,4 +1,26 @@
 export const MAX_JOURNAL_EXCERPT = 1200;
+export const MAX_JOURNAL_TAGS = 30;
+export const MAX_JOURNAL_TAG_LENGTH = 80;
+
+export function journalTagsFromText(value: string) {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export function journalTagLimitMessage(tags: readonly string[]) {
+  if (tags.length > MAX_JOURNAL_TAGS)
+    return `Use up to ${MAX_JOURNAL_TAGS} tags. Remove ${tags.length - MAX_JOURNAL_TAGS} to save this entry.`;
+  if (tags.some((tag) => tag.length > MAX_JOURNAL_TAG_LENGTH))
+    return `Shorten any highlighted tag to ${MAX_JOURNAL_TAG_LENGTH} characters or fewer.`;
+  return "";
+}
+
 export const journalActions = [
   "reflect",
   "understand",

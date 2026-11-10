@@ -16,8 +16,10 @@ import {
   useWindowDimensions,
   type ImageSourcePropType,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DaylightScenicFade } from "../DaylightScenicFade";
+import { DaylightScenicScrim, daylightPhotoInk } from "../DaylightScenicScrim";
 import { spacing, useScreenGutter } from "../layout";
+import { webRadioProps } from "../radio-keyboard";
 import { routes } from "../routes";
 import {
   createExplorePractice,
@@ -26,9 +28,23 @@ import {
   type PracticeFocus,
 } from "../explore-practices";
 import { exploreWellnessTools } from "../wellness-tools";
+import {
+  wellnessGoalPriority,
+  wellnessRecommendations,
+} from "../wellness-recommendations";
+import type { WellnessGoal } from "../../server/src/wellness-goals";
+import { MainTabHeader, useMainTabHeaderInsets } from "../SolaceBrandHeader";
 import { useApp } from "../store";
 import { useTheme } from "../theme";
-import { AppText, coverImageStyle, Icon, LotusMark, Row, Screen } from "../ui";
+import {
+  AppText,
+  coverImageStyle,
+  Icon,
+  IconButton,
+  NestedState,
+  Row,
+  Screen,
+} from "../ui";
 
 const categories = [
   { id: "all", label: "All", icon: null },
@@ -54,6 +70,7 @@ type ExploreItem = {
 };
 type CardTone = (typeof exploreShortcuts)[number]["tone"];
 type Recommendation = ExploreItem & {
+  goal: WellnessGoal;
   destination: RouteDestination;
   tile: {
     meta: string;
@@ -68,7 +85,6 @@ type ExploreView = {
   category: Category;
   searchOpen: boolean;
   query: string;
-  showAll: boolean;
   x: number;
   y: number;
 };
@@ -84,6 +100,7 @@ const exploreArt = {
   sleep: require("../../assets/redesign-explore-sleep.jpg"),
   plan: require("../../assets/today-explore-guided.jpg"),
   habits: require("../../assets/today-explore-toolkit.jpg"),
+  focus: require("../../assets/today-quick-focus.jpg"),
 };
 
 const featured: ExploreItem = {
@@ -112,6 +129,7 @@ function momentDestination(
 
 const forYou: Recommendation[] = [
   {
+    goal: "calm",
     title: "Breath Reset",
     detail: "Take three minutes to follow a comfortable breathing rhythm.",
     icon: "cloud-outline",
@@ -124,6 +142,7 @@ const forYou: Recommendation[] = [
     },
   },
   {
+    goal: "calm",
     title: "Five Senses",
     detail: "A five-minute grounding practice to notice what’s around you.",
     icon: "hand-left-outline",
@@ -136,6 +155,7 @@ const forYou: Recommendation[] = [
     },
   },
   {
+    goal: "feelings",
     title: "Quick Reflection",
     detail: "A private place to write down a thought.",
     icon: "pencil-outline",
@@ -150,6 +170,7 @@ const forYou: Recommendation[] = [
     },
   },
   {
+    goal: "sleep",
     title: "Sleep Wind Down",
     detail: "A ten-minute practice to wind down toward rest.",
     icon: "moon-outline",
@@ -163,11 +184,53 @@ const forYou: Recommendation[] = [
     },
   },
 ];
-const recommendationRows = [forYou.slice(0, 2), forYou.slice(2)];
+const wellnessExtras: Recommendation[] = [
+  {
+    goal: "habits",
+    title: "Healthy Habit Builder",
+    detail: "Plan small habits and see your garden grow.",
+    icon: "leaf-outline",
+    categories: [],
+    destination: { route: routes.habits },
+    tile: {
+      meta: "Habits & Garden",
+      image: exploreArt.habits,
+      tone: "sage",
+      actionIcon: "chevron-forward",
+    },
+  },
+  {
+    goal: "focus",
+    title: wellnessRecommendations.focus.title,
+    detail: wellnessRecommendations.focus.description,
+    icon: "locate-outline",
+    categories: ["focus"],
+    destination: {
+      route: routes.timedPractice,
+      params: wellnessRecommendations.focus.params,
+    },
+    tile: { meta: "5 min · Focus", image: exploreArt.focus, tone: "lavender" },
+  },
+];
+
+function personalizedRecommendationRows(goals: unknown) {
+  const priority = wellnessGoalPriority(goals, new Date());
+  const preferred = priority.flatMap(
+    (goal) =>
+      [...forYou, ...wellnessExtras].find((item) => item.goal === goal) ?? [],
+  );
+  const items = [
+    ...preferred,
+    ...forYou.filter((item) => !preferred.includes(item)),
+  ];
+  return items
+    .filter((_, index) => index % 2 === 0)
+    .map((_, index) => items.slice(index * 2, index * 2 + 2));
+}
 const recommendationTitleLine = 24;
 
 const shortcutDescriptions = {
-  plan: "Gentle multi-day plans.",
+  [routes.guidedPrograms]: "Gentle multi-day plans.",
   toolkit: "Your saved practices.",
   checkin: "Understand how you feel.",
 };
@@ -177,7 +240,7 @@ export const exploreCardArrivalRoutes = new Set<string>([
   routes.habits,
   routes.wellnessTools,
   routes.timedPractice,
-  routes.exploreCatalog,
+  routes.wellnessPlan,
   ...forYou.map(({ destination }) => destination.route),
   ...exploreShortcuts.map(({ route }) => route),
 ]);
@@ -190,7 +253,11 @@ const guidedTechniques: ExploreItem = {
   destination: { route: routes.techniques },
 };
 
-const catalog: ExploreItem[] = [
+const catalog: (ExploreItem & {
+  tile?: Recommendation["tile"];
+  artwork?: ImageSourcePropType;
+  tone?: CardTone;
+})[] = [
   featured,
   guidedTechniques,
   ...forYou,
@@ -232,48 +299,31 @@ const exploreEntries = [
 function DecorativeImage({
   source,
   topCrop = false,
+  scene = false,
 }: {
   source: ImageSourcePropType;
   topCrop?: boolean;
+  scene?: boolean;
 }) {
+  const { resolved } = useTheme();
   return (
     <Image
       source={source}
-      style={topCrop ? styles.recommendationTopImage : coverImageStyle}
+      style={
+        topCrop
+          ? [
+              styles.recommendationTopImage,
+              resolved === "light" && styles.daylightTopCrop,
+            ]
+          : coverImageStyle
+      }
       resizeMode="cover"
-      resizeMethod="resize"
+      resizeMethod={resolved === "light" && scene ? "scale" : "resize"}
       fadeDuration={0}
       pointerEvents="none"
       accessible={false}
       accessibilityIgnoresInvertColors
     />
-  );
-}
-
-function IconAction({
-  icon,
-  label,
-  onPress,
-  expanded,
-}: {
-  icon: string;
-  label: string;
-  onPress: () => void;
-  expanded?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ expanded }}
-      aria-expanded={expanded}
-      onPress={onPress}
-      style={({ pressed }) => [styles.iconTarget, pressed && styles.pressed]}
-    >
-      <View style={styles.heroIcon}>
-        <Icon name={icon} color={overlayInk} size={19} />
-      </View>
-    </Pressable>
   );
 }
 
@@ -395,12 +445,12 @@ function RecommendationCard({
   titleMinHeight,
   onPress,
 }: {
-  item: Recommendation;
+  item: Pick<Recommendation, "title" | "icon" | "tile">;
   stacked: boolean;
   titleMinHeight: number;
   onPress: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, resolved } = useTheme();
   const { meta, image, tone, actionIcon = "play" } = item.tile;
   const tint = colors[`${tone}Surface`];
   const ink = colors[`${tone}Text`];
@@ -432,6 +482,7 @@ function RecommendationCard({
         pointerEvents="none"
         style={[
           styles.recommendationPicture,
+          resolved === "light" && !stacked && styles.daylightRecommendationArt,
           stacked && styles.recommendationThumb,
           { backgroundColor: tint },
         ]}
@@ -440,6 +491,7 @@ function RecommendationCard({
         <DecorativeImage
           source={image}
           topCrop={!stacked && item.tile.topCrop}
+          scene={!stacked}
         />
         {!stacked && action}
       </View>
@@ -515,16 +567,98 @@ function ExploreDestinationCard({
   );
 }
 
+function DaylightExploreEntry({
+  title,
+  subtitle,
+  icon,
+  image,
+  tone,
+  stacked,
+  plan,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: string;
+  image: ImageSourcePropType;
+  tone: "lavender" | "sage";
+  stacked: boolean;
+  plan?: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const tint = colors[`${tone}Surface`];
+  const ink = colors[`${tone}Text`];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityHint={plan ? "Opens your editable three-day plan" : subtitle}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.daylightEntry,
+        plan && styles.daylightPlan,
+        stacked && styles.daylightEntryStack,
+        {
+          backgroundColor: colors.surface,
+          borderColor: pressed ? ink : colors.border,
+        },
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.daylightEntryCopy}>
+        <View style={styles.daylightEntryTools}>
+          <Icon name={icon} color={ink} size={22} />
+          <View style={[styles.planAction, { backgroundColor: tint }]}>
+            <Icon name="arrow-forward" size={17} color={ink} />
+          </View>
+        </View>
+        <AppText variant="heading" style={styles.daylightEntryTitle}>
+          {title}
+        </AppText>
+        <AppText variant="caption" color={colors.muted}>
+          {subtitle}
+        </AppText>
+      </View>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.daylightEntryArt,
+          stacked && styles.daylightEntryArtStack,
+          { backgroundColor: tint },
+        ]}
+      >
+        <DecorativeImage source={image} scene />
+      </View>
+    </Pressable>
+  );
+}
+
 function ExploreEntryCard({
   entry,
+  stacked,
   onPress,
 }: {
   entry: (typeof exploreEntries)[number];
+  stacked: boolean;
   onPress: () => void;
 }) {
   const { colors, resolved } = useTheme();
   const tint = colors[`${entry.tone}Surface`];
   const ink = colors[`${entry.tone}Text`];
+  if (resolved === "light") {
+    return (
+      <DaylightExploreEntry
+        title={entry.title}
+        subtitle={entry.subtitle}
+        icon={entry.icon}
+        image={entry.image.light}
+        tone={entry.tone}
+        stacked={stacked}
+        onPress={onPress}
+      />
+    );
+  }
   return (
     <Pressable
       accessibilityRole="button"
@@ -540,7 +674,7 @@ function ExploreEntryCard({
       ]}
     >
       <View pointerEvents="none" style={styles.featureEntryArt}>
-        <DecorativeImage source={entry.image[resolved]} />
+        <DecorativeImage source={entry.image.dark} scene />
         <View
           style={[
             StyleSheet.absoluteFill,
@@ -566,50 +700,27 @@ function ExploreEntryCard({
   );
 }
 
-function ExploreResult({
-  item,
-  onPress,
-}: {
-  item: Pick<ExploreItem, "title" | "detail" | "icon">;
-  onPress: () => void;
-}) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={item.title}
-      accessibilityHint={item.detail}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.result,
-        { borderBottomColor: colors.border },
-        pressed && styles.pressed,
-      ]}
-    >
-      <Icon name={item.icon} color={colors.primary} size={21} />
-      <View style={styles.sectionTitle}>
-        <AppText variant="label">{item.title}</AppText>
-        <AppText variant="caption" color={colors.muted}>
-          {item.detail}
-        </AppText>
-      </View>
-      <Icon name="chevron-forward" color={colors.muted} size={15} />
-    </Pressable>
-  );
+export function ExploreScreen() {
+  const { routeKey } = useApp();
+  return <ExploreContent key={routeKey} />;
 }
 
-export function ExploreScreen({
-  catalogOnly = false,
-}: { catalogOnly?: boolean } = {}) {
+function ExploreContent() {
   const app = useApp();
+  const recommendationRows = personalizedRecommendationRows(
+    app.user?.wellnessGoals,
+  );
   const { colors, resolved } = useTheme();
   const dark = resolved === "dark";
-  const { top } = useSafeAreaInsets();
+  const scenicTitle = dark ? overlayInk : daylightPhotoInk.title;
+  const scenicDetail = dark ? overlayInk : daylightPhotoInk.detail;
+  const headerInsets = useMainTabHeaderInsets();
   const { width, fontScale } = useWindowDimensions();
   const gutter = useScreenGutter();
   const [bodyWidth, setBodyWidth] = useState(width);
   const availableWidth = bodyWidth - gutter * 2;
   const singleColumn = availableWidth < 320 || fontScale > 1.2;
+  const stackDaylightEntries = availableWidth < 280 || fontScale > 1.2;
   const stackRecommendations = availableWidth < 320 || fontScale > 1.15;
   const recommendationTitleHeight = Math.ceil(
     (availableWidth < 360 * fontScale ? 2 : 1) *
@@ -625,12 +736,10 @@ export function ExploreScreen({
   const [searchOpen, setSearchOpen] = useState(restored?.searchOpen ?? false);
   const [focusSearch, setFocusSearch] = useState(false);
   const [query, setQuery] = useState(restored?.query ?? "");
-  const [showAll, setShowAll] = useState(restored?.showAll ?? false);
   const [initialView] = useState(() => ({
     category,
     searchOpen,
     query,
-    showAll,
     ...offsets.current,
   }));
   const libraryState = useRef<Omit<ExploreView, "x" | "y">>(null);
@@ -640,9 +749,8 @@ export function ExploreScreen({
       category,
       searchOpen,
       query,
-      showAll,
     };
-  }, [category, searchOpen, query, showAll]);
+  }, [category, searchOpen, query]);
   useEffect(
     () => () => {
       if (!libraryState.current) return;
@@ -669,7 +777,7 @@ export function ExploreScreen({
     });
   }, [category, query]);
   const searching = searchOpen && !!query.trim();
-  const showCatalog = catalogOnly || searching || showAll || category !== "all";
+  const showCatalog = searching || category !== "all";
   const categoryLabel = categories.find((item) => item.id === category)?.label;
   function open(destination: PracticeDestination) {
     const target =
@@ -687,7 +795,6 @@ export function ExploreScreen({
       setQuery("");
     } else {
       setCategory("all");
-      setShowAll(false);
     }
     setFocusSearch(!searchOpen);
     setSearchOpen(!searchOpen);
@@ -712,75 +819,64 @@ export function ExploreScreen({
       <View
         style={[
           styles.hero,
-          {
-            paddingHorizontal: gutter,
-            paddingTop: top + spacing.compact,
-            backgroundColor: dark ? "#191528" : "#545071",
-          },
+          headerInsets,
+          { backgroundColor: dark ? "#191528" : "#40314F" },
         ]}
       >
         <DecorativeImage
           source={dark ? exploreArt.sceneDark : exploreArt.sceneLight}
+          scene
         />
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              backgroundImage:
-                "linear-gradient(90deg, #11101BCD 0%, #17132350 49%, #18132600 80%)",
-            },
-          ]}
-        />
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              backgroundImage: `linear-gradient(180deg, ${colors.bg}00 67%, ${colors.bg} 100%)`,
-            },
-          ]}
-        />
-        <Row style={styles.heroHeader}>
-          <View style={styles.brand}>
-            {catalogOnly && (
-              <IconAction icon="arrow-back" label="Back" onPress={app.back} />
-            )}
-            <LotusMark size={26} />
-            <AppText
-              variant="heading"
-              color={overlayInk}
-              style={styles.brandName}
-            >
-              Solace
-            </AppText>
-          </View>
-          <Row style={styles.heroActions}>
-            <IconAction
-              icon={searchOpen ? "close" : "search-outline"}
-              label={searchOpen ? "Close practice search" : "Search practices"}
-              onPress={toggleSearch}
-              expanded={searchOpen}
-            />
-            <IconAction
-              icon="bookmark-outline"
-              label="Open saved wellness toolkit"
-              onPress={() => open({ route: "toolkit" })}
-            />
-          </Row>
-        </Row>
+        {dark ? (
+          <View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, legacyHeroScrim]}
+          />
+        ) : (
+          <DaylightScenicScrim coverage={38} />
+        )}
+        {dark ? (
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundImage: `linear-gradient(180deg, ${colors.bg}00 67%, ${colors.bg} 100%)`,
+              },
+            ]}
+          />
+        ) : (
+          <DaylightScenicFade color={colors.bg} height={22} />
+        )}
+        <MainTabHeader color={scenicTitle}>
+          <IconButton
+            name={searchOpen ? "close" : "search-outline"}
+            label={searchOpen ? "Close practice search" : "Search practices"}
+            onPress={toggleSearch}
+            expanded={searchOpen}
+            appearance="artwork"
+            size={48}
+          />
+          <IconButton
+            name="bookmark-outline"
+            label="Open saved wellness toolkit"
+            onPress={() => open({ route: "toolkit" })}
+            appearance="artwork"
+            size={48}
+          />
+        </MainTabHeader>
         <View style={styles.heroCopy}>
           <AppText
             variant="title"
             accessibilityRole="header"
-            color={overlayInk}
+            color={scenicTitle}
             style={styles.heroTitle}
           >
             Explore
           </AppText>
           <AppText
             variant="heading"
-            color={overlayInk}
+            color={scenicDetail}
             style={styles.heroSubtitle}
           >
             What would help you today?
@@ -822,12 +918,12 @@ export function ExploreScreen({
               <Pressable
                 key={item.id}
                 accessibilityRole="radio"
+                {...webRadioProps(selected)}
                 accessibilityLabel={item.label}
                 accessibilityState={{ checked: selected }}
                 aria-checked={selected}
                 onPress={() => {
                   setCategory(item.id);
-                  setShowAll(false);
                 }}
                 style={({ pressed }) => [
                   styles.category,
@@ -840,26 +936,34 @@ export function ExploreScreen({
                     {
                       backgroundColor: selected
                         ? dark
-                          ? "#D6B7F0"
-                          : colors.lavenderSurface
+                          ? colors.lavenderAction
+                          : colors.tabActiveSurface
                         : dark
                           ? "#18151EDD"
                           : colors.surface,
                       borderColor: selected
-                        ? colors.lavender
+                        ? dark
+                          ? colors.lavender
+                          : colors.tabActiveText
                         : dark
                           ? "#514456"
                           : colors.border,
                     },
                   ]}
                 >
-                  {item.icon && (
-                    <Icon
-                      name={item.icon}
-                      color={selected && dark ? "#24172F" : colors.text}
-                      size={15}
-                    />
-                  )}
+                  <Icon
+                    name={
+                      selected ? "checkmark" : (item.icon ?? "apps-outline")
+                    }
+                    color={
+                      selected
+                        ? dark
+                          ? "#24172F"
+                          : colors.tabActiveText
+                        : colors.text
+                    }
+                    size={15}
+                  />
                   <AppText
                     variant="label"
                     color={
@@ -913,32 +1017,47 @@ export function ExploreScreen({
                     ? "All Practices"
                     : categoryLabel || "Practices"
               }
-              action={
-                showAll && !catalogOnly
-                  ? {
-                      label: "Show Less",
-                      expanded: true,
-                      onPress: () => setShowAll(false),
-                    }
-                  : undefined
-              }
             />
-            <AppText
-              variant="caption"
-              accessibilityLiveRegion="polite"
-              color={colors.muted}
-            >
-              {results.length
-                ? `${results.length} ${results.length === 1 ? "result" : "results"}`
-                : "No results. Try a different search or choose All."}
-            </AppText>
-            {results.map((item) => (
-              <ExploreResult
-                key={item.title}
-                item={item}
-                onPress={() => open(item.destination)}
-              />
-            ))}
+            {results.length > 0 && (
+              <AppText
+                variant="caption"
+                accessibilityLiveRegion="polite"
+                color={colors.muted}
+              >
+                {`${results.length} ${results.length === 1 ? "result" : "results"}`}
+              </AppText>
+            )}
+            <View style={styles.catalogCards}>
+              {results.length === 0 && (
+                <NestedState
+                  icon="search-outline"
+                  title="No practices found"
+                  description="Try a different search or choose All to explore more practices."
+                />
+              )}
+              {results.map((item) => (
+                <RecommendationCard
+                  key={item.title}
+                  item={{
+                    title: item.title,
+                    icon: item.icon,
+                    tile: item.tile ?? {
+                      meta: item.detail,
+                      image:
+                        item.artwork ??
+                        (item === featured
+                          ? exploreArt.breathe
+                          : exploreArt.plan),
+                      tone: item.tone ?? "sage",
+                      actionIcon: "chevron-forward",
+                    },
+                  }}
+                  stacked
+                  titleMinHeight={0}
+                  onPress={() => open(item.destination)}
+                />
+              ))}
+            </View>
           </View>
         ) : (
           <>
@@ -946,30 +1065,41 @@ export function ExploreScreen({
               style={[
                 styles.feature,
                 {
-                  backgroundColor: dark ? "#2B263D" : "#5C4D68",
-                  borderColor: dark ? "#63546C" : "#DED0DC",
+                  backgroundColor: dark ? "#2B263D" : "#493451",
+                  borderColor: dark ? "#63546C" : colors.border,
                 },
               ]}
             >
               <DecorativeImage
                 source={dark ? exploreArt.featureDark : exploreArt.featureLight}
+                scene
               />
-              <View
-                pointerEvents="none"
-                style={[
-                  StyleSheet.absoluteFill,
-                  {
-                    backgroundImage:
-                      "linear-gradient(90deg, #17131FE6 0%, #211A2A9C 43%, #302B4200 81%)",
-                  },
-                ]}
-              />
+              {dark ? (
+                <View
+                  pointerEvents="none"
+                  style={[StyleSheet.absoluteFill, legacyFeatureScrim]}
+                />
+              ) : (
+                <DaylightScenicScrim
+                  coverage={singleColumn ? 70 : 65}
+                  fadeThrough={91}
+                />
+              )}
               <View style={styles.featureCopy}>
-                <Row style={styles.featureBadge}>
-                  <Icon name="sparkles-outline" color="#F5D4A0" size={13} />
+                <Row
+                  style={[
+                    styles.featureBadge,
+                    !dark && styles.daylightFeatureBadge,
+                  ]}
+                >
+                  <Icon
+                    name="sparkles-outline"
+                    color={dark ? "#F5D4A0" : daylightPhotoInk.detail}
+                    size={13}
+                  />
                   <AppText
                     variant="caption"
-                    color={overlayInk}
+                    color={scenicTitle}
                     style={styles.featureBadgeText}
                   >
                     FEATURED MOMENT · 5 MIN
@@ -977,7 +1107,7 @@ export function ExploreScreen({
                 </Row>
                 <AppText
                   variant="title"
-                  color={overlayInk}
+                  color={scenicTitle}
                   accessibilityRole="header"
                   style={styles.featureTitle}
                 >
@@ -985,7 +1115,7 @@ export function ExploreScreen({
                 </AppText>
                 <AppText
                   variant="body"
-                  color={overlayInk}
+                  color={scenicDetail}
                   style={[
                     styles.featureDescription,
                     singleColumn && styles.narrowFeatureDescription,
@@ -999,19 +1129,27 @@ export function ExploreScreen({
                   onPress={() => open(featured.destination)}
                   style={({ pressed }) => [
                     styles.featureAction,
-                    { backgroundColor: "#FFDBB9" },
+                    { backgroundColor: colors.lavenderAction },
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Icon name="play" size={15} color="#2B1E28" />
+                  <Icon
+                    name="play"
+                    size={15}
+                    color={colors.lavenderActionText}
+                  />
                   <AppText
-                    variant="heading"
-                    color="#2B1E28"
+                    variant={dark ? "heading" : "label"}
+                    color={colors.lavenderActionText}
                     style={styles.featureActionLabel}
                   >
                     Start Moment
                   </AppText>
-                  <Icon name="arrow-forward" size={15} color="#2B1E28" />
+                  <Icon
+                    name="arrow-forward"
+                    size={15}
+                    color={colors.lavenderActionText}
+                  />
                 </Pressable>
               </View>
             </View>
@@ -1067,39 +1205,61 @@ export function ExploreScreen({
                 ))}
               </View>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Create Your Wellness Plan"
-              accessibilityHint="Opens your editable three-day plan"
-              onPress={() => open({ route: "plan" })}
-              style={({ pressed }) => [
-                styles.planBanner,
-                pressed && styles.pressed,
-              ]}
-            >
-              <View pointerEvents="none" style={styles.planPicture}>
-                <DecorativeImage source={exploreArt.plan} />
-                <View style={[StyleSheet.absoluteFill, styles.planScrim]} />
-              </View>
-              <View style={styles.planIcon}>
-                <Icon name="calendar-outline" color={overlayInk} size={23} />
-              </View>
-              <View style={styles.sectionTitle}>
-                <AppText
-                  variant="heading"
-                  color={overlayInk}
-                  style={styles.planTitle}
+            {dark ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Create Your Wellness Plan"
+                accessibilityHint="Opens your editable three-day plan"
+                onPress={() => open({ route: routes.wellnessPlan })}
+                style={({ pressed }) => [
+                  styles.planBanner,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View pointerEvents="none" style={styles.planPicture}>
+                  <DecorativeImage source={exploreArt.plan} scene />
+                  <View style={[StyleSheet.absoluteFill, styles.planScrim]} />
+                </View>
+                <View style={styles.planIcon}>
+                  <Icon name="calendar-outline" color={overlayInk} size={23} />
+                </View>
+                <View style={styles.sectionTitle}>
+                  <AppText
+                    variant="heading"
+                    color={overlayInk}
+                    style={styles.planTitle}
+                  >
+                    Create Your Wellness Plan
+                  </AppText>
+                  <AppText variant="caption" color="#E6DAE8">
+                    Choose a goal and build a three-day routine.
+                  </AppText>
+                </View>
+                <View
+                  style={[
+                    styles.planAction,
+                    { backgroundColor: colors.lavenderAction },
+                  ]}
                 >
-                  Create Your Wellness Plan
-                </AppText>
-                <AppText variant="caption" color="#E6DAE8">
-                  Choose a goal and build a three-day routine.
-                </AppText>
-              </View>
-              <View style={styles.planAction}>
-                <Icon name="arrow-forward" color="#2B1E28" size={18} />
-              </View>
-            </Pressable>
+                  <Icon
+                    name="arrow-forward"
+                    color={colors.lavenderActionText}
+                    size={18}
+                  />
+                </View>
+              </Pressable>
+            ) : (
+              <DaylightExploreEntry
+                title="Create Your Wellness Plan"
+                subtitle="Choose a goal and build a three-day routine."
+                icon="calendar-outline"
+                tone="lavender"
+                image={exploreArt.featureLight}
+                stacked={stackDaylightEntries}
+                onPress={() => open({ route: routes.wellnessPlan })}
+                plan
+              />
+            )}
 
             <View style={styles.section}>
               <SectionHeading icon="grid-outline" title="Explore More" />
@@ -1108,7 +1268,14 @@ export function ExploreScreen({
                   <ExploreDestinationCard
                     key={shortcut.route}
                     shortcut={shortcut}
-                    onPress={() => open({ route: shortcut.route })}
+                    onPress={() =>
+                      open({
+                        route:
+                          shortcut.route === "checkin"
+                            ? "assessments"
+                            : shortcut.route,
+                      })
+                    }
                   />
                 ))}
               </View>
@@ -1117,6 +1284,7 @@ export function ExploreScreen({
                   <ExploreEntryCard
                     key={entry.route}
                     entry={entry}
+                    stacked={stackDaylightEntries}
                     onPress={() => open({ route: entry.route })}
                   />
                 ))}
@@ -1130,6 +1298,14 @@ export function ExploreScreen({
 }
 
 const overlayInk = "#FFF8F1";
+const legacyHeroScrim = {
+  backgroundImage:
+    "linear-gradient(90deg, #11101BCD 0%, #17132350 49%, #18132600 80%)",
+} as const;
+const legacyFeatureScrim = {
+  backgroundImage:
+    "linear-gradient(90deg, #17131FE6 0%, #211A2A9C 43%, #302B4200 81%)",
+} as const;
 const android = Platform.OS === "android";
 const sectionGap = android ? 18 : spacing.section;
 const styles = StyleSheet.create({
@@ -1138,30 +1314,6 @@ const styles = StyleSheet.create({
   hero: {
     paddingBottom: sectionGap,
     overflow: "hidden",
-  },
-  heroHeader: { minHeight: 44, justifyContent: "space-between", gap: 2 },
-  brand: {
-    minHeight: 44,
-    flexShrink: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-  },
-  brandName: { fontSize: 21, lineHeight: 25 },
-  heroActions: { gap: 1, marginRight: -3 },
-  iconTarget: {
-    minWidth: 44,
-    minHeight: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroIcon: {
-    width: 33,
-    height: 33,
-    borderRadius: 17,
-    backgroundColor: "#FFF4F02E",
-    alignItems: "center",
-    justifyContent: "center",
   },
   heroCopy: { paddingTop: spacing.compact },
   heroTitle: { fontSize: 43, lineHeight: 45 },
@@ -1198,14 +1350,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 12,
-    minHeight: 45,
+    minHeight: 48,
     marginBottom: 13,
     borderWidth: 1,
     borderRadius: 13,
   },
   searchInput: {
     flex: 1,
-    minHeight: 45,
+    minHeight: 48,
     paddingVertical: 6,
     fontFamily: "Inter_400Regular",
     fontSize: 14,
@@ -1230,6 +1382,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     gap: 4,
   },
+  daylightFeatureBadge: { backgroundColor: "#261A34AD" },
   featureBadgeText: { fontSize: 11, lineHeight: 16, flexShrink: 1 },
   featureTitle: {
     alignSelf: "stretch",
@@ -1326,6 +1479,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+  daylightRecommendationArt: { height: 84 },
   recommendationThumb: { width: 56, borderRadius: 10 },
   recommendationTopImage: {
     position: "absolute",
@@ -1335,6 +1489,7 @@ const styles = StyleSheet.create({
     height: "auto",
     aspectRatio: 1,
   },
+  daylightTopCrop: { top: 0 },
   recommendationGridCopy: {
     paddingHorizontal: spacing.row,
     paddingVertical: spacing.compact,
@@ -1350,6 +1505,40 @@ const styles = StyleSheet.create({
   recommendationPictureAction: { position: "absolute", top: 6, right: 6 },
   recommendationTitle: { fontSize: 20, lineHeight: recommendationTitleLine },
   recommendationMeta: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  daylightEntry: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    minWidth: 0,
+    minHeight: 132,
+    gap: spacing.row,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: spacing.compact,
+  },
+  daylightPlan: { marginTop: sectionGap },
+  daylightEntryStack: { flexDirection: "column" },
+  daylightEntryCopy: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: spacing.compact,
+    paddingVertical: 4,
+  },
+  daylightEntryTools: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  daylightEntryTitle: { fontSize: 23, lineHeight: 27 },
+  daylightEntryArt: {
+    width: "38%",
+    flexShrink: 0,
+    borderRadius: 11,
+    overflow: "hidden",
+  },
+  daylightEntryArtStack: { width: "100%", height: 96 },
   planBanner: {
     marginTop: sectionGap,
     minHeight: android ? 68 : 76,
@@ -1388,19 +1577,11 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: "#FFDBB9",
     alignItems: "center",
     justifyContent: "center",
   },
   catalog: { paddingBottom: 6 },
-  result: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.row,
-    minHeight: android ? 56 : 60,
-    paddingVertical: android ? spacing.compact : 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
+  catalogCards: { marginTop: spacing.row, gap: spacing.row },
   featureEntries: { gap: spacing.card, marginTop: spacing.card },
   featureEntry: {
     minHeight: 140,

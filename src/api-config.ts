@@ -3,6 +3,7 @@ export type ApiConfigurationOptions = {
   platform: string;
   development: boolean;
   webHostname?: string;
+  androidUsbQa?: boolean;
 };
 
 export type ApiConfiguration = {
@@ -106,6 +107,13 @@ export function resolveApiConfiguration(
     return issue(malformedMessage);
   try {
     const parsed = new URL(value);
+    // The isolated Android QA APK supplies a separate, loopback-only trust
+    // anchor. Normal releases retain the public HTTPS requirement.
+    const usbQa =
+      options.platform === "android" &&
+      options.androidUsbQa === true &&
+      (value === "https://127.0.0.1:3164" ||
+        value === "https://127.0.0.1:3164/");
     if (
       !["http:", "https:"].includes(parsed.protocol) ||
       !parsed.hostname ||
@@ -116,7 +124,7 @@ export function resolveApiConfiguration(
       return issue(malformedMessage);
     if (
       !options.development &&
-      (parsed.protocol !== "https:" || isLocalOnly(parsed.hostname))
+      (parsed.protocol !== "https:" || (!usbQa && isLocalOnly(parsed.hostname)))
     )
       return issue(releaseMessage);
     return {

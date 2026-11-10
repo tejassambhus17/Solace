@@ -8,8 +8,15 @@
     "scheme": "solace",
     "android": {
       "package": "com.solacewellness.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/app-icons/solace-android-foreground.png",
+        "backgroundColor": "#FAEFE2",
+        "monochromeImage": "./assets/app-icons/solace-android-monochrome.png"
+      },
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CHANGE_NETWORK_STATE",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.USE_BIOMETRIC"
       ]
@@ -19,7 +26,9 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
-      "expo-notifications",
+      "./scripts/with-realtime-android.cjs",
+      "./scripts/with-android-launch.cjs",
+      ["expo-notifications", { "enableRemoteNotifications": false }],
       [
         "expo-secure-store",
         {
@@ -38,7 +47,7 @@
         {
           "photosPermission": "Choose a profile photo for your Solace account.",
           "cameraPermission": false,
-          "microphonePermission": "Record a voice message for Solace. Audio is sent for transcription only when you stop recording.",
+          "microphonePermission": "Allow Solace to use the microphone for a live voice conversation or to record a voice message for transcription.",
           "colors": {
             "cropToolbarColor": "#FBF0E8",
             "cropToolbarIconColor": "#183A2B",
@@ -56,17 +65,22 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Record a voice message for Solace. Audio is sent for transcription only when you stop recording.",
+          "microphonePermission": "Allow Solace to use the microphone for a live voice conversation or to record a voice message for transcription.",
           "recordAudioAndroid": true,
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }
       ]
     ],
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icons/solace-light.png",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.solacewellness.app"
+      "bundleIdentifier": "com.solacewellness.app",
+      "icon": {
+        "light": "./assets/app-icons/solace-light.png",
+        "dark": "./assets/app-icons/solace-ios-dark.png",
+        "tinted": "./assets/app-icons/solace-tinted.png"
+      }
     }
   }
 }

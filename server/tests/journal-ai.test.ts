@@ -8,25 +8,21 @@ import type { AIConfig } from "../src/ai.js";
 import { Store } from "../src/database.js";
 import { MAX_JOURNAL_EXCERPT } from "../src/journal-contract.js";
 import { journalExcerpts } from "../../src/journal-excerpts.js";
+import { openAIResponse } from "./openai-fixture.js";
+import {
+  appActionCapabilityHeader,
+  appActionCapabilityVersion,
+} from "../src/companion-app-action.js";
 
 const ai: AIConfig = {
   mode: "live",
   baseUrl: "https://api.openai.com/v1",
   model: "test-openai",
   apiKey: "fixture-openai",
-  gemini: { apiKey: "fixture-gemini", model: "test-gemini" },
-  openAIFallback: true,
 };
 
 function providerTurn(value: Record<string, string>) {
-  return Response.json({
-    candidates: [
-      {
-        finishReason: "STOP",
-        content: { parts: [{ text: JSON.stringify(value) }] },
-      },
-    ],
-  });
+  return openAIResponse(JSON.stringify(value), "reply" in value);
 }
 
 async function register(app: ReturnType<typeof createApp>, identifier: string) {
@@ -60,6 +56,63 @@ test("excerpt sections are bounded, never split emoji, and skip blank paragraphs
   assert.deepEqual(journalExcerpts(" \n\n "), []);
 });
 
+test("a continued journal discussion keeps app actions disabled through retries", async (t) => {
+  const store = await Store.open(":memory:");
+  t.after(() => store.close());
+  const app = createApp({ store, ai, rateLimits: false });
+  const owner = await register(app, "continued-discussion");
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(String(init?.body));
+    assert.equal(payload.tools, undefined);
+    calls++;
+    return providerTurn({
+      reply: "Let’s keep reflecting on what you shared.",
+      practice: "none",
+      basis: "general",
+    });
+  };
+  const entryText = "I spent time by the lake.";
+  const { body: entry } = await request(app)
+    .post("/api/records/reflections")
+    .set(owner)
+    .send({ kind: "journal", text: entryText })
+    .expect(201);
+  const { body: initial } = await request(app)
+    .post(`/api/journal/${entry.record.id}/discuss`)
+    .set(owner)
+    .set(appActionCapabilityHeader, appActionCapabilityVersion)
+    .send({
+      start: 0,
+      end: entryText.length,
+      revision: entry.record.updatedAt,
+      requestId: randomUUID(),
+    })
+    .expect(200);
+  assert.equal(initial.conversation.journalSource.id, entry.record.id);
+  const draft = {
+    text: "Switch to dark mode",
+    conversationId: initial.conversation.id,
+    requestId: randomUUID(),
+  };
+  const send = () =>
+    request(app)
+      .post("/api/chat")
+      .set(owner)
+      .set(appActionCapabilityHeader, appActionCapabilityVersion)
+      .send(draft)
+      .expect(200);
+  const { body: continuation } = await send();
+  assert.equal(continuation.appAction, undefined);
+  assert.equal(continuation.conversation.messages.at(-1).appAction, undefined);
+  assert.deepEqual((await send()).body, continuation);
+  assert.equal(calls, 2);
+});
+
 test("journal AI sends only the approved excerpt, isolates accounts and memory, and resets linked context on delete", async () => {
   const store = await Store.open(":memory:");
   const originalFetch = globalThis.fetch;
@@ -78,11 +131,16 @@ test("journal AI sends only the approved excerpt, isolates accounts and memory, 
       practice: "grounding",
     });
     globalThis.fetch = async (url, init) => {
-      assert.match(
-        String(url),
-        /^https:\/\/generativelanguage\.googleapis\.com\//,
+      assert.equal(url, "https://api.openai.com/v1/responses");
+      const body = String(init?.body);
+      const payload = JSON.parse(body);
+      assert.equal(payload.store, false);
+      assert.equal(payload.text.format.strict, true);
+      assert.equal(
+        Boolean(payload.stream),
+        payload.text.format.name === "solace_chat_turn",
       );
-      calls.push(String(init?.body));
+      calls.push(body);
       return response.clone();
     };
     await request(app)
@@ -268,10 +326,7 @@ test("journal AI handles rate limits, stale consent, and urgent support without 
     let calls = 0;
     globalThis.fetch = async (url) => {
       calls++;
-      assert.match(
-        String(url),
-        /^https:\/\/generativelanguage\.googleapis\.com\//,
-      );
+      assert.equal(url, "https://api.openai.com/v1/responses");
       return new Response(null, { status: 429 });
     };
     await request(app)

@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,18 @@ import { Platform, AppState as NativeAppState } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  appActionCapabilityHeader,
+  appActionCapabilityVersion,
+  practiceHandoffHeader,
+} from "../server/src/companion-app-action";
+import {
+  isWellnessGoal,
+  wellnessGoalsActionHeader,
+  type WellnessGoal,
+} from "../server/src/wellness-goals";
+import {
+  habitHubParams,
+  isHabitDrillDown,
   isRecordId,
   journalRoutes,
   routes,
@@ -17,8 +30,18 @@ import {
   type SolaceMode,
 } from "./routes";
 import { apiConnectionError, resolveApiConfiguration } from "./api-config";
+import { cancelAllReminders } from "./notifications";
 import { isJournalRecord } from "./journal-record";
+import { isPracticeFollowUpId } from "./practice-follow-up";
+import type { TabSelectionIntent } from "./navigation-motion";
+import type {
+  VoiceConnection,
+  VoiceActionResult,
+  VoiceSessionState,
+} from "./realtime-voice-state";
 import {
+  DeviceLockError,
+  deviceLockAvailability,
   deviceLockDelays,
   persistDeviceLock,
   provisionDeviceLock,
@@ -38,6 +61,15 @@ import {
 } from "./offline";
 
 import type { MomentResult } from "../server/src/moment-contract";
+import type {
+  GardenIntention,
+  GardenIntentionChoice,
+  GardenState,
+} from "../server/src/garden-contract";
+import type {
+  PlanPreview,
+  PlanPreviewInput,
+} from "../server/src/wellness-plan-ai";
 import type {
   Habit,
   HabitDraft,
@@ -95,6 +127,7 @@ export type Data = Record<Collection, Item[]> & {
   habits: Habit[];
   habitProgress: HabitProgress[];
   habitGarden: HabitGarden[];
+  gardenIntentions: GardenIntention[];
 };
 type HabitEdit = { draft?: HabitDraft; status?: HabitStatus };
 type HabitSaveResult = { habit: Habit; reminderNotice?: string };
@@ -127,7 +160,7 @@ export const immersiveRoutes = new Set([
 ]);
 type MainTab = (typeof mainTabs)[number];
 type RouteEntry = {
-  key: symbol;
+  key: number;
   name: string;
   params: Record<string, any>;
   destinationParams: Record<string, unknown>;
@@ -147,6 +180,9 @@ const mainTabFor = (name: string) =>
     : mainTabs.find((tab) => tab === name);
 
 const solaceModeKey = (account: string) => `solace.mode.${account}`;
+
+const isSolaceModeRoot = (name: string) =>
+  name === routes.companion || name === routes.journal;
 
 function rememberSolaceView(navigation: NavigationState) {
   const stack = navigation.stacks.chat;
@@ -179,11 +215,12 @@ function stacksAfterLeavingImmersive({ activeTab, stacks }: NavigationState) {
   return { ...stacks, [activeTab]: active.slice(0, -1) };
 }
 
+let nextRouteKey = 0;
 const routeEntry = (
   name: string,
   params: Record<string, any> = {},
 ): RouteEntry => ({
-  key: Symbol(name),
+  key: ++nextRouteKey,
   name,
   params,
   destinationParams: params,
@@ -224,9 +261,42 @@ const emptyData = (): Data => ({
   habits: [],
   habitProgress: [],
   habitGarden: [],
+  gardenIntentions: [],
 });
+function mergeGardenState(
+  previous: Data,
+  result: Partial<GardenState> & { garden?: HabitGarden },
+) {
+  const incoming = result.habitGarden?.[0] ?? result.garden;
+  const habitGarden =
+    incoming &&
+    incoming.earnedTotal > (previous.habitGarden[0]?.earnedTotal ?? 0)
+      ? [incoming]
+      : previous.habitGarden;
+  if (!Array.isArray(result.gardenIntentions)) return { habitGarden };
+  const intentions = new Map(
+    previous.gardenIntentions.map((item) => [item.id, item]),
+  );
+  for (const item of result.gardenIntentions) {
+    const current = intentions.get(item.id);
+    if (
+      !current ||
+      item.contributors.length > current.contributors.length ||
+      (item.contributors.length === current.contributors.length &&
+        item.createdAt >= current.createdAt)
+    )
+      intentions.set(item.id, item);
+  }
+  return {
+    habitGarden,
+    gardenIntentions: [...intentions.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    ),
+  };
+}
 const apiConfiguration = resolveApiConfiguration({
   configuredUrl: process.env.EXPO_PUBLIC_API_URL,
+  androidUsbQa: process.env.EXPO_PUBLIC_SOLACE_USB_QA === "1",
   platform: Platform.OS,
   development: typeof __DEV__ !== "undefined" && __DEV__,
   webHostname:
@@ -272,14 +342,23 @@ const persist = {
 type GoogleAuthFlow = { id: string; url: string };
 type GoogleAuthProof = { id: string; verifier: string; handoff: string };
 
+type AppUnlock =
+  | { phase: "unlocked" | "locked" | "prompting" }
+  | { phase: "fallback"; message: string; canRetry: boolean };
+
 export type AppState = {
   user: Item | null;
+  saveWellnessGoals: (
+    goals: WellnessGoal[],
+    completeOnboarding?: true,
+  ) => Promise<WellnessGoal[]>;
   data: Data;
   initializing: boolean;
   sessionError: string | null;
   sessionExpired: boolean;
   deviceLock: DeviceLockSettings | null;
   deviceLockBusy: boolean;
+  appUnlock: AppUnlock | { phase: "checking" };
   appLocked: boolean;
   journalLocked: boolean;
   journalRouteProtected: boolean;
@@ -290,6 +369,8 @@ export type AppState = {
   busy: boolean;
   error: string | null;
   route: string;
+  routeKey: number;
+  habitHub?: { key: number; params: Record<string, unknown> };
   activeTab: MainTab;
   params: Record<string, any>;
   canGoBack: boolean;
@@ -337,6 +418,10 @@ export type AppState = {
   ) => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
+  saveGardenIntention: (
+    choice: GardenIntentionChoice,
+    timeZone: string,
+  ) => Promise<void>;
   save: (
     collection: Collection,
     record: Item,
@@ -362,7 +447,7 @@ export type AppState = {
   navigate: (name: string, params?: Record<string, any>) => void;
   setParams: (params: Record<string, any>) => void;
   back: () => void;
-  setTab: (name: string) => void;
+  setTab: (name: string, intent?: TabSelectionIntent) => void;
   switchSolaceMode: (mode: SolaceMode) => void;
   chat: (text: string, conversationId?: string) => Promise<any>;
   reflectJournal: (
@@ -381,12 +466,17 @@ export type AppState = {
     feeling: string,
     environment?: "forest" | "ocean" | "twilight",
   ) => Promise<MomentResult>;
+  generatePlanPreview: (
+    input: PlanPreviewInput,
+    signal?: AbortSignal,
+  ) => Promise<PlanPreview>;
   weeklyReflection: (
     endDate?: string,
     options?: WeeklyReflectionOptions,
   ) => Promise<WeeklyReflectionResult>;
   capabilities: () => Promise<{
     voiceTranscription: boolean;
+    voiceSpeech: boolean;
     aiProvider: "live" | "offline";
   }>;
   transcribeVoice: (
@@ -394,16 +484,51 @@ export type AppState = {
     contentType: string,
     signal?: AbortSignal,
   ) => Promise<{ text: string; provider: "live" }>;
+  speakVoiceReply: (
+    conversationId: string,
+    messageId: string,
+    signal?: AbortSignal,
+  ) => Promise<ArrayBuffer>;
+  startVoiceSession: (
+    offer: string,
+    conversationId: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<VoiceConnection>;
+  voiceSessionStatus: (
+    id: string,
+    revision: number | undefined,
+    signal: AbortSignal,
+    ready?: true,
+  ) => Promise<VoiceSessionState>;
+  endVoiceSession: (id: string) => Promise<VoiceSessionState>;
+  reportVoiceActionResult: (
+    id: string,
+    actionId: string,
+    result: VoiceActionResult,
+    signal: AbortSignal,
+  ) => Promise<void>;
   updateUser: (changes: Item) => Promise<void>;
   deleteAccount: () => Promise<void>;
   exportData: () => Promise<any>;
 };
 const Context = createContext<AppState | null>(null);
 export const AppRouteScope = Context.Provider;
+type ApiRequestOptions = RequestInit & { responseType?: "mp3" };
+const SPEECH_MAX_BYTES = 2 * 1024 * 1024;
+function confirmedRecord(
+  result: { record?: Item } | null,
+  expectedId?: string,
+) {
+  const record = result?.record;
+  if (!isRecordId(record?.id) || (expectedId && record.id !== expectedId))
+    throw new Error("Solace couldn’t confirm the save. Please try again.");
+  return record;
+}
+
 async function request(
   path: string,
   token: string | null,
-  options: RequestInit = {},
+  { responseType, ...options }: ApiRequestOptions = {},
   sessionSignal?: AbortSignal,
 ) {
   if (!apiConfiguration.baseUrl)
@@ -424,14 +549,19 @@ async function request(
       "/moments/generate",
       "/insights/weekly",
       "/habits/suggest",
+      "/plans/preview",
       "/voice/transcribe",
-    ].includes(path)
+      "/voice/speech",
+    ].includes(path) || /^\/journal\/[^/]+\/(?:reflect|discuss)$/.test(path)
       ? 45000
-      : 15000,
+      : path === "/voice/realtime"
+        ? 22000
+        : 15000,
   );
   try {
     let response: Response;
-    let text: string;
+    let text = "";
+    let audio: ArrayBuffer | undefined;
     try {
       response = await fetch(`${API_URL}/api${path}`, {
         ...options,
@@ -442,7 +572,14 @@ async function request(
           ...options.headers,
         },
       });
-      text = await response.text();
+      if (response.ok && responseType === "mp3") {
+        if (
+          response.headers.get("content-type")?.split(";")[0] ===
+            "audio/mpeg" &&
+          Number(response.headers.get("content-length")) <= SPEECH_MAX_BYTES
+        )
+          audio = await response.arrayBuffer();
+      } else text = await response.text();
     } catch {
       if (externalSignals.some((signal) => signal?.aborted))
         throw new Error("The request was cancelled.");
@@ -451,6 +588,15 @@ async function request(
       ) as Error & { connection: boolean };
       error.connection = true;
       throw error;
+    }
+    if (response.ok && responseType === "mp3") {
+      if (!audio?.byteLength || audio.byteLength > SPEECH_MAX_BYTES)
+        throw new Error(
+          "Spoken playback couldn’t start. Try again or read the reply.",
+        );
+      if (controller.signal.aborted)
+        throw new Error("The request was cancelled.");
+      return audio;
     }
     let body: any = null;
     if (text) {
@@ -488,17 +634,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const generation = useRef(0);
   const [localLock, setLocalLock] = useState({
     policy: null as DeviceLockPolicy | null,
-    locked: false,
+    appUnlock: { phase: "unlocked" } as AppUnlock,
     journalGranted: false,
     covered: false,
   });
+  const appLocked = localLock.appUnlock.phase !== "unlocked";
   const lockState = useRef(localLock);
   const lockWrites = useRef<Promise<void>>(Promise.resolve());
   const [deviceLockBusy, setDeviceLockBusy] = useState(false);
   const prompting = useRef(false);
   const backgroundSince = useRef<number | null>(null);
   const backgroundGeneration = useRef(0);
-  const lastNativeState = useRef<string | null>(null);
+  const lastNativeState = useRef(NativeAppState?.currentState ?? "active");
   const journalVisit = useRef(0);
   const changeDeviceLock = (change: Partial<typeof localLock>) => {
     const next = { ...lockState.current, ...change };
@@ -524,8 +671,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const accountTransition = useRef<number | null>(null);
   const owner = useRef<string | null>(null);
   const revision = useRef(0);
+  const loads = useRef({ requested: 0, applied: 0 });
   const credentialWrites = useRef<Promise<void>>(Promise.resolve());
-  const vault = useRef(
+  const [vault] = useState(() =>
     createOfflineVault(
       Platform.OS === "web"
         ? undefined
@@ -538,7 +686,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             remove: (key) => SecureStore.deleteItemAsync(key),
           },
     ),
-  ).current;
+  );
   const pending = useRef<PendingWrite[]>([]);
   const writingOwner = useRef<string | null>(null);
   const editors = useRef<Record<string, EditorDraft>>({});
@@ -572,7 +720,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const canUseAccount = (version: number) =>
     version === generation.current &&
     accountTransition.current !== version &&
-    !lockState.current.locked;
+    lockState.current.appUnlock.phase === "unlocked";
   const assertActiveSession = (version: number) => {
     assertSession(version);
     if (!canUseAccount(version))
@@ -593,6 +741,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveDevicePolicy = (
     policy: DeviceLockPolicy | null,
     version: number,
+    publish = true,
   ) => {
     const job = lockWrites.current
       .catch(() => {})
@@ -600,12 +749,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         assertSession(version);
         await persistDeviceLock(policy);
         assertSession(version);
-        changeDeviceLock({
-          policy,
-          journalGranted: false,
-          locked: false,
-          covered: policy ? lockState.current.covered : false,
-        });
+        if (publish)
+          changeDeviceLock({
+            policy,
+            journalGranted: false,
+            appUnlock: { phase: "unlocked" },
+            covered: policy ? lockState.current.covered : false,
+          });
       });
     lockWrites.current = job;
     return job;
@@ -635,7 +785,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const [user, setUser] = useState<Item | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [data, setData] = useState<Data>(emptyData());
+  const [data, setData] = useState<Data>(emptyData);
   const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
   const chatAttempts = useRef(new Map<string, { id: string; text: string }>());
   const [editorDrafts, setEditorDrafts] = useState<Record<string, EditorDraft>>(
@@ -814,7 +964,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     )
       return;
     const expiredVersion = advanceSession();
-    changeDeviceLock({ journalGranted: false, locked: false });
+    changeDeviceLock({
+      journalGranted: false,
+      appUnlock: { phase: "unlocked" },
+    });
     setToken(null);
     setSessionError(null);
     setSessionExpired(true);
@@ -833,7 +986,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const authenticatedRequest = async (
     path: string,
-    options: RequestInit,
+    options: ApiRequestOptions,
     version: number,
     allowAccountTransition = false,
   ) => {
@@ -859,6 +1012,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   ) => {
     assertSession(version);
     const startedAt = revision.current;
+    const loadId = ++loads.current.requested;
     const result = await request(
       "/state",
       t,
@@ -872,9 +1026,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       !result.data ||
       typeof result.data !== "object" ||
       Array.isArray(result.data) ||
-      Object.keys(emptyData()).some(
-        (key) => key in result.data && !Array.isArray(result.data[key]),
-      )
+      Object.keys(emptyData()).some((key) => {
+        if (!(key in result.data)) return false;
+        const records = result.data[key];
+        return (
+          !Array.isArray(records) ||
+          records.some(
+            (record) =>
+              !record || typeof record !== "object" || Array.isArray(record),
+          )
+        );
+      })
     )
       throw new Error(
         "Solace could not read your saved space. Please try again.",
@@ -884,6 +1046,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         new Error("This saved sign-in has changed. Sign in again to continue."),
         { status: 401 },
       );
+    if (loadId < loads.current.applied) return;
     if (
       lockState.current.policy &&
       lockState.current.policy.owner !== result.user.id
@@ -894,7 +1057,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await restoreWriting(owner.current, version);
     assertSession(version);
     // A snapshot requested before a local save must not erase that newer save.
-    if (startedAt === revision.current) {
+    if (startedAt === revision.current && loadId > loads.current.applied) {
+      loads.current.applied = loadId;
       setData(mergePending({ ...emptyData(), ...result.data }));
       setUser(result.user);
     }
@@ -937,14 +1101,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         let policy: DeviceLockPolicy | null;
         try {
           policy = await readDeviceLock();
-        } catch (error) {
+        } catch {
           if (active && version === generation.current && t)
-            changeDeviceLock({ locked: true });
+            changeDeviceLock({
+              appUnlock: {
+                phase: "fallback",
+                message:
+                  "This device lock could not be read. Sign in again to continue.",
+                canRetry: false,
+              },
+            });
           return;
         }
         if (!active || version !== generation.current) return;
         const locked = !!t && !!policy && policy.appDelay !== null;
-        changeDeviceLock({ policy, locked });
+        changeDeviceLock({
+          policy,
+          appUnlock: { phase: locked ? "locked" : "unlocked" },
+          covered: locked && lastNativeState.current !== "active",
+        });
         if (t && !locked) await restore(t, version);
       } catch (e) {
         if (active && version === generation.current)
@@ -984,45 +1159,137 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertActiveSession(version);
     await saveDevicePolicy(next, version);
   };
-  const unlockDeviceLock = async (scope: "app" | "journal") => {
+  const attemptAppUnlock = async (automatic: boolean) => {
+    const { appUnlock, covered, policy } = lockState.current;
+    if (prompting.current) {
+      if (automatic) return;
+      throw new Error("A biometric prompt is already open.");
+    }
+    if (automatic) {
+      if (appUnlock.phase !== "locked") return;
+    } else if (appUnlock.phase !== "fallback" || !appUnlock.canRetry) return;
+    if (covered || lastNativeState.current !== "active") return;
+
     const version = draftGeneration;
     assertSession(version);
-    const { policy, locked } = lockState.current;
+    const background = backgroundGeneration.current;
+    // Claim the lock event before native calls so renders and AppState events
+    // cannot start a second prompt while this attempt is in progress.
+    changeDeviceLock({ appUnlock: { phase: "prompting" } });
+    try {
+      const saved = await localBiometricPrompt(async (assertForeground) => {
+        if (!policy || (owner.current && owner.current !== policy.owner))
+          throw new DeviceLockError("Sign in again to recover access.", false);
+        if ((await deviceLockAvailability()) !== "ready")
+          throw new DeviceLockError(
+            "Biometrics are unavailable. Sign in again to continue.",
+            false,
+          );
+        assertSession(version);
+        assertForeground();
+        if (lastNativeState.current !== "active")
+          throw new DeviceLockError("Try again when Solace is active.", true);
+        await verifyDeviceLock(policy.owner, "Unlock Solace");
+        assertSession(version);
+        assertForeground();
+
+        const credential = token || (await persist.get());
+        assertSession(version);
+        assertForeground();
+        if (!credential)
+          throw Object.assign(new Error("Sign in again to continue."), {
+            status: 401,
+          });
+        if (token) {
+          // A local biometric match cannot restore a revoked server session.
+          const result = await request(
+            "/auth/me",
+            credential,
+            {},
+            sessionRequests.current?.signal,
+          );
+          if (typeof result?.user?.id !== "string" || !result.user.id)
+            throw new Error("Could not verify this session.");
+          if (result.user.id !== policy.owner)
+            throw Object.assign(new Error("This saved sign-in has changed."), {
+              status: 401,
+            });
+        } else await load(credential, version, policy.owner);
+        return credential;
+      });
+      assertSession(version);
+      if (background !== backgroundGeneration.current)
+        throw new DeviceLockError(
+          "Solace went into the background. Try again when you’re ready.",
+          true,
+        );
+      setToken(saved);
+      setSessionError(null);
+      setSessionExpired(false);
+      changeDeviceLock({ appUnlock: { phase: "unlocked" } });
+    } catch (error) {
+      if (version !== generation.current) return;
+      if ((error as Error & { status?: number }).status === 401) {
+        expireSession(error, version);
+        return;
+      }
+      const failure =
+        error instanceof DeviceLockError
+          ? error
+          : new DeviceLockError(
+              "Could not finish unlocking. Try again or sign in again.",
+              true,
+            );
+      changeDeviceLock({
+        appUnlock: {
+          phase: "fallback",
+          message: failure.message,
+          canRetry: failure.canRetry,
+        },
+      });
+      throw failure;
+    }
+  };
+  const startAutomaticUnlock = useEffectEvent(() => {
+    void attemptAppUnlock(true).catch(() => {});
+  });
+  useEffect(() => {
+    if (
+      !initializing &&
+      localLock.appUnlock.phase === "locked" &&
+      !localLock.covered &&
+      !deviceLockBusy
+    )
+      startAutomaticUnlock();
+  }, [
+    initializing,
+    localLock.appUnlock.phase,
+    localLock.covered,
+    deviceLockBusy,
+  ]);
+  const unlockDeviceLock = async (scope: "app" | "journal") => {
+    if (scope === "app") return attemptAppUnlock(false);
+    const version = draftGeneration;
+    assertSession(version);
+    const { policy, appUnlock } = lockState.current;
     if (!policy || (owner.current && owner.current !== policy.owner))
       throw new Error(
         "This device lock could not be read. Sign in again to recover access.",
       );
     const visit = journalVisit.current;
     if (
-      (scope === "app" && !locked) ||
-      (scope === "journal" &&
-        (locked || !policy.journal || !token || !insideJournal))
+      appUnlock.phase !== "unlocked" ||
+      !policy.journal ||
+      !token ||
+      !insideJournal
     )
       return;
     await localBiometricPrompt(async (assertForeground) => {
-      await verifyDeviceLock(
-        policy.owner,
-        scope === "app" ? "Unlock Solace" : "Unlock My Journal",
-      );
+      await verifyDeviceLock(policy.owner, "Unlock My Journal");
       assertForeground();
       assertSession(version);
-      if (scope === "journal") {
-        if (journalVisit.current === visit)
-          changeDeviceLock({ journalGranted: true });
-        return;
-      }
-      if (!token) {
-        const saved = await persist.get();
-        assertSession(version);
-        if (!saved)
-          throw new Error(
-            "This saved sign-in is unavailable. Sign in again to continue.",
-          );
-        await restore(saved, version, policy.owner);
-        assertSession(version);
-      }
-      assertForeground();
-      changeDeviceLock({ locked: false });
+      if (journalVisit.current === visit)
+        changeDeviceLock({ journalGranted: true });
     });
   };
   const retrySession = async () => {
@@ -1090,7 +1357,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setNavigation(initialNavigation());
       }
       owner.current = String(result.user.id);
-      changeDeviceLock({ journalGranted: false, locked: false });
+      changeDeviceLock({
+        journalGranted: false,
+        appUnlock: { phase: "unlocked" },
+      });
       setUser(null);
       setToken(result.token);
       setSessionError(null);
@@ -1193,7 +1463,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       assertSession(version);
       try {
         const saved =
-          token || (lockState.current.locked ? await persist.get() : null);
+          token ||
+          (lockState.current.appUnlock.phase !== "unlocked"
+            ? await persist.get()
+            : null);
         if (saved) await request("/auth/logout", saved, { method: "POST" });
       } catch {}
       if (version !== generation.current) return;
@@ -1207,16 +1480,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
       assertSession(version);
-      if (lockState.current.policy || lockState.current.locked)
-        await saveDevicePolicy(null, version).catch(() => {
-          if (version === generation.current)
-            changeDeviceLock({
-              policy: null,
-              locked: false,
-              journalGranted: false,
-              covered: false,
-            });
-        });
+      if (
+        lockState.current.policy ||
+        lockState.current.appUnlock.phase !== "unlocked"
+      )
+        // Keep the gate in place until this account's in-memory state is gone.
+        await saveDevicePolicy(null, version, false).catch(() => {});
+      assertSession(version);
+      // Keep the current account's schedules intact if local sign-out fails.
+      await cancelAllReminders().catch(() => {});
       assertSession(version);
       owner.current = null;
       writingOwner.current = null;
@@ -1234,6 +1506,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setEditorDrafts({});
       setEditorDraftPersistence({});
       setNavigation(initialNavigation());
+      changeDeviceLock({
+        policy: null,
+        appUnlock: { phase: "unlocked" },
+        journalGranted: false,
+        covered: false,
+      });
     } finally {
       finishAccountTransition(version);
     }
@@ -1264,7 +1542,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         version,
       );
       assertSession(version);
-      return result.record;
+      const saved = confirmedRecord(result, entry.id);
+      if (result.gardenIntentions) {
+        revision.current += 1;
+        setData((previous) => ({
+          ...previous,
+          ...mergeGardenState(previous, result),
+        }));
+      }
+      return saved;
     } catch (error) {
       if ((error as { status?: number }).status === 401) throw error;
       assertSession(version);
@@ -1424,6 +1710,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       !data.reflections.some((item) => item.id === id);
     if (
       newJournalEntry ||
+      (collection === "checkins" &&
+        isPracticeFollowUpId(id) &&
+        !data.checkins.some((item) => item.id === id)) ||
       (!id && (collection === "checkins" || collection === "reflections"))
     ) {
       const account = owner.current;
@@ -1503,21 +1792,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const createWithId =
       !!id &&
-      ["sessions", "preferences", "goals", "memories", "reminders"].includes(
-        collection,
-      ) &&
+      [
+        "sessions",
+        "preferences",
+        "goals",
+        "memories",
+        "reminders",
+        "plans",
+      ].includes(collection) &&
       !data[collection].some((item) => item.id === id);
     const updating = !!id && !createWithId;
-    const result = await authenticatedRequest(
-      `/records/${collection}${updating ? "/" + encodeURIComponent(id!) : ""}`,
-      { method: updating ? "PATCH" : "POST", body: JSON.stringify(record) },
-      version,
-    );
+    const submit = (payload: Item) =>
+      authenticatedRequest(
+        `/records/${collection}${updating ? "/" + encodeURIComponent(id!) : ""}`,
+        { method: updating ? "PATCH" : "POST", body: JSON.stringify(payload) },
+        version,
+      );
+    let result;
+    try {
+      result = await submit(record);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (
+        collection !== "sessions" ||
+        updating ||
+        !id ||
+        (code !== "SESSION_SOURCE_NOT_FOUND" &&
+          code !== "PRACTICE_ORIGIN_NOT_FOUND")
+      )
+        throw error;
+      // An optional link can be deleted while the player is running. Keep the
+      // original completion identity and retry without unavailable provenance.
+      const {
+        sourceConversationId,
+        originCheckinId,
+        originActionId,
+        ...practice
+      } = record;
+      result = await submit(practice);
+    }
     assertSession(version);
-    const saved = result.record;
+    const saved = confirmedRecord(result, updating ? id : undefined);
     revision.current += 1;
     setData((prev) => ({
       ...prev,
+      ...mergeGardenState(prev, result),
       [collection]: updating
         ? prev[collection].map((x) => (x.id === id ? saved : x))
         : [saved, ...prev[collection].filter((item) => item.id !== saved.id)],
@@ -1615,7 +1934,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         "/chat",
         {
           method: "POST",
-          body: JSON.stringify({ text, conversationId, requestId: attempt.id }),
+          headers: {
+            [appActionCapabilityHeader]: appActionCapabilityVersion,
+            [wellnessGoalsActionHeader]: "1",
+            [practiceHandoffHeader]: "1",
+          },
+          body: JSON.stringify({
+            text,
+            conversationId,
+            requestId: attempt.id,
+          }),
         },
         version,
       );
@@ -1658,7 +1986,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     return result;
   };
-  const featureRequest = async (path: string, options: RequestInit = {}) => {
+  const featureRequest = async (
+    path: string,
+    options: ApiRequestOptions = {},
+  ) => {
     const version = draftGeneration;
     const result = await authenticatedRequest(path, options, version);
     assertSession(version);
@@ -1790,22 +2121,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
         throw new Error("Solace couldn’t confirm your progress. Please retry.");
       const progress: HabitProgress = result.progress;
-      const garden: HabitGarden | undefined = result.garden;
       revision.current += 1;
       setData((previous) => ({
         ...previous,
+        ...mergeGardenState(previous, result),
         habitProgress: [
           progress,
           ...previous.habitProgress.filter((item) => item.id !== progress.id),
         ],
-        habitGarden:
-          garden &&
-          garden.earnedTotal > (previous.habitGarden[0]?.earnedTotal ?? 0)
-            ? [garden]
-            : previous.habitGarden,
       }));
       return progress;
     });
+  const saveGardenIntention: AppState["saveGardenIntention"] = async (
+    choice,
+    timeZone,
+  ) => {
+    const result = await featureRequest("/habits/garden-intention", {
+      method: "PUT",
+      body: JSON.stringify({ ...choice, timeZone }),
+    });
+    if (
+      !Array.isArray(result?.gardenIntentions) ||
+      !result.gardenIntentions.length
+    )
+      throw new Error(
+        "Solace couldn’t confirm your Garden intention. Please try again.",
+      );
+    revision.current += 1;
+    setData((previous) => ({
+      ...previous,
+      ...mergeGardenState(previous, result),
+    }));
+  };
   const retryHabitReminder: AppState["retryHabitReminder"] = (habit) =>
     habitWrite(habit.id, async (version) => {
       const current = data.habits.find((item) => item.id === habit.id);
@@ -1873,6 +2220,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ feeling, environment }),
     });
+  const generatePlanPreview = (
+    input: PlanPreviewInput,
+    signal?: AbortSignal,
+  ): Promise<PlanPreview> =>
+    featureRequest("/plans/preview", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal,
+    });
   const weeklyReflection = (
     endDate?: string,
     { today, timeZone, signal }: WeeklyReflectionOptions = {},
@@ -1894,6 +2250,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       body: audio,
       signal,
     });
+  const speakVoiceReply = (
+    conversationId: string,
+    messageId: string,
+    signal?: AbortSignal,
+  ): Promise<ArrayBuffer> =>
+    featureRequest("/voice/speech", {
+      method: "POST",
+      body: JSON.stringify({ conversationId, messageId }),
+      responseType: "mp3",
+      signal,
+    });
+  const startVoiceSession: AppState["startVoiceSession"] = (
+    offer,
+    conversationId,
+    signal,
+  ) =>
+    featureRequest("/voice/realtime", {
+      method: "POST",
+      headers: {
+        [appActionCapabilityHeader]: appActionCapabilityVersion,
+        [wellnessGoalsActionHeader]: "1",
+        [practiceHandoffHeader]: "1",
+        "X-Solace-Voice-Setup": "1",
+      },
+      body: JSON.stringify({ offer, conversationId }),
+      signal,
+    });
+  const voiceSessionStatus: AppState["voiceSessionStatus"] = (
+    id,
+    revision,
+    signal,
+    ready,
+  ) =>
+    featureRequest(`/voice/realtime/${encodeURIComponent(id)}/status`, {
+      method: "POST",
+      body: JSON.stringify({ revision, ready }),
+      signal,
+    });
+  const endVoiceSession: AppState["endVoiceSession"] = (id) =>
+    authenticatedRequest(
+      `/voice/realtime/${encodeURIComponent(id)}/end`,
+      { method: "POST", body: "{}" },
+      draftGeneration,
+      true,
+    );
+  const reportVoiceActionResult: AppState["reportVoiceActionResult"] = (
+    id,
+    actionId,
+    result,
+    signal,
+  ) =>
+    featureRequest(`/voice/realtime/${encodeURIComponent(id)}/action-result`, {
+      method: "POST",
+      body: JSON.stringify({ actionId, ...result }),
+      signal,
+    });
   const updateUser = async (changes: Item) => {
     const version = draftGeneration;
     if (!token) throw new Error("Please sign in first.");
@@ -1908,6 +2320,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     assertSession(version);
     revision.current += 1;
     setUser(result.user);
+  };
+  const saveWellnessGoals: AppState["saveWellnessGoals"] = async (
+    goals,
+    completeOnboarding,
+  ) => {
+    const version = draftGeneration;
+    const account = owner.current;
+    const result = await authenticatedRequest(
+      "/auth/wellness-goals",
+      { method: "PATCH", body: JSON.stringify({ goals, completeOnboarding }) },
+      version,
+    );
+    assertSession(version);
+    const saved = result?.user;
+    if (
+      !account ||
+      saved?.id !== account ||
+      saved.wellnessOnboarding !== "completed" ||
+      !Array.isArray(saved.wellnessGoals) ||
+      !saved.wellnessGoals.every(isWellnessGoal)
+    )
+      throw new Error(
+        "Solace couldn’t confirm your saved goals. Please try again.",
+      );
+    revision.current += 1;
+    setUser((previous) =>
+      previous?.id === account
+        ? {
+            ...previous,
+            wellnessGoals: saved.wellnessGoals,
+            wellnessOnboarding: saved.wellnessOnboarding,
+          }
+        : previous,
+    );
+    return saved.wellnessGoals;
   };
   const deleteAccount = async () => {
     assertActiveSession(draftGeneration);
@@ -1943,6 +2390,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         version,
         true,
       );
+      assertSession(version);
+      // Only stop delivery after the API has confirmed account deletion.
+      await cancelAllReminders().catch(() => {});
       assertSession(version);
       owner.current = null;
       writingOwner.current = null;
@@ -1998,6 +2448,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { activeTab, stacks } = navigation;
   const stack = stacks[activeTab]!;
   const current = stack[stack.length - 1];
+  const habitHub =
+    current.name === routes.habits || isHabitDrillDown(current.name)
+      ? stack.findLast(({ name }) => name === routes.habits)
+      : undefined;
   const insideJournal =
     journalRoutes.has(current.name) ||
     ([routes.reflectionDetail, "reflection"].includes(current.name) &&
@@ -2030,13 +2484,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ),
     };
   }, [data, insideJournal, journalLocked, localLock.policy?.journal]);
-  const switchSolaceMode = (mode: SolaceMode) => {
+  const switchSolaceMode = (
+    mode: SolaceMode,
+    entryDay?: string,
+    entryTitle?: string,
+  ) => {
     if (draftGeneration !== generation.current) return;
     setNavigation((old) => {
       const root = solaceRoots[mode];
       const existing = old.stacks.chat;
       if (
         old.activeTab === routes.companion &&
+        !entryDay &&
+        !entryTitle &&
         existing?.[0].name === root &&
         !immersiveRoutes.has(existing.at(-1)!.name) &&
         !existing.some((entry) => entry.params.fromJournal)
@@ -2044,6 +2504,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return old;
       const views = rememberSolaceView(old);
       const saved = views?.[mode];
+      const journalFilter = (entryDay || entryTitle) && {
+        entryDay,
+        entryTitle,
+        query: "",
+        mood: null,
+        favorites: false,
+        moodOnly: false,
+        scrollY: 0,
+      };
       return {
         ...old,
         activeTab: routes.companion,
@@ -2051,15 +2520,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         solaceViews: views,
         stacks: {
           ...stacksAfterLeavingImmersive(old),
-          chat: saved?.length ? saved : [routeEntry(root)],
+          chat: journalFilter
+            ? [routeEntry(root, journalFilter)]
+            : saved?.length
+              ? saved
+              : [routeEntry(root)],
         },
       };
     });
   };
   const navigate = (name: string, params: Record<string, any> = {}) => {
     if (draftGeneration !== generation.current) return;
+    const hubParams = habitHubParams(name, params);
+    if (hubParams) {
+      name = routes.habits;
+      params = hubParams;
+    }
     if (name === routes.journal) {
-      switchSolaceMode("journal");
+      const entryDay =
+        typeof params.entryDay === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(params.entryDay)
+          ? params.entryDay
+          : undefined;
+      const entryTitle =
+        typeof params.entryTitle === "string" &&
+        params.entryTitle.trim().length <= 80
+          ? params.entryTitle.trim()
+          : undefined;
+      switchSolaceMode("journal", entryDay, entryTitle);
       return;
     }
     if (
@@ -2079,6 +2567,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setNavigation((old) => {
       const previousStack = old.stacks[old.activeTab]!;
       const previousRoute = previousStack[previousStack.length - 1];
+      if (
+        hubParams ||
+        (name === routes.habitDetails && isRecordId(params.id))
+      ) {
+        const index = previousStack.findLastIndex(
+          ({ name }) => name === routes.habits,
+        );
+        if (hubParams && index >= 0) {
+          const hub = previousStack[index];
+          if (
+            index === previousStack.length - 1 &&
+            Object.keys(hubParams).every((key) =>
+              Object.is(
+                hub.params[key],
+                hubParams[key as keyof typeof hubParams],
+              ),
+            )
+          )
+            return old;
+          return {
+            ...old,
+            stacks: {
+              ...old.stacks,
+              [old.activeTab]: [
+                ...previousStack.slice(0, index),
+                { ...hub, params: { ...hub.params, ...hubParams } },
+              ],
+            },
+          };
+        }
+        if (!hubParams && index < 0)
+          return {
+            ...old,
+            stacks: {
+              ...old.stacks,
+              [old.activeTab]: [
+                ...previousStack,
+                routeEntry(routes.habits, { section: "today" }),
+                entry,
+              ],
+            },
+          };
+      }
       if (tab === routes.companion && entry.name === routes.companion) {
         const views = rememberSolaceView(old);
         if (
@@ -2296,7 +2827,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const top = activeStack[activeStack.length - 1];
       // A delayed save/delete or repeated Back should only close the page
       // that requested it, including two details with the same route name.
-      if (activeStack.length === 1 || top.key !== current.key) return old;
+      if (top.key !== current.key) return old;
+      if (activeStack.length === 1) {
+        if (old.activeTab !== routes.companion || !isSolaceModeRoot(top.name))
+          return old;
+        return {
+          ...old,
+          solaceViews: rememberSolaceView(old),
+          stacks: { ...old.stacks, chat: [routeEntry(routes.solace)] },
+        };
+      }
       const { returnTab, returnMode } = top;
       const priorMode = returnMode && old.solaceViews?.[returnMode];
       if (returnMode && priorMode?.length)
@@ -2313,13 +2853,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     });
   };
-  const setTab = (name: string) => {
-    if (draftGeneration !== generation.current) return;
+  const setTab = (name: string, intent: TabSelectionIntent = "switch") => {
+    if (!canUseAccount(draftGeneration)) return;
     const tab = mainTabFor(name);
     if (!tab) return;
     setNavigation((old) => {
+      const active = old.stacks[old.activeTab]!;
+      const top = active[active.length - 1];
+      if (immersiveRoutes.has(top.name)) return old;
+      if (intent === "reselect") {
+        if (old.activeTab !== tab || top.key !== current.key) return old;
+        const resetSolace = tab === routes.companion;
+        const root = active[0];
+        const alreadyAtRoot = !resetSolace || root.name === routes.solace;
+        if (active.length === 1 && alreadyAtRoot) return old;
+        const views = resetSolace ? rememberSolaceView(old) : undefined;
+        return {
+          ...old,
+          ...(resetSolace &&
+            views && {
+              solaceViews: {
+                companion: views.companion?.slice(0, 1),
+                journal: views.journal?.slice(0, 1),
+              },
+            }),
+          stacks: {
+            ...old.stacks,
+            [tab]: [alreadyAtRoot ? root : routeEntry(routes.solace)],
+          },
+        };
+      }
       if (old.activeTab === tab) return old;
-      const stacks = stacksAfterLeavingImmersive(old);
+      const { stacks } = old;
       const root =
         tab === routes.companion
           ? old.solaceMode
@@ -2401,9 +2966,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
     };
     const relockApp = () => {
-      if (lockState.current.locked || accountTransition.current !== null)
+      if (
+        !token ||
+        sessionExpired ||
+        lockState.current.appUnlock.phase !== "unlocked" ||
+        accountTransition.current !== null
+      )
         return;
-      changeDeviceLock({ locked: true, journalGranted: false });
+      changeDeviceLock({
+        appUnlock: { phase: "locked" },
+        journalGranted: false,
+      });
       cancelSensitiveWork();
     };
     const subscription = NativeAppState?.addEventListener?.(
@@ -2417,34 +2990,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (state === "active") backgroundSince.current = null;
         const policy = lockState.current.policy;
         if (
-          !policy ||
-          (policy.owner !== owner.current && !lockState.current.locked)
-        )
-          return;
-        if (state === "inactive" || state === "background") {
-          changeDeviceLock({ covered: true });
-        }
-        if (state === "background" && backgroundSince.current === null) {
-          backgroundSince.current = Date.now();
-          if (policy.appDelay === 0) relockApp();
-          else if (policy.journal && lockState.current.journalGranted) {
-            changeDeviceLock({ journalGranted: false });
-            cancelSensitiveWork();
+          policy &&
+          (policy.owner === owner.current ||
+            lockState.current.appUnlock.phase !== "unlocked")
+        ) {
+          if (state === "inactive" || state === "background") {
+            changeDeviceLock({ covered: true });
           }
-        }
-        if (state === "active") {
+          if (state === "background" && backgroundSince.current === null) {
+            backgroundSince.current = Date.now();
+            if (policy.appDelay === 0) relockApp();
+            else if (policy.journal && lockState.current.journalGranted) {
+              changeDeviceLock({ journalGranted: false });
+              cancelSensitiveWork();
+            }
+          }
           if (
+            state === "active" &&
             since !== null &&
             policy.appDelay !== null &&
             Date.now() - since >= policy.appDelay * 1000
-          )
+          ) {
             relockApp();
+          }
+        }
+        if (state === "active" && lockState.current.covered) {
           changeDeviceLock({ covered: false });
         }
       },
     );
     return () => subscription?.remove();
-  }, [token, user?.id, localLock.policy, draftGeneration]);
+  }, [token, user?.id, localLock.policy, draftGeneration, sessionExpired]);
   useEffect(() => {
     if (!owner.current || !token) return;
     const subscription = NativeAppState?.addEventListener?.(
@@ -2462,7 +3038,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       !user?.id ||
       !pendingWrites.length ||
       sessionExpired ||
-      localLock.locked
+      appLocked
     )
       return;
     const retry = () => {
@@ -2486,7 +3062,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (Platform.OS === "web" && typeof window !== "undefined")
         window.removeEventListener("online", retry);
     };
-  }, [token, user?.id, pendingWrites.length, sessionExpired, localLock.locked]);
+  }, [token, user?.id, pendingWrites.length, sessionExpired, appLocked]);
   return (
     <Context.Provider
       value={{
@@ -2497,7 +3073,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         sessionExpired,
         deviceLock: localLock.policy,
         deviceLockBusy,
-        appLocked: localLock.locked,
+        appUnlock:
+          initializing && !appLocked
+            ? { phase: "checking" }
+            : localLock.appUnlock,
+        appLocked,
         journalLocked,
         journalRouteProtected: insideJournal,
         privacyCovered: localLock.covered,
@@ -2507,9 +3087,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         busy,
         error,
         route: current.name,
+        routeKey: current.key,
+        habitHub,
         activeTab,
         params: current.params,
-        canGoBack: stack.length > 1,
+        canGoBack:
+          stack.length > 1 ||
+          (activeTab === routes.companion && isSolaceModeRoot(current.name)),
         token,
         chatDrafts,
         chatPending,
@@ -2536,6 +3120,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         resetPassword,
         signOut,
         refresh,
+        saveGardenIntention,
         save,
         remove,
         createHabit,
@@ -2553,10 +3138,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         reflectJournal,
         discussJournal,
         generateMoment,
+        generatePlanPreview,
         weeklyReflection,
         capabilities,
         transcribeVoice,
+        speakVoiceReply,
+        startVoiceSession,
+        voiceSessionStatus,
+        endVoiceSession,
+        reportVoiceActionResult,
         updateUser,
+        saveWellnessGoals,
         deleteAccount,
         exportData,
       }}
