@@ -1,163 +1,69 @@
-# Solace AI
+<p align="center">
+  <img src="assets/redesign-lotus.png" width="88" alt="">
+</p>
 
-A personal wellness companion built with React Native + Expo, a Node.js API and persistent SQLite storage. Solace connects a check-in, a conversation, a useful Moment and a gentle reflection, with personalization that the user controls.
+<h1 align="center">Solace AI</h1>
 
-## Current implementation
+<p align="center">
+  A calmer, kinder space for your mind.
+</p>
 
-The source now includes the master-brief feature set: an expressive petal companion, structured Solace Moments, three ambient environments, consent-based memory, a calendar Journey, weekly reflections, personal goals, optional streaks and turn-based voice. The five tabs are **Today → Solace → Explore → Journey → Profile**. Explore includes Solace Moments, breathing, grounding, reflections, the saved toolkit, guides, reflective check-ins, plans, affirmations and challenges. Moments is also available from Today and the Solace header.
+<p align="center">
+  <a href="https://github.com/tejassambhus17/Solace/releases/download/v1.0.0/Solace-ARM64.apk"><strong>Download Android APK</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://solace-demo-240e1d22-d2e6b3cahbheh2ed.centralindia-01.azurewebsites.net">Try the web preview</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/tejassambhus17/Solace/releases/tag/v1.0.0">View release</a>
+</p>
 
-The premium expansion adds direct chat-to-Moment recommendations, a customizable Daily Pause, weekly stories, a four-track sound mixer and earned milestone celebrations. See the [feature checklist and QA evidence](docs/PREMIUM_EXPANSION.md), [requirements](docs/REQUIREMENTS.md) and [verification record](docs/VERIFICATION.md).
+<p align="center">
+  <sub>v1.0.0 · Android ARM64</sub>
+</p>
 
-**Gemini is the primary text provider when configured.** Chat, Moments and weekly reflections use the server's configured Gemini model. Curated Moments, recorded weekly summaries and built-in companion replies remain available in offline mode. Voice transcription uses OpenAI when configured and supports Gemini in a Gemini-only setup. Typing remains available when transcription is unavailable.
+Solace is a personal wellness companion. Check in with how you feel, talk things through by text or voice, or take a guided pause. Over time, your Journal and Journey give you a place to notice what helped.
 
-## The daily experience
+<p align="center">
+  <img src="docs/screenshots/readme/today.png" width="30%" alt="Today in light mode, with a mood check-in, daily progress and a guided Calm Reset">
+  <img src="docs/screenshots/readme/companion.png" width="30%" alt="Solace Companion in dark mode, with suggested prompts and a breathing practice">
+  <img src="docs/screenshots/readme/explore.png" width="30%" alt="Wellness Tools in dark mode, with the ambient sound mixer and guided practices">
+  <br>
+  <sub>Today · Companion · Explore</sub>
+</p>
 
-Today opens with a scenic greeting, actual check-in and Moment counts, and the latest recorded mood. Tap a watercolor petal to open the check-in, or start the five-minute Calm Reset. Daily Pause tracks check-in, Moment and reflection from saved activity and opens the next step. You can replace a suggestion, choose its length, skip it for the day or turn Daily Pause off. Quick Actions open breathing, reflection, sleep, and grounding.
+## What you can do
 
-After a mood check-in, try a short reset in the existing practice player or review a draft for Companion. The draft starts with the mood, and the note is optional. You can edit the draft before sending it. Completed resets use the same Journey history and optional feedback as other practices.
+- **Today** — Log a mood, follow your Daily Pause, or start a quick practice.
+- **Solace** — Talk with the AI Companion by text or live voice, or write in My Journal. Companion can open practices and help set up habits or reminders with your approval.
+- **Explore** — Find guided breathing, grounding, sleep and reflection practices. Build a timed session, mix ambient sounds, or save a practice to your toolkit.
+- **Journey** — See the check-ins, practices and milestones you’ve recorded. Optional reflections after a practice help you notice what you found helpful. Track habits and grow your garden as you make progress.
+- **Profile** — Choose wellness goals, manage reminders and appearance, and control personalization and account data.
 
-The loved light theme remains blush-ivory and forest. Dark mode uses a black canvas, neutral graphite, warm ivory text, champagne actions and restrained lilac/peach/sage accents. Welcome, login, signup and Today have no upper-right profile shortcut. Typography and artwork follow [the existing design system](DESIGN.md), including [matched daily-pause artwork](assets/DAILY_PAUSE_ARTWORK.md).
+## Install on Android
 
-The floating navigation respects safe-area and keyboard clearance. Each tab keeps its navigation stack while you switch. A circular spotlight follows the active tab and moves immediately when Reduce Motion is enabled. Supported iOS uses guarded native Liquid Glass, with blur and Reduce Transparency fallbacks. Android uses an opaque tonal surface.
+On an ARM64 Android device, open the downloaded APK and follow the system’s install prompts. Then open Solace and sign in or create an account.
 
-The [performance report](docs/PERFORMANCE_OPTIMIZATION_REPORT.md) records emulator diagnostics, long-list and player regressions, and release checks. Use the [physical-device checklist](docs/PHYSICAL_DEVICE_QA_CHECKLIST.md) to verify frame pacing, keyboard behavior and native audio on Android and iPhone.
+## Run locally
 
-Tap a tab or drag horizontally inside the bottom bar and release to switch. Detail pages keep their normal Back controls and support a leading-edge Back gesture on eligible iOS screens. [Gesture behavior and verification](docs/NAVIGATION_GESTURES_QA.md)
+Use Node.js 24. From the repository root:
 
-First launch offers a five-page tour, followed by sign-in and an optional personalization choice. Open About Solace to replay the introduction. [Onboarding behavior and verification](docs/ONBOARDING_QA.md)
-
-Open **Explore → Healthy Habit Builder** to schedule a small habit, track progress and grow a garden from saved completions. Today, Journey, Companion and Profile link into the same records and controls. Journey’s Habit Progress card follows the selected reporting period and opens Habit Insights. [Solace Habits and verification](docs/HABITS_QA.md)
-
-## Solace Moments and the companion
-
-The Solace tab opens with Companion and My Journal choices and remembers the last used mode for each account. Companion keeps the existing text, history and turn-based voice flows. My Journal supports drafts, saved entries, mood, tags, bookmarks and search. AI reflection and Companion handoff require selecting an excerpt and approving the provider disclosure. In Explore, Your wellness tools opens Guided Techniques and Healthy Habit Builder. Guided Techniques uses the same Moment player and Journey completion records. The navigation map, privacy behavior and device acceptance steps are in the [Companion, Journal and Guided Techniques QA report](docs/COMPANION_JOURNAL_TECHNIQUES.md).
-
-Companion exposes New conversation and My Journal beside the header and retains drafts for retry. Journal distinguishes a protected device draft, a pending sync and a confirmed account save. Guided Techniques shows its pacing before starting and confirms the actual recorded duration after saving. Journey’s Latest activity opens the exact saved check-in, Journal entry or completed Moment.
-
-Describe how you feel, review the suggested Moment and choose **Forest Sanctuary**, **Ocean Calm** or **Twilight Sky**. The generator returns bounded, schema-validated activity data: type, duration, steps, optional breathing rhythm and reflection prompts. It cannot send executable UI instructions. A configured provider uses structured output; the built-in alternative is explicitly curated. Urgent distress takes the human-support route instead of offering a generated activity.
-
-The Make a Moment action in Chat carries the chosen feeling and conversation link into the activity, with an optional return to that conversation afterward. The immersive player has an active-time clock, guidance, progress, pause/resume, exit confirmation, background pause, environment switching and optional bundled ambient sound. Original synthesized sound loops are packaged locally. Playback status and failures are visible. Completion and helpfulness are saved to the authenticated account, with retry behavior that retains the result rather than claiming an unsuccessful save worked.
-
-The recognizable petal companion has idle, listening, thinking, speaking, celebration and breathing states. Recording, requests, playback, practice timing and earned milestones drive these states. Reduced-motion settings are respected. No expression diagnoses the user's feelings.
-
-## Conversation and voice
-
-New chat opens with a woodland lotus scene, contextual quick replies, and a two-minute Guided Breath card. After the first send, the conversation uses a compact companion header. Saved conversations open in that layout with recorded timestamps and reply sources. The header opens Moments, history, and Voice Talk. The composer menu offers practices, support, and reply playback. Urgent replies provide a direct human support action. Unsent text stays in account-scoped memory across navigation and recoverable errors.
-
-Explore opens with a twilight lake, compact category filters including Sleep, search, and a shortcut to the saved toolkit. Recommendations include a three-minute Breath Reset, five-minute Five Senses grounding, Quick Reflection with a four-minute estimate for the self-paced journal, and a ten-minute Sleep Wind Down. The cards form a two-column grid where there is room and stack on narrow layouts or at larger system text sizes. Create Your Wellness Plan opens the editable three-day plan, which can be saved and reopened. Explore More uses full-width links to Guided Programs, Wellness Toolkit, and Reflective Check-ins. Two cards at the bottom open Wellness Tools and Build a Timed Practice. The tools library groups existing experiences and offers Relax, Move, and Grow filters. Timed Practice previews a 5-, 10-, 15-, or 20-minute session for Calm, Focus, Sleep, or Energy. It uses the existing Moment player and saves completed active time to Journey. The API and app should be released together so the server can validate the longer registered sessions.
-
-The microphone beside Send adds a reviewed transcript to the regular chat composer. The headset opens a dedicated Voice Talk screen for recording, reviewing and editing the transcript, explicitly sending a message, and hearing the reply. Both use permission-aware Expo Audio and the authenticated transcription endpoint. Typed text remains available if permission, recording or transcription fails. Explicit retry can reuse bounded audio held in memory. Solace attempts to delete native temporary audio after extraction and processes audio through the configured provider without storing it on the server.
-
-Expo Speech handles reply playback. Voice Talk starts reading ordinary new replies aloud and offers stop and replay controls. It presents urgent guidance in text with a support action. Leaving the conversation, backgrounding or starting another operation stops the previous interaction. Verify microphone behavior, audio routing, interruptions and playback on an installed native build with the audio and speech modules.
-
-## Memory you can explain and change
-
-**Profile → What Solace remembers** shows saved preferences, categories, approval state and available source links. Users can add, correct, approve, remove or explicitly clear preferences, or turn personalization off. Activity completion may offer editable wording, but saving always requires an explicit action. Solace does not silently create memories.
-
-Recommendations name the approved memory used when it influences a suggestion. Turning personalization off excludes saved preferences from new personalized suggestions. Editing/removing a memory, deleting a source that supplied one, or revoking personalization resets the older context used for future AI replies. Existing conversation text remains visible and exportable; it is not silently rewritten. Deleting a conversation or source session also removes its derived memories. Pending responses built from invalidated context are rejected rather than committed.
-
-## Journey, goals and gentle milestones
-
-Journey opens with a weekly view and remembers each account's Week, Month or All time preference on this device. Its calendar opens day-by-day history, and the summaries count distinct check-in days, completed Moments and actual active time. Prior-period comparisons appear when the previous period has activity. The saved story opens reflections, affirmations and check-ins.
-
-Choose a calendar week to write a reflection or request an editable draft based on your saved activity and feedback. The local recorded summary is labeled when live AI is off. A configured provider receives counts to suggest a question. When there is no activity to summarize, Journey offers a guided prompt. Weekly reflections are only saved when you choose to save, and you can reopen, edit or delete them.
-
-Set a goal for check-in days, completed Moments, mindful minutes or saved reflections, over a week, month or all time. Goals can be edited, paused, resumed or removed. Milestones such as the first check-in, three- and seven-day streaks, and first weekly reflection derive from saved records. Unsynced writing is marked as waiting to sync and does not count toward account milestones.
-
-## Existing foundations retained
-
-- Accounts: signup/login/logout, secure session handling, persisted history and server-enforced account isolation.
-- Practices: timed breathing, optional five-senses grounding, journaling, three reflective assessments, five guidance categories, editable plans, affirmations and small challenges.
-- Toolkit: private saved practices and resources, idempotent saves, export and deletion.
-- Profile photos: system picker, client preparation and independent server JPEG normalization to 256px, input limits and metadata removal; photos remain private to the account.
-- Reminders: private local notification schedules and destination routing. Browser preferences do not pretend to schedule native notifications.
-- Data controls: approved memory, export, logout, account deletion, unsynced-writing retry/discard and theme preferences.
-
-Profile shows the signed-in name and photo against mountain artwork for the active theme. **Edit Profile** opens name and photo controls. **Personalize Solace** groups reminders, saved memories, and appearance preferences, with badges based on the account’s reminder and memory records. **Appearance & preferences** groups theme, sound and accessibility guidance, Biometric Lock, and the approved-preferences switch. **Privacy & Support** links to data export and deletion, human support, and About Solace. About explains Solace’s role and how the app handles conversations.
-
-Native check-in/journal drafts use bounded account-scoped SecureStore. Up to ten submitted check-ins/reflections can wait for retry after recoverable connection errors. Draft writes debounce 650ms and attempt protection when leaving the app; abrupt termination before a successful write can lose recent edits. Web writing is memory-only for the open tab. Cold launch still needs online API session restoration; chat and complete account snapshots are not placed in the protected writing vault.
-
-An unchanged chat draft reuses its request ID after a connection failure during the current app session. The API can replay its saved turn for up to 24 hours, including across API restarts. Editing the draft starts a new request. Chat drafts and pending request IDs live in app memory.
-
-## Local setup
-
-The app and server have separate lockfiles. Root-only `npm ci` does not install the server's tsx dependency. The tested runtime is Node 24 LTS; the runtime wrapper validates compatible versions and never silently runs Expo on Windows' default Node 20. See [Mac/simulator repair instructions](docs/LOCAL_DEVELOPMENT.md).
-
-```powershell
+```sh
 npm run setup
 npm run doctor
 npm run dev
 ```
 
-Setup installs both lockfiles with development/platform packages, compiles the API and creates only missing environment files. Existing environment files and database records are preserved. The dev supervisor verifies its own API child before starting Expo. Private server configuration and relative database paths are anchored to `server/`; a busy-port failure cannot rewrite the running API's database.
+Setup installs the app and API dependencies. The development command starts the local API on port **3001** and Expo on port **8081**. For simulator, device, and environment setup, see the [local development guide](docs/LOCAL_DEVELOPMENT.md).
 
-The API normally uses port 3001 and Expo web uses 8081. Separate terminals can run `npm run server` and `npm run web`. A packaged local preview uses `npm run export:web:preview`, then `npm run preview` on port 8082. Stop the owned development processes with Ctrl+C.
+For live AI, set `OPENAI_API_KEY` in `server/.env` and select `AI_MODE=live`. The app can also run with labeled built-in guidance. Keep provider credentials on the server. See the [OpenAI setup guide](docs/OPENAI_MIGRATION.md).
 
-Only public connection configuration belongs in the root environment. Development defaults use iOS simulator `127.0.0.1:3001`, Android emulator `10.0.2.2:3001` and the web hostname on port 3001. A physical phone needs a reachable LAN or hosted address. An Android debug build can also use an explicit loopback address over USB reverse. Release clients require an explicit HTTPS API and reject loopback, private network addresses and local-only hostnames. Reload Expo after public configuration changes and rebuild installed release binaries.
+## Under the hood
 
-Google sign-in on Android and iOS uses a system browser and the existing Solace session. To link an existing account, sign in first and open **Profile → Edit Profile → Google sign-in**. Google Cloud settings, the HTTPS callback, optional SMTP recovery and native rebuild steps are in the [authentication setup guide](docs/GOOGLE_AUTH_SETUP.md).
+The app uses **React Native, Expo, and TypeScript**. A **Node.js API** stores account data in **SQLite** and connects to **OpenAI** for live AI features. The hosted preview runs on **Azure App Service**.
 
-Use **Profile → Appearance & preferences → Biometric Lock** to protect an existing session, My Journal or both on an enrolled device. Solace can lock immediately or after one or five minutes in the background. You can recover access through your normal sign-in. The web preview keeps the email/password session for the current browser tab.
+The mobile app lives in [`src/`](src/), the API in [`server/`](server/), and artwork and audio in [`assets/`](assets/). See the [architecture](docs/ARCHITECTURE.md), [release guide](docs/RELEASE.md), and [verification notes](docs/VERIFICATION.md).
 
-Provider credentials belong only in **server/.env** or the private server environment. Set `GEMINI_API_KEY` to use the default `gemini-3.1-flash-lite`, or set `GEMINI_MODEL` to a supported model, then restart the API. OpenAI handles text when only its key is configured. With both keys, `OPENAI_FALLBACK_ENABLED=true` opts into sending requests to OpenAI after transient Gemini failures. `AI_MODE=live` requires a key, `auto` selects live when configured, and `offline` uses the labeled built-in companion. See [server configuration](server/README.md).
+## Privacy and scope
 
-## Project map
+AI personalization is optional. Journal sharing with AI requires your approval of the selected excerpt. You can review saved preferences and export or delete your account data in Profile.
 
-```text
-App.tsx                    app shell and four-tab navigation
-src/Navigation.tsx         platform-aware floating navigation
-src/screens/Discover.tsx   Today and the daily pause
-src/screens/Moments.tsx    generation, library and immersive player
-src/Companion.tsx          event-driven petal character
-src/Environment.tsx        forest, ocean and twilight visual environments
-src/moments.ts             activity guards and active-time player helpers
-src/screens/Journey.tsx    calendar, summaries, goals and milestones
-src/progress.ts            recorded participation and calendar helpers
-src/VoiceControls.tsx      recording, transcript review and reply playback
-src/voice-session.ts       cancellable account/conversation-scoped voice turn
-src/screens/Core.tsx       welcome, accounts, chat and history
-src/screens/Wellness.tsx   original activities, resources and reflections
-src/screens/ProfileHome.tsx  grouped profile overview and account badges
-src/screens/Profile.tsx      account, memory, reminders, privacy and About Solace
-src/store.tsx              authenticated state, API and protected sessions
-src/offline.ts             bounded protected-writing vault
-src/notifications.ts       native local reminders and tap routing
-server/src/                auth, persistence, AI, Moments, weekly and voice API
-assets/                    original/botanical illustrations and ambient loops
-docs/                      requirements, verification and release guides
-```
-
-## Checks and release work
-
-```powershell
-npm run typecheck
-npm run server:typecheck
-npm run server:test
-npm run test:tooling
-npm run test:api-config
-npm run test:session-state
-npm run test:google-auth
-npm run test:moments
-npm run test:progress
-npm run test:voice
-npm run test:native-config
-npm run test:routine
-npm run test:offline
-npm run test:insights
-npm run test:wellness
-npm run test:reminders
-npm run server:build
-npm run export:web:preview
-npm run export:android
-npm run export:ios
-```
-
-The November 6 stabilization pass includes an integrated two-account browser journey, matched defect retests, and checks on a USB-connected Android 15 handset. The report lists the exact scenarios, commands and outstanding release gates. [QA stabilization report](docs/QA_STABILIZATION.md) · [Verification record](docs/VERIFICATION.md)
-
-The physical Android debug build passed signup, session restoration, mood saving, built-in chat and history checks using the local API over USB. The device pass also verified the chat keyboard fix. [Device verification](docs/VERIFICATION.md#physical-android-smoke-test--6-november-2026)
-
-Today includes a five-minute Calm Reset, the recorded daily routine progress, and direct Explore More links to Guided Programs, Wellness Toolkit and Check-Ins. The full Explore library is available from See All and the bottom compass.
-
-Submission still needs public HTTPS with a persistent database and production provider configuration, a rebuilt functional APK tested on a physical phone, iOS verification, native reminder tests and a demo recorded from the final build. The user's deadline is Tuesday, 10 November 2026 at 11:59 AM IST. See [release instructions](docs/RELEASE.md).
-
-SQL.js currently supports one API instance with a private persistent disk. Use HTTPS, restricted origins/proxy settings and backups in deployment. SQLite is not application-encrypted. Large-account pagination and native performance profiling remain scaling work. Solace is an AI wellness companion, not a licensed therapist, diagnostic tool or emergency service. It makes no clinical, HIPAA or certification claim. Social feeds, public profiles, following, community messages, therapist booking, OAuth, email password reset and remote push infrastructure are outside the implemented scope.
+Solace supports everyday reflection and self-care. For clinical care or emergencies, seek qualified human support.
